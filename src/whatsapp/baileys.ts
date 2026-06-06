@@ -9,6 +9,7 @@ import { Boom } from "@hapi/boom";
 import qrcode from "qrcode-terminal";
 import pino from "pino";
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
+import { notifyAdminOfEvent } from "../services/events.js";
 
 const AUTH_DIR = "auth_session";
 // Baileys is very chatty and logs harmless "Bad MAC" / decryption / timeout errors at
@@ -40,17 +41,20 @@ export class BaileysAdapter implements WhatsAppAdapter {
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         console.log("\n📱 Scan this QR with WhatsApp (Linked Devices):\n");
         qrcode.generate(qr, { small: true });
+        await notifyAdminOfEvent("qr_received", { qr });
       }
       if (connection === "open") {
         console.log("✅ WhatsApp connected.");
+        await notifyAdminOfEvent("whatsapp_connected", {});
       }
       if (connection === "close") {
         const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
+        await notifyAdminOfEvent("whatsapp_disconnected", { code });
         if (code === DisconnectReason.loggedOut) {
           console.log("⚠️  Logged out. Delete the auth_session/ folder and re-scan the QR.");
           return; // don't reconnect — credentials are gone

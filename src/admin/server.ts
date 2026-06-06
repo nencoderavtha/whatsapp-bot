@@ -5,7 +5,7 @@ import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { getMenu } from "../services/menu.js";
 import { listOrders, setOrderStatus } from "../services/order.js";
-import { eventBus, notifyAdminOfEvent } from "../services/events.js";
+import { eventBus, notifyAdminOfEvent, whatsappState } from "../services/events.js";
 
 process.env.IS_ADMIN_SERVER = "true";
 
@@ -144,8 +144,23 @@ export function buildAdminApp() {
 
   api.post("/internal/events", (req, res) => {
     const { type, data } = req.body;
+    // Update local process state cache (for multi-process configurations)
+    if (type === "qr_received") {
+      whatsappState.lastQR = data.qr;
+      whatsappState.connected = false;
+    } else if (type === "whatsapp_connected") {
+      whatsappState.lastQR = null;
+      whatsappState.connected = true;
+    } else if (type === "whatsapp_disconnected") {
+      whatsappState.lastQR = null;
+      whatsappState.connected = false;
+    }
     eventBus.emit("event", { type, data });
     res.json({ ok: true });
+  });
+
+  api.get("/qr", (_req, res) => {
+    res.json({ qr: whatsappState.lastQR, connected: whatsappState.connected });
   });
 
   // Lightweight check so the UI can validate the password.

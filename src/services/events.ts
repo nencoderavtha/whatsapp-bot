@@ -3,11 +3,29 @@ import { config } from "../config.js";
 
 export const eventBus = new EventEmitter();
 
+// Global cache for WhatsApp connection state and latest QR code
+export const whatsappState = {
+  lastQR: null as string | null,
+  connected: false,
+};
+
 /**
  * Emits an event locally and forwards it to the admin server's internal webhook
  * if this process is not the admin server.
  */
 export async function notifyAdminOfEvent(type: string, data: any) {
+  // Update local state cache
+  if (type === "qr_received") {
+    whatsappState.lastQR = data.qr;
+    whatsappState.connected = false;
+  } else if (type === "whatsapp_connected") {
+    whatsappState.lastQR = null;
+    whatsappState.connected = true;
+  } else if (type === "whatsapp_disconnected") {
+    whatsappState.lastQR = null;
+    whatsappState.connected = false;
+  }
+
   // Always emit locally (covers single-process mode)
   eventBus.emit("event", { type, data });
 
@@ -28,3 +46,4 @@ export async function notifyAdminOfEvent(type: string, data: any) {
     }
   }
 }
+
