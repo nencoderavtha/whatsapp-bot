@@ -4,8 +4,8 @@ import { runBot } from "./whatsapp/run.js";
 
 async function main() {
   // Admin portal
-  const server = buildAdminApp().listen(config.adminPort, () => {
-    console.log(`🛠️  Admin portal: http://localhost:${config.adminPort}  (password in .env)`);
+  const server = buildAdminApp().listen(config.adminPort, "0.0.0.0", () => {
+    console.log(`🛠️  Admin portal: http://0.0.0.0:${config.adminPort}  (password in .env)`);
   });
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
