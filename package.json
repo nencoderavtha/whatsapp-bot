@@ -6,14 +6,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "start": "prisma db push && tsx prisma/seed.ts && tsx src/index.ts",
     "admin": "tsx src/admin/server.ts",
     "bot": "tsx src/whatsapp/run.ts",
     "chat": "tsx src/chat-test.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "build": "tsc -p tsconfig.json"
+    "build": "prisma generate && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
