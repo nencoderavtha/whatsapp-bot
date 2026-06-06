@@ -1,0 +1,95 @@
+// Prisma schema for Military Rajamma Hotel WhatsApp bot.
+// Dev uses SQLite. For production, change `provider` to "postgresql"
+// and point DATABASE_URL at your Postgres instance.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------- Menu (the "dynamic memory") ----------------
+
+model Category {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  sortOrder Int        @default(0)
+  items     MenuItem[]
+}
+
+model MenuItem {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  price       Float
+  // Whether the kitchen currently has it. Toggled live from the admin portal.
+  available   Boolean  @default(true)
+  isVeg       Boolean  @default(false)
+  spiceLevel  String?  // e.g. "mild", "spicy", "extra spicy"
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId  Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems  OrderItem[]
+
+  @@index([categoryId])
+}
+
+// ---------------- Customers & conversation memory ----------------
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  // WhatsApp JID / phone number (e.g. "919876543210")
+  phone     String    @unique
+  name      String?
+  address   String?
+  notes     String?   // free-form: allergies, "regular", favorite dishes, etc.
+  createdAt DateTime  @default(now())
+  messages  Message[]
+  orders    Order[]
+}
+
+// Full conversation log = the bot's per-customer long-term memory.
+model Message {
+  id         Int      @id @default(autoincrement())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId Int
+  role       String   // "user" | "assistant"
+  content    String
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+// ---------------- Orders ----------------
+
+model Order {
+  id         Int         @id @default(autoincrement())
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  customerId Int
+  status     String      @default("pending") // pending | confirmed | preparing | ready | delivered | cancelled
+  type       String      @default("pickup")  // pickup | delivery | dine-in
+  total      Float       @default(0)
+  note       String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  items      OrderItem[]
+
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id         Int      @id @default(autoincrement())
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId    Int
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  menuItemId Int
+  nameSnap   String   // name captured at order time (menu may change later)
+  priceSnap  Float    // price captured at order time
+  qty        Int      @default(1)
+  note       String?
+}
