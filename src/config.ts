@@ -47,7 +47,7 @@ export const config = {
 
   databaseUrl: required("DATABASE_URL", "file:./dev.db"),
 
-  adminPort: Number(process.env.ADMIN_PORT ?? 4000),
+  adminPort: Number(process.env.PORT ?? process.env.ADMIN_PORT ?? 4000),
   adminPassword: process.env.ADMIN_PASSWORD ?? "changeme",
 
   whatsappProvider: (process.env.WHATSAPP_PROVIDER ?? "baileys") as "baileys" | "cloud",
