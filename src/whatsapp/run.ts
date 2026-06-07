@@ -83,7 +83,7 @@ export async function runBot() {
       console.error("Handler error:", e);
       await adapter.sendText(
         msg.phone,
-        "Sorry anna, chinna problem ochindi 🙏 oka nimisham aagi malli try cheyyandi.",
+        "Sorry, Please try again in a moment.",
       );
     }
   });
