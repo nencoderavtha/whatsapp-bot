@@ -31,6 +31,9 @@ function populateConfig(cfg) {
   document.getElementById("cfg-wa-phone").value = cfg.whatsappPhone || "";
   document.getElementById("cfg-requirePayment").checked = !!cfg.requiresPaymentBeforeOrder;
   document.getElementById("cfg-pauseMessage").value = cfg.pauseMessage || "";
+  // Cloud API — phoneNumberId is pre-filled; token is never pre-filled (treat as secret)
+  const cloudPhoneEl = document.getElementById("cfg-cloud-phone-id");
+  if (cloudPhoneEl) cloudPhoneEl.value = cfg.cloudPhoneNumberId || "";
 
   // Payment method checkboxes + expand/collapse inline sections
   const methods = (cfg.paymentMethods || "cash").split(",").map(s => s.trim());
@@ -53,17 +56,23 @@ function populateConfig(cfg) {
 
 export async function saveRestaurantInfo() {
   const pw = document.getElementById("cfg-password").value.trim();
+  const cloudPhoneId = document.getElementById("cfg-cloud-phone-id")?.value.trim() || null;
+  const cloudToken = document.getElementById("cfg-cloud-token")?.value.trim() || null;
   const body = {
     restaurantName: document.getElementById("cfg-name").value.trim(),
     restaurantCity: document.getElementById("cfg-city").value.trim(),
     ownerNumbers: document.getElementById("cfg-owners").value.trim(),
     whatsappPhone: document.getElementById("cfg-wa-phone").value.replace(/\D/g, "") || null,
+    cloudPhoneNumberId: cloudPhoneId,
     ...(pw ? { dashboardPassword: pw } : {}),
+    ...(cloudToken ? { cloudToken } : {}),
   };
   try {
     await api("/config", { method: "PUT", body: JSON.stringify(body) });
     document.getElementById("cfg-password").value = "";
-    showToast("Saved", "Restaurant info updated. Restart the bot to apply the new WhatsApp number.");
+    const tokenEl = document.getElementById("cfg-cloud-token");
+    if (tokenEl) tokenEl.value = "";
+    showToast("Saved", "Settings updated.");
   } catch (e) {
     showToast("Error", "Could not save.");
   }

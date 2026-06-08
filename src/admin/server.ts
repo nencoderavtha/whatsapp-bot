@@ -11,6 +11,7 @@ import { loginHandler, logoutHandler, meHandler, authMiddleware, founderLoginHan
 import { createOrder } from "../services/order.js";
 import { verifyWebhookSignature } from "../services/razorpay.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
+import type { InboundMessage } from "../whatsapp/adapter.js";
 
 process.env.IS_ADMIN_SERVER = "true";
 
@@ -121,6 +122,42 @@ export function buildAdminApp() {
   app.use(express.json());
   app.use(express.static(path.join(__dirname, "public")));
 
+  // ── WhatsApp Cloud API webhook ──────────────────────────────────────────
+  // GET: Meta verification handshake
+  app.get("/webhook", (req, res) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+    if (mode === "subscribe" && token === config.cloud.verifyToken) {
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  });
+
+  // POST: inbound messages from Meta — route to correct restaurant by phoneNumberId
+  app.post("/webhook", async (req, res) => {
+    res.sendStatus(200); // ack immediately — Meta requires < 5s
+    try {
+      const entry = req.body?.entry?.[0]?.changes?.[0]?.value;
+      const msg = entry?.messages?.[0];
+      if (!msg) return;
+      const phoneNumberId: string = entry?.metadata?.phone_number_id;
+      if (!phoneNumberId) return;
+      const text: string =
+        msg.text?.body ?? msg.button?.text ?? msg.interactive?.list_reply?.title ?? "";
+      if (!text.trim()) return;
+      const inbound: InboundMessage = {
+        phone: msg.from as string,
+        text: text.trim(),
+        name: entry?.contacts?.[0]?.profile?.name as string | undefined,
+      };
+      await botSessionManager.routeCloudMessage(phoneNumberId, inbound);
+    } catch (e) {
+      console.error("[Cloud webhook]", e);
+    }
+  });
+
   // ── Public auth routes ──────────────────────────────────────────────────
   app.post("/api/auth/login", loginHandler);
   app.post("/api/auth/logout", logoutHandler);
@@ -189,6 +226,7 @@ export function buildAdminApp() {
       "isActive", "botPaused", "pauseMessage", "upiId", "paymentMethods",
       "requiresPaymentBeforeOrder", "razorpayEnabled", "razorpayKeyId",
       "razorpayKeySecret", "razorpayWebhookSecret",
+      "cloudPhoneNumberId", "cloudToken",
     ];
     const data: Record<string, unknown> = {};
     for (const key of allowed) {
@@ -431,6 +469,7 @@ export function buildAdminApp() {
       dashboardPassword, requiresPaymentBeforeOrder, upiId, paymentMethods,
       razorpayEnabled, razorpayKeyId, razorpayKeySecret, razorpayWebhookSecret,
       botPaused, pauseMessage, whatsappPhone,
+      cloudPhoneNumberId, cloudToken,
     } = req.body;
     const data: Record<string, unknown> = {};
     if (restaurantName !== undefined) data.restaurantName = restaurantName;
@@ -447,6 +486,8 @@ export function buildAdminApp() {
     if (botPaused !== undefined) data.botPaused = !!botPaused;
     if (pauseMessage !== undefined) data.pauseMessage = pauseMessage || null;
     if (whatsappPhone !== undefined) data.whatsappPhone = whatsappPhone || null;
+    if (cloudPhoneNumberId !== undefined) data.cloudPhoneNumberId = cloudPhoneNumberId || null;
+    if (cloudToken !== undefined && cloudToken) data.cloudToken = cloudToken;
     res.json(await prisma.botConfig.update({ where: { id: req.restaurantId }, data }));
   });
 
@@ -529,6 +570,7 @@ export function buildAdminApp() {
       qr: whatsappState.lastQR,
       pairingCode: whatsappState.lastPairingCode,
       connected: whatsappState.connected,
+      provider: config.whatsappProvider,
     });
   });
 

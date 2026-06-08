@@ -1,71 +1,39 @@
-import express from "express";
-import { config } from "../config.js";
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
 
 /**
- * Official Meta WhatsApp Cloud API adapter.
- * Receives messages via webhook and sends via the Graph API.
- * Run this when WHATSAPP_PROVIDER=cloud. Point your Meta webhook at /webhook.
+ * Official Meta WhatsApp Cloud API adapter — one instance per restaurant.
+ *
+ * The admin server's /webhook route handles ALL inbound messages and calls
+ * ingest() on the right adapter. This adapter never starts its own HTTP server.
  */
 export class CloudAdapter implements WhatsAppAdapter {
   private handler?: (msg: InboundMessage) => Promise<void>;
-  private app = express();
-  private port = config.adminPort + 1; // separate port from admin portal
+
+  constructor(
+    private readonly phoneNumberId: string,
+    private readonly token: string,
+  ) {}
 
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void {
     this.handler = handler;
   }
 
+  // No socket to open — webhook is centralized.
   async start(): Promise<void> {
-    this.app.use(express.json());
+    console.log(`✅ Cloud adapter ready (phoneNumberId=${this.phoneNumberId})`);
+  }
 
-    // Webhook verification handshake.
-    this.app.get("/webhook", (req, res) => {
-      const mode = req.query["hub.mode"];
-      const token = req.query["hub.verify_token"];
-      const challenge = req.query["hub.challenge"];
-      if (mode === "subscribe" && token === config.cloud.verifyToken) {
-        res.status(200).send(challenge);
-      } else {
-        res.sendStatus(403);
-      }
-    });
-
-    // Inbound messages.
-    this.app.post("/webhook", async (req, res) => {
-      res.sendStatus(200); // ack fast
-      try {
-        const entry = req.body?.entry?.[0]?.changes?.[0]?.value;
-        const msg = entry?.messages?.[0];
-        if (!msg) return;
-        const text =
-          msg.text?.body ?? msg.button?.text ?? msg.interactive?.list_reply?.title ?? "";
-        if (!text.trim()) return;
-        const inbound: InboundMessage = {
-          phone: msg.from,
-          text: text.trim(),
-          name: entry?.contacts?.[0]?.profile?.name,
-        };
-        await this.handler?.(inbound);
-      } catch (e) {
-        console.error("Cloud webhook error:", e);
-      }
-    });
-
-    await new Promise<void>((resolve) =>
-      this.app.listen(this.port, () => {
-        console.log(`✅ Cloud API webhook listening on :${this.port}/webhook`);
-        resolve();
-      }),
-    );
+  // Called by botSessionManager.routeCloudMessage() when a webhook message arrives.
+  async ingest(msg: InboundMessage): Promise<void> {
+    await this.handler?.(msg);
   }
 
   async sendText(phone: string, text: string): Promise<void> {
-    const url = `https://graph.facebook.com/v21.0/${config.cloud.phoneNumberId}/messages`;
+    const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
     const resp = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.cloud.token}`,
+        Authorization: `Bearer ${this.token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -76,7 +44,8 @@ export class CloudAdapter implements WhatsAppAdapter {
       }),
     });
     if (!resp.ok) {
-      console.error("Cloud send failed:", resp.status, await resp.text());
+      const err = await resp.text();
+      console.error(`[Cloud ${this.phoneNumberId}] sendText failed (${resp.status}):`, err);
     }
   }
 }

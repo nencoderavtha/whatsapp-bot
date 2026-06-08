@@ -1,8 +1,11 @@
 import { prisma } from "../db.js";
 import { BaileysAdapter } from "./baileys.js";
-import type { WhatsAppAdapter } from "./adapter.js";
+import { CloudAdapter } from "./cloud.js";
+import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
 import { handleIncoming } from "../ai/agent.js";
 import { getOrder } from "../services/order.js";
+import { config } from "../config.js";
+import { notifyAdminOfEvent } from "../services/events.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -55,11 +58,13 @@ async function notifyOwner(adapter: WhatsAppAdapter, restaurantId: number, order
 
 export class BotSessionManager {
   private sessions = new Map<number, WhatsAppAdapter>();
+  // Cloud API only: phoneNumberId → restaurantId for fast webhook routing
+  private phoneIdMap = new Map<string, number>();
 
   /** Start sessions for all active restaurants. */
   async startAll() {
     const restaurants = await prisma.botConfig.findMany({ where: { isActive: true } });
-    console.log(`🚀 Starting ${restaurants.length} bot session(s)...`);
+    console.log(`🚀 Starting ${restaurants.length} bot session(s) [provider: ${config.whatsappProvider}]...`);
     for (const r of restaurants) {
       await this.startSession(r.id, r.restaurantName).catch((e) =>
         console.error(`Failed to start session for restaurant ${r.id}:`, e),
@@ -76,16 +81,32 @@ export class BotSessionManager {
 
     const botCfg = await prisma.botConfig.findUnique({
       where: { id: restaurantId },
-      select: { whatsappPhone: true },
+      select: { whatsappPhone: true, cloudPhoneNumberId: true, cloudToken: true },
     });
-    const authDir = `sessions/restaurant-${restaurantId}`;
-    const adapter = new BaileysAdapter(authDir, restaurantId, botCfg?.whatsappPhone ?? undefined);
+
+    let adapter: WhatsAppAdapter;
+
+    if (config.whatsappProvider === "cloud") {
+      const phoneNumberId = botCfg?.cloudPhoneNumberId ?? config.cloud.phoneNumberId;
+      const token = botCfg?.cloudToken ?? config.cloud.token;
+      if (!phoneNumberId || !token) {
+        console.warn(`[r${restaurantId}] Cloud API not configured (missing phoneNumberId or token) — skipping.`);
+        return;
+      }
+      adapter = new CloudAdapter(phoneNumberId, token);
+      this.phoneIdMap.set(phoneNumberId, restaurantId);
+    } else {
+      const authDir = `sessions/restaurant-${restaurantId}`;
+      adapter = new BaileysAdapter(authDir, restaurantId, botCfg?.whatsappPhone ?? undefined);
+    }
 
     adapter.onMessage(async (msg) => {
       console.log(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
       try {
-        // Check if bot is paused before processing
-        const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId }, select: { botPaused: true, pauseMessage: true } });
+        const cfg = await prisma.botConfig.findUnique({
+          where: { id: restaurantId },
+          select: { botPaused: true, pauseMessage: true },
+        });
         if (cfg?.botPaused) {
           const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
           await sendHumanly(adapter, msg.phone, [pauseMsg]);
@@ -105,12 +126,35 @@ export class BotSessionManager {
     await adapter.start();
     this.sessions.set(restaurantId, adapter);
     console.log(`✅ Bot session started: ${restaurantName} (restaurant ${restaurantId})`);
+
+    // Cloud API is always connected — signal the dashboard immediately.
+    if (config.whatsappProvider === "cloud") {
+      await notifyAdminOfEvent("whatsapp_connected", {});
+    }
   }
 
   /** Stop a session (e.g. when a restaurant is deactivated). */
   stopSession(restaurantId: number) {
+    // Clean up Cloud phone ID mapping
+    for (const [phoneId, rId] of this.phoneIdMap.entries()) {
+      if (rId === restaurantId) this.phoneIdMap.delete(phoneId);
+    }
     this.sessions.delete(restaurantId);
     console.log(`🛑 Session removed for restaurant ${restaurantId}`);
+  }
+
+  /**
+   * Route an inbound Cloud webhook message to the correct restaurant's handler.
+   * Called by the admin server's POST /webhook route.
+   */
+  async routeCloudMessage(phoneNumberId: string, msg: InboundMessage): Promise<void> {
+    const restaurantId = this.phoneIdMap.get(phoneNumberId);
+    if (restaurantId === undefined) {
+      console.warn(`[Cloud] No session found for phoneNumberId=${phoneNumberId}`);
+      return;
+    }
+    const adapter = this.sessions.get(restaurantId) as CloudAdapter;
+    await adapter?.ingest(msg);
   }
 
   getSession(restaurantId: number): WhatsAppAdapter | undefined {

@@ -76,10 +76,22 @@ async function checkWAStatus() {
     currentQRString = state.qr || null;
     currentPairingCode = state.pairingCode || null;
     updateWAStatusUI(state);
+    updateProviderUI(state.provider || "baileys");
   } catch (e) {}
 }
 
-function updateWAStatusUI({ connected, qr, pairingCode }) {
+function updateProviderUI(provider) {
+  const isCloud = provider === "cloud";
+  // Cloud API fields in settings
+  document.getElementById("cloud-phone-section")?.classList.toggle("hidden", !isCloud);
+  document.getElementById("cloud-token-section")?.classList.toggle("hidden", !isCloud);
+  // Baileys-only pairing code field
+  document.getElementById("baileys-phone-section")?.classList.toggle("hidden", isCloud);
+  // Never show QR link button for Cloud (always connected via webhook)
+  if (isCloud) document.getElementById("btn-link-wa")?.classList.add("hidden");
+}
+
+function updateWAStatusUI({ connected, qr, pairingCode, provider }) {
   const el = document.getElementById("wa-status");
   const btn = document.getElementById("btn-link-wa");
   currentQRString = qr || null;
@@ -89,6 +101,11 @@ function updateWAStatusUI({ connected, qr, pairingCode }) {
     el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>WhatsApp Live`;
     btn.classList.add("hidden");
     closeQRModal();
+  } else if (provider === "cloud") {
+    // Cloud is configured but session hasn't started yet
+    el.className = "text-[10px] text-sky-400 font-bold uppercase tracking-widest -mt-1 flex items-center gap-1.5";
+    el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>Cloud API`;
+    btn.classList.add("hidden");
   } else {
     el.className = "text-[10px] text-amber-500 font-bold uppercase tracking-widest -mt-1 flex items-center gap-1.5";
     el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>Disconnected`;

@@ -166,6 +166,9 @@ model BotConfig {
   botPaused                  Boolean          @default(false)
   pauseMessage               String?
   whatsappPhone              String?          // e.g. "919876543210" — if set, uses pairing code instead of QR
+  // WhatsApp Cloud API (per-restaurant; token falls back to WHATSAPP_CLOUD_TOKEN env var)
+  cloudPhoneNumberId         String?
+  cloudToken                 String?
   // Payment settings
   requiresPaymentBeforeOrder Boolean          @default(false)
   upiId                      String?

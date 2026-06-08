@@ -23,8 +23,8 @@ async function getClient(restaurantId: number): Promise<Razorpay | null> {
     ? "razorpayKeySecret missing"
     : null;
 
-  if (missing) {
-    console.warn(`[Razorpay] r${restaurantId}: client not created — ${missing}`);
+  if (missing || !cfg) {
+    console.warn(`[Razorpay] r${restaurantId}: client not created — ${missing ?? "cfg null"}`);
     return null;
   }
   return new Razorpay({ key_id: cfg.razorpayKeyId!, key_secret: cfg.razorpayKeySecret! });

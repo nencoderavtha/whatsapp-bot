@@ -304,7 +304,7 @@
                 <input id="cfg-password" type="password" placeholder="Leave blank to keep current"
                   class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
-              <div class="md:col-span-2">
+              <div id="baileys-phone-section" class="md:col-span-2">
                 <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Bot WhatsApp Number — for pairing code (optional)</label>
                 <input id="cfg-wa-phone" type="text" placeholder="919876543210 — with country code, no + or spaces"
                   class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
@@ -312,6 +312,19 @@
                   Leave blank → QR scan (default). Fill this in → bot shows an 8-digit pairing code instead.
                   After saving, delete <code class="text-rose-400">sessions/restaurant-1/</code> and restart the bot.
                 </p>
+              </div>
+              <!-- Cloud API fields — shown only when WHATSAPP_PROVIDER=cloud -->
+              <div id="cloud-phone-section" class="md:col-span-2 hidden">
+                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">WhatsApp Phone Number ID <span class="text-rose-400 normal-case font-normal">required for Cloud API</span></label>
+                <input id="cfg-cloud-phone-id" type="text" placeholder="123456789012345"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
+                <p class="text-[10px] text-slate-500 mt-1">Meta Developer Console → WhatsApp → Phone Numbers → Phone Number ID</p>
+              </div>
+              <div id="cloud-token-section" class="md:col-span-2 hidden">
+                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Access Token <span class="text-slate-500 normal-case font-normal">(leave blank to use platform token from .env)</span></label>
+                <input id="cfg-cloud-token" type="password" placeholder="EAABxxxxxx… — leave blank to use WHATSAPP_CLOUD_TOKEN from .env"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
+                <p class="text-[10px] text-slate-500 mt-1">Per-restaurant token. Leave blank if all restaurants share one platform token set in .env.</p>
               </div>
             </div>
             <button onclick="window.saveRestaurantInfo()" class="mt-4 py-2 px-5 gradient-btn text-white rounded-xl text-xs font-semibold">Save</button>
