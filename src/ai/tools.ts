@@ -347,7 +347,7 @@ export async function runTool(
               alreadyPlaced: true,
               orderId: cart.confirmedOrderId,
               total: existing?.total,
-              note: "Already placed — reassure the customer with this order number. Do NOT place again.",
+              note: "Already placed — tell the customer their order number and reassure them it's confirmed. Do NOT place again.",
             },
           };
         }
@@ -391,10 +391,8 @@ export async function runTool(
             ok: true,
             orderId: order.id,
             total: order.total,
-            items: order.items.map((i) =>
-              i.variantSnap ? `${i.qty}x ${i.nameSnap} (${i.variantSnap})` : `${i.qty}x ${i.nameSnap}`
-            ),
             paymentRecorded: !!cart.paymentMethod,
+            note: "Order placed successfully. Send ONE short friendly confirmation message (1-2 sentences max, match customer language). Do NOT list the items or total — a formatted receipt is sent automatically.",
           },
           orderId: order.id,
         };

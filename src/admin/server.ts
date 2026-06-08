@@ -12,6 +12,7 @@ import { createOrder } from "../services/order.js";
 import { verifyWebhookSignature } from "../services/razorpay.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
 import type { InboundMessage } from "../whatsapp/adapter.js";
+import { orderStatusMsg, paymentReceivedMsg } from "../services/notifications.js";
 
 process.env.IS_ADMIN_SERVER = "true";
 
@@ -99,15 +100,17 @@ export function buildAdminApp() {
       });
 
       // Send WhatsApp confirmation to customer automatically
-      const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+      const [customer, cfg] = await Promise.all([
+        prisma.customer.findUnique({ where: { id: customerId } }),
+        prisma.botConfig.findUnique({ where: { id: restaurantId } }),
+      ]);
       if (customer) {
         const session = botSessionManager.getSession(restaurantId);
         if (session) {
           try {
-            await session.sendText(
-              customer.phone,
-              `Payment received ✅\nOrder #${order.id} confirmed!\nTotal: ₹${order.total}\nReady in about 20-25 minutes. Thank you!`,
-            );
+            const fullOrder = { ...order, customer };
+            const msg = paymentReceivedMsg(fullOrder, cfg?.restaurantName ?? "Restaurant");
+            await session.sendText(customer.phone, msg);
           } catch (e) {
             console.error(`[r${restaurantId}] WhatsApp confirmation failed:`, e);
           }
@@ -427,7 +430,23 @@ export function buildAdminApp() {
   });
 
   api.put("/orders/:id/status", async (req, res) => {
-    res.json(await setOrderStatus(Number(req.params.id), req.body.status));
+    const order = await setOrderStatus(Number(req.params.id), req.body.status);
+    res.json(order);
+
+    // Notify customer on meaningful status changes
+    const { status } = req.body;
+    if (["preparing", "ready", "delivered", "cancelled"].includes(status)) {
+      try {
+        const cfg = await prisma.botConfig.findUnique({ where: { id: order.restaurantId } });
+        const msg = orderStatusMsg(order, status, cfg?.restaurantName ?? "");
+        if (msg) {
+          const session = botSessionManager.getSession(order.restaurantId);
+          if (session) await session.sendText(order.customer.phone, msg);
+        }
+      } catch (e) {
+        console.error(`[r${order.restaurantId}] Status notify failed:`, e);
+      }
+    }
   });
 
   api.put("/orders/:id/payment", async (req, res) => {

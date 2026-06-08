@@ -6,6 +6,7 @@ import { handleIncoming } from "../ai/agent.js";
 import { getOrder } from "../services/order.js";
 import { config } from "../config.js";
 import { notifyAdminOfEvent } from "../services/events.js";
+import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,21 +32,14 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
 }
 
 async function notifyOwner(adapter: WhatsAppAdapter, restaurantId: number, orderId: number) {
-  const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-  const stored = cfg?.ownerNumbers ?? "";
-  const ownerNumbers = stored.split(",").map((s) => s.trim()).filter(Boolean);
-  if (!ownerNumbers.length) return;
-
-  const order = await getOrder(orderId);
+  const [cfg, order] = await Promise.all([
+    prisma.botConfig.findUnique({ where: { id: restaurantId } }),
+    getOrder(orderId),
+  ]);
   if (!order) return;
 
-  const lines = order.items.map((i) => `  ${i.qty}x ${i.nameSnap} (₹${i.priceSnap})`).join("\n");
-  const text =
-    `🔔 New order #${order.id} (${order.type})\n` +
-    `From: ${order.customer.name ?? order.customer.phone}\n` +
-    `${lines}\n` +
-    `Total: ₹${order.total}` +
-    (order.note ? `\nNote: ${order.note}` : "");
+  const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const text = ownerNewOrderMsg(order);
 
   for (const num of ownerNumbers) {
     try {
@@ -53,6 +47,20 @@ async function notifyOwner(adapter: WhatsAppAdapter, restaurantId: number, order
     } catch (e) {
       console.error(`[r${restaurantId}] Owner notify failed:`, e);
     }
+  }
+}
+
+async function sendOrderReceipt(adapter: WhatsAppAdapter, phone: string, restaurantId: number, orderId: number) {
+  try {
+    const [order, cfg] = await Promise.all([
+      getOrder(orderId),
+      prisma.botConfig.findUnique({ where: { id: restaurantId } }),
+    ]);
+    if (!order || !cfg) return;
+    await sleep(800);
+    await adapter.sendText(phone, orderConfirmationMsg(order, cfg.restaurantName));
+  } catch (e) {
+    console.error(`[r${restaurantId}] Receipt send failed:`, e);
   }
 }
 
@@ -116,7 +124,13 @@ export class BotSessionManager {
         const { reply, placedOrderId } = await handleIncoming(msg.phone, msg.text, restaurantId);
         console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
         await sendHumanly(adapter, msg.phone, splitBubbles(reply));
-        if (placedOrderId) await notifyOwner(adapter, restaurantId, placedOrderId);
+        if (placedOrderId) {
+          // Send formatted receipt to customer + notify owner in parallel
+          await Promise.all([
+            sendOrderReceipt(adapter, msg.phone, restaurantId, placedOrderId),
+            notifyOwner(adapter, restaurantId, placedOrderId),
+          ]);
+        }
       } catch (e) {
         console.error(`[${restaurantName}] Handler error:`, e);
         await adapter.sendText(msg.phone, "Sorry, please try again in a moment.");
