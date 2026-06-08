@@ -6,12 +6,10 @@ import {
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
-import qrcode from "qrcode-terminal";
 import pino from "pino";
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 
-const AUTH_DIR = "auth_session";
 // Baileys is very chatty and logs harmless "Bad MAC" / decryption / timeout errors at
 // error level. We silence its internal logger and rely on our own connection logs below.
 const logger = pino({ level: "silent" });
@@ -28,12 +26,18 @@ export class BaileysAdapter implements WhatsAppAdapter {
   // so we reply to the right address instead of guessing @s.whatsapp.net.
   private jidByPhone = new Map<string, string>();
 
+  constructor(
+    private authDir = "auth_session",
+    private restaurantId?: number,
+    private phoneNumber?: string,  // if set, uses pairing code instead of QR
+  ) {}
+
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void {
     this.handler = handler;
   }
 
   async start(): Promise<void> {
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({ version, auth: state, logger });
@@ -43,20 +47,35 @@ export class BaileysAdapter implements WhatsAppAdapter {
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
+      const rid = this.restaurantId;
       if (qr) {
-        console.log("\n📱 Scan this QR with WhatsApp (Linked Devices):\n");
-        qrcode.generate(qr, { small: true });
-        await notifyAdminOfEvent("qr_received", { qr });
+        if (this.phoneNumber) {
+          // Pairing code mode: request a code instead of showing the QR
+          try {
+            const code = await sock.requestPairingCode(this.phoneNumber);
+            console.log(`[r${rid ?? "?"}] Pairing code: ${code}`);
+            console.log(`   → WhatsApp → Linked Devices → Link with phone number → enter code`);
+            await notifyAdminOfEvent("pairing_code", { code, restaurantId: rid });
+          } catch (e) {
+            console.error(`[r${rid ?? "?"}] Pairing code failed, falling back to QR:`, e);
+            console.log(`[r${rid ?? "?"}] QR ready — open the admin dashboard to scan.`);
+            await notifyAdminOfEvent("qr_received", { qr, restaurantId: rid });
+          }
+        } else {
+          // QR mode: send to admin dashboard
+          console.log(`[r${rid ?? "?"}] QR ready — open the admin dashboard to scan.`);
+          await notifyAdminOfEvent("qr_received", { qr, restaurantId: rid });
+        }
       }
       if (connection === "open") {
-        console.log("✅ WhatsApp connected.");
-        await notifyAdminOfEvent("whatsapp_connected", {});
+        console.log(`[r${rid ?? "?"}] WhatsApp connected.`);
+        await notifyAdminOfEvent("whatsapp_connected", { restaurantId: rid });
       }
       if (connection === "close") {
         const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        await notifyAdminOfEvent("whatsapp_disconnected", { code });
+        await notifyAdminOfEvent("whatsapp_disconnected", { code, restaurantId: rid });
         if (code === DisconnectReason.loggedOut) {
-          console.log("⚠️  Logged out. Delete the auth_session/ folder and re-scan the QR.");
+          console.log(`[r${rid ?? "?"}] Logged out. Delete ${this.authDir}/ and re-scan from the dashboard.`);
           return; // don't reconnect — credentials are gone
         }
         if (code === DisconnectReason.connectionReplaced) {
@@ -69,7 +88,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
           );
           process.exit(1);
         }
-        console.log(`⚠️  Connection closed (code ${code}). Reconnecting...`);
+        console.log(`⚠️  Connection closed (code ${code}, restaurant ${this.restaurantId ?? ""}). Reconnecting...`);
         this.start();
       }
     });

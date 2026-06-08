@@ -1,67 +1,91 @@
 import { prisma } from "../db.js";
 
-/** Full menu grouped by category, only available items by default. */
-export async function getMenu(opts: { includeUnavailable?: boolean } = {}) {
+export async function getMenu(
+  restaurantId: number,
+  opts: { includeUnavailable?: boolean } = {},
+) {
   const categories = await prisma.category.findMany({
+    where: { restaurantId },
     orderBy: { sortOrder: "asc" },
     include: {
       items: {
         where: opts.includeUnavailable ? {} : { available: true },
         orderBy: { name: "asc" },
+        include: {
+          variants: {
+            where: opts.includeUnavailable ? {} : { available: true },
+            orderBy: { sortOrder: "asc" },
+          },
+        },
       },
     },
   });
   return categories.filter((c) => c.items.length > 0);
 }
 
-/**
- * Compact text version of the live menu, injected into the AI prompt.
- * Each item is prefixed with [id] so the model can call propose_order directly
- * without an extra menu-lookup round-trip (saves tokens + tool hops).
- */
-export async function menuAsText(): Promise<string> {
-  const cats = await getMenu();
-  const available =
-    cats.length === 0
-      ? "(The menu is currently empty.)"
-      : cats
-          .map((c) => {
-            const lines = c.items
-              .map(
-                (i) =>
-                  `  [${i.id}] ${i.name} — ₹${i.price}${i.isVeg ? " (veg)" : ""}${
-                    i.spiceLevel ? ` [${i.spiceLevel}]` : ""
-                  }${i.description ? ` — ${i.description}` : ""}`,
-              )
-              .join("\n");
-            return `${c.name}:\n${lines}`;
-          })
-          .join("\n\n");
+export async function menuAsText(restaurantId: number): Promise<string> {
+  const cats = await getMenu(restaurantId);
 
-  // Explicitly list today's sold-out items so the bot declines them even if they
-  // were discussed earlier in the chat (availability is toggled live from the admin portal).
-  const soldOut = await prisma.menuItem.findMany({
-    where: { available: false },
+  const availableLines: string[] = [];
+  const stockSoldOut: string[] = [];
+
+  for (const c of cats) {
+    const lines: string[] = [];
+    for (const i of c.items) {
+      // Items where stockCount hit 0 go to the sold-out section, not available
+      if (i.stockCount !== null && i.stockCount === 0) {
+        stockSoldOut.push(i.name);
+        continue;
+      }
+
+      const stockTag = i.stockCount !== null ? ` ⚠️ only ${i.stockCount} left` : "";
+
+      const flags = [
+        i.isVeg ? "(veg)" : "",
+        i.spiceLevel ? `[${i.spiceLevel}]` : "",
+        i.description ? `— ${i.description}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      if (i.variants.length > 0) {
+        const variantList = i.variants
+          .map((v) => `${v.name}[v${v.id}]₹${v.price}`)
+          .join(" | ");
+        lines.push(`  [${i.id}] ${i.name} ${flags}${stockTag}\n       ${variantList}`);
+      } else {
+        lines.push(`  [${i.id}] ${i.name} — ₹${i.price} ${flags}${stockTag}`.trimEnd());
+      }
+    }
+    if (lines.length > 0) availableLines.push(`${c.name}:\n${lines.join("\n")}`);
+  }
+
+  const available = availableLines.length === 0
+    ? "(The menu is currently empty.)"
+    : availableLines.join("\n\n");
+
+  // Combine DB-marked unavailable + zero-stock items
+  const dbSoldOut = await prisma.menuItem.findMany({
+    where: { available: false, restaurantId },
     select: { name: true },
   });
-  const soldOutLine = soldOut.length
-    ? `\n\nSOLD OUT right now (do NOT offer or accept these — say they just ran out and suggest an alternative): ${soldOut
-        .map((s) => s.name)
-        .join(", ")}`
+  const allSoldOut = [...dbSoldOut.map((s) => s.name), ...stockSoldOut];
+  const soldOutLine = allSoldOut.length
+    ? `\n\nSOLD OUT right now (do NOT accept orders for these): ${allSoldOut.join(", ")}`
     : "";
 
   return available + soldOutLine;
 }
 
-/** Fuzzy-ish lookup used by the AI tool to resolve a spoken item name to a row. */
-export async function findItems(query: string) {
+export async function findItems(restaurantId: number, query: string) {
   const q = query.trim().toLowerCase();
-  const all = await prisma.menuItem.findMany({ where: { available: true } });
-  // Prefer exact, then contains.
+  const all = await prisma.menuItem.findMany({
+    where: { available: true, restaurantId },
+    include: { variants: { where: { available: true } } },
+  });
   const exact = all.filter((i) => i.name.toLowerCase() === q);
   if (exact.length) return exact;
   return all.filter(
-    (i) =>
-      i.name.toLowerCase().includes(q) || q.includes(i.name.toLowerCase()),
+    (i) => i.name.toLowerCase().includes(q) || q.includes(i.name.toLowerCase()),
   );
 }

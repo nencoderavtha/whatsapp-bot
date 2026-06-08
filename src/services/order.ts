@@ -3,19 +3,24 @@ import { notifyAdminOfEvent } from "./events.js";
 
 export interface OrderLineInput {
   menuItemId: number;
+  variantId?: number;
   qty: number;
   note?: string;
 }
 
-/** Create an order, snapshotting names/prices so later menu edits don't change history. */
 export async function createOrder(params: {
   customerId: number;
+  restaurantId: number;
   lines: OrderLineInput[];
   type?: string;
   note?: string;
+  payment?: { method: string; reference?: string; status?: string; paidAt?: Date };
 }) {
   const ids = params.lines.map((l) => l.menuItemId);
-  const items = await prisma.menuItem.findMany({ where: { id: { in: ids } } });
+  const items = await prisma.menuItem.findMany({
+    where: { id: { in: ids } },
+    include: { variants: true },
+  });
   const byId = new Map(items.map((i) => [i.id, i]));
 
   let total = 0;
@@ -23,36 +28,61 @@ export async function createOrder(params: {
     const mi = byId.get(l.menuItemId);
     if (!mi) throw new Error(`Menu item ${l.menuItemId} not found`);
     const qty = Math.max(1, l.qty);
-    total += mi.price * qty;
+
+    let price = mi.price;
+    let variantSnap: string | undefined;
+
+    if (l.variantId) {
+      const variant = mi.variants.find((v) => v.id === l.variantId);
+      if (variant) {
+        price = variant.price;
+        variantSnap = variant.name;
+      }
+    }
+
+    total += price * qty;
     return {
       menuItemId: mi.id,
+      variantId: l.variantId ?? null,
+      variantSnap: variantSnap ?? null,
       nameSnap: mi.name,
-      priceSnap: mi.price,
+      priceSnap: price,
       qty,
       note: l.note,
+      restaurantId: params.restaurantId,
     };
   });
 
   const order = await prisma.order.create({
     data: {
       customerId: params.customerId,
+      restaurantId: params.restaurantId,
       type: params.type ?? "pickup",
       note: params.note,
       total,
       items: { create: orderItems },
+      ...(params.payment
+        ? {
+            payment: {
+              create: {
+                restaurantId: params.restaurantId,
+                status: params.payment.status ?? "pending",
+                method: params.payment.method,
+                reference: params.payment.reference ?? null,
+                paidAt: params.payment.paidAt ?? null,
+                amount: total,
+              },
+            },
+          }
+        : {}),
     },
-    include: { items: true, customer: true },
+    include: { items: true, customer: true, payment: true },
   });
 
   await notifyAdminOfEvent("order_created", order);
   return order;
 }
 
-/**
- * Find a non-cancelled order from this customer with the SAME cart placed in the
- * last `withinMinutes`. Used to make order placement idempotent so the AI can't
- * create duplicate orders if it calls place_order more than once.
- */
 export async function findRecentDuplicate(
   customerId: number,
   lines: OrderLineInput[],
@@ -65,25 +95,31 @@ export async function findRecentDuplicate(
     orderBy: { createdAt: "desc" },
   });
 
-  const want = new Map<number, number>();
-  for (const l of lines) want.set(l.menuItemId, (want.get(l.menuItemId) ?? 0) + Math.max(1, l.qty));
+  const want = new Map<string, number>();
+  for (const l of lines) {
+    const key = `${l.menuItemId}:${l.variantId ?? 0}`;
+    want.set(key, (want.get(key) ?? 0) + Math.max(1, l.qty));
+  }
 
   for (const o of recent) {
-    const have = new Map<number, number>();
-    for (const it of o.items) have.set(it.menuItemId, (have.get(it.menuItemId) ?? 0) + it.qty);
+    const have = new Map<string, number>();
+    for (const it of o.items) {
+      const key = `${it.menuItemId}:${it.variantId ?? 0}`;
+      have.set(key, (have.get(key) ?? 0) + it.qty);
+    }
     if (have.size !== want.size) continue;
     let same = true;
-    for (const [id, qty] of want) if (have.get(id) !== qty) { same = false; break; }
+    for (const [key, qty] of want) if (have.get(key) !== qty) { same = false; break; }
     if (same) return o;
   }
   return null;
 }
 
-export async function listOrders(status?: string) {
+export async function listOrders(restaurantId: number, status?: string) {
   return prisma.order.findMany({
-    where: status ? { status } : {},
+    where: { restaurantId, ...(status ? { status } : {}) },
     orderBy: { createdAt: "desc" },
-    include: { items: true, customer: true },
+    include: { items: true, customer: true, payment: true },
     take: 200,
   });
 }
@@ -92,7 +128,7 @@ export async function setOrderStatus(id: number, status: string) {
   const updated = await prisma.order.update({
     where: { id },
     data: { status },
-    include: { items: true, customer: true }
+    include: { items: true, customer: true, payment: true },
   });
   await notifyAdminOfEvent("order_updated", updated);
   return updated;
@@ -101,6 +137,19 @@ export async function setOrderStatus(id: number, status: string) {
 export async function getOrder(id: number) {
   return prisma.order.findUnique({
     where: { id },
-    include: { items: true, customer: true },
+    include: { items: true, customer: true, payment: true },
   });
+}
+
+export async function setPaymentStatus(
+  orderId: number,
+  status: string,
+  paidAt?: Date,
+) {
+  const updated = await prisma.payment.update({
+    where: { orderId },
+    data: { status, paidAt: paidAt ?? (status === "paid" ? new Date() : undefined) },
+  });
+  await notifyAdminOfEvent("payment_updated", { orderId, status });
+  return updated;
 }

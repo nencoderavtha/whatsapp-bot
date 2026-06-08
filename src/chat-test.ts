@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import { config } from "./config.js";
 import { handleIncoming } from "./ai/agent.js";
+import { getActiveRestaurant } from "./services/restaurant.js";
 
 /**
  * Terminal chat tester — talk to the bot without WhatsApp.
@@ -16,15 +17,19 @@ async function main() {
     );
     process.exit(1);
   }
+
+  const restaurant = await getActiveRestaurant();
+  const restaurantId = restaurant.id;
+
   console.log(`(using ${config.aiProvider} · ${config.aiModel})`);
-  console.log(`🍗 Chatting with ${config.restaurantName} (type 'exit' to quit)\n`);
+  console.log(`🍗 Chatting with ${restaurant.restaurantName} (type 'exit' to quit)\n`);
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = () =>
     rl.question("You: ", async (text) => {
       if (text.trim().toLowerCase() === "exit") return rl.close();
       try {
-        const { reply, placedOrderId } = await handleIncoming(FAKE_PHONE, text.trim());
+        const { reply, placedOrderId } = await handleIncoming(FAKE_PHONE, text.trim(), restaurantId);
         // Show each blank-line-separated part as its own bubble (like WhatsApp will).
         const bubbles = reply.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
         console.log();

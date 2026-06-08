@@ -3,9 +3,10 @@ import { config } from "../config.js";
 
 export const eventBus = new EventEmitter();
 
-// Global cache for WhatsApp connection state and latest QR code
+// Global cache for WhatsApp connection state, latest QR, and pairing code
 export const whatsappState = {
   lastQR: null as string | null,
+  lastPairingCode: null as string | null,
   connected: false,
 };
 
@@ -17,12 +18,19 @@ export async function notifyAdminOfEvent(type: string, data: any) {
   // Update local state cache
   if (type === "qr_received") {
     whatsappState.lastQR = data.qr;
+    whatsappState.lastPairingCode = null;
+    whatsappState.connected = false;
+  } else if (type === "pairing_code") {
+    whatsappState.lastPairingCode = data.code;
+    whatsappState.lastQR = null;
     whatsappState.connected = false;
   } else if (type === "whatsapp_connected") {
     whatsappState.lastQR = null;
+    whatsappState.lastPairingCode = null;
     whatsappState.connected = true;
   } else if (type === "whatsapp_disconnected") {
     whatsappState.lastQR = null;
+    whatsappState.lastPairingCode = null;
     whatsappState.connected = false;
   }
 

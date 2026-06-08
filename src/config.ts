@@ -73,6 +73,7 @@ export const config = {
 
   adminPort: Number(process.env.PORT ?? process.env.ADMIN_PORT ?? 4000),
   adminPassword: process.env.ADMIN_PASSWORD ?? "changeme",
+  jwtSecret: process.env.JWT_SECRET ?? "change-me-in-production",
 
   whatsappProvider: (process.env.WHATSAPP_PROVIDER ?? "baileys") as "baileys" | "cloud",
   cloud: {
