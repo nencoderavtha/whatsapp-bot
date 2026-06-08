@@ -158,7 +158,8 @@ export function buildAdminApp() {
     }
   });
 
-  // ── Public auth routes ──────────────────────────────────────────────────
+  // ── Public routes (no auth) ─────────────────────────────────────────────
+  app.get("/api/ping", (_req, res) => res.json({ ok: true }));
   app.post("/api/auth/login", loginHandler);
   app.post("/api/auth/logout", logoutHandler);
   app.post("/api/founder/auth/login", founderLoginHandler);
@@ -574,7 +575,6 @@ export function buildAdminApp() {
     });
   });
 
-  api.get("/ping", (_req, res) => res.json({ ok: true }));
 
   app.use("/api", api);
 
