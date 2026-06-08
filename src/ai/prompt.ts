@@ -1,15 +1,16 @@
 import { prisma } from "../db.js";
-import { menuAsText } from "../services/menu.js";
+import { menuAsText, menuForCustomer } from "../services/menu.js";
 
 export async function buildSystemPrompt(
   customerName: string | undefined,
   restaurantId: number,
   isFirstMessage: boolean,
 ): Promise<string> {
-  const [template, botConfig, menuText] = await Promise.all([
+  const [template, botConfig, menuText, greetMenu] = await Promise.all([
     prisma.promptTemplate.findFirst({ where: { restaurantId } }),
     prisma.botConfig.findFirst({ where: { id: restaurantId } }),
     menuAsText(restaurantId),
+    isFirstMessage ? menuForCustomer(restaurantId) : Promise.resolve(""),
   ]);
 
   if (!template) throw new Error(`No prompt template for restaurant ${restaurantId} — run: npm run db:seed`);
@@ -17,9 +18,18 @@ export async function buildSystemPrompt(
 
   let customerCtx: string;
   if (isFirstMessage && !customerName) {
-    customerCtx = `FIRST MESSAGE: This is the customer's very first message. Open with a warm, brief greeting that identifies you as the ordering assistant for ${botConfig.restaurantName}. Example: "Hi! I'm Rajamma, your ordering assistant for ${botConfig.restaurantName} 😊 What would you like to order today?" — keep it natural, one or two sentences max.`;
+    customerCtx = `FIRST MESSAGE — do ALL of these in your opening reply:
+1. Greet the customer warmly in 1 sentence (introduce yourself as the ordering assistant for ${botConfig.restaurantName}).
+2. Share the full menu below — use the exact WhatsApp formatting (bold category names, bullet items with prices).
+3. End with "What would you like to order? 😊"
+
+FULL MENU (copy this formatting exactly into your reply):
+${greetMenu}`;
   } else if (isFirstMessage && customerName) {
-    customerCtx = `FIRST MESSAGE: You know this customer as "${customerName}". Greet them by name briefly, then get right to taking their order.`;
+    customerCtx = `FIRST MESSAGE: You know this customer as "${customerName}". Greet them by name, show the full menu, then ask what they'd like to order.
+
+FULL MENU (show this in your reply):
+${greetMenu}`;
   } else if (customerName) {
     customerCtx = `You know this customer as "${customerName}". No need to re-introduce yourself.`;
   } else {

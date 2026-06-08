@@ -77,6 +77,29 @@ export async function menuAsText(restaurantId: number): Promise<string> {
   return available + soldOutLine;
 }
 
+/** Customer-facing menu for the greeting message — no internal IDs, clean WhatsApp formatting. */
+export async function menuForCustomer(restaurantId: number): Promise<string> {
+  const cats = await getMenu(restaurantId);
+  const sections: string[] = [];
+
+  for (const c of cats) {
+    const lines: string[] = [`*${c.name}*`];
+    for (const i of c.items) {
+      if (i.stockCount !== null && i.stockCount === 0) continue;
+      const veg = i.isVeg ? " 🌿" : "";
+      if (i.variants.length > 0) {
+        const vars = i.variants.map((v) => `${v.name} ₹${v.price}`).join(" / ");
+        lines.push(`  • ${i.name}${veg} — ${vars}`);
+      } else {
+        lines.push(`  • ${i.name}${veg} — ₹${i.price}`);
+      }
+    }
+    if (lines.length > 1) sections.push(lines.join("\n"));
+  }
+
+  return sections.length ? sections.join("\n\n") : "(Menu coming soon)";
+}
+
 export async function findItems(restaurantId: number, query: string) {
   const q = query.trim().toLowerCase();
   const all = await prisma.menuItem.findMany({
