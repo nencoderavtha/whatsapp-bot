@@ -4,6 +4,9 @@
   "description": "WhatsApp AI ordering agent for Military Rajamma Hotel, Hyderabad",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "prisma db push && tsx prisma/seed.ts && tsx src/index.ts",
