@@ -64,11 +64,16 @@ export async function saveRestaurantInfo() {
     ...(cloudToken ? { cloudToken } : {}),
   };
   try {
-    await api("/config", { method: "PUT", body: JSON.stringify(body) });
+    const result = await api("/config", { method: "PUT", body: JSON.stringify(body) });
     document.getElementById("cfg-password").value = "";
     const tokenEl = document.getElementById("cfg-cloud-token");
     if (tokenEl) tokenEl.value = "";
-    showToast("Saved", "Settings updated.");
+    if (result.sessionReset) {
+      showToast("WhatsApp number changed", "Session resetting — scan the new QR or enter the pairing code.");
+      setTimeout(() => window.openQRModal?.(), 1200);
+    } else {
+      showToast("Saved", "Settings updated.");
+    }
   } catch (e) {
     showToast("Error", "Could not save.");
   }

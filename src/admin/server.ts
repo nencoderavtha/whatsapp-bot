@@ -491,6 +491,11 @@ export function buildAdminApp() {
       botPaused, pauseMessage, whatsappPhone,
       cloudPhoneNumberId, cloudToken,
     } = req.body;
+
+    // Detect phone number change before saving (to decide if we need session reset)
+    const prev = await prisma.botConfig.findUnique({ where: { id: req.restaurantId }, select: { whatsappPhone: true } });
+    const phoneChanged = whatsappPhone !== undefined && (whatsappPhone || null) !== (prev?.whatsappPhone ?? null);
+
     const data: Record<string, unknown> = {};
     if (restaurantName !== undefined) data.restaurantName = restaurantName;
     if (restaurantCity !== undefined) data.restaurantCity = restaurantCity;
@@ -508,7 +513,18 @@ export function buildAdminApp() {
     if (whatsappPhone !== undefined) data.whatsappPhone = whatsappPhone || null;
     if (cloudPhoneNumberId !== undefined) data.cloudPhoneNumberId = cloudPhoneNumberId || null;
     if (cloudToken !== undefined && cloudToken) data.cloudToken = cloudToken;
-    res.json(await prisma.botConfig.update({ where: { id: req.restaurantId }, data }));
+
+    const updated = await prisma.botConfig.update({ where: { id: req.restaurantId }, data });
+
+    // Phone number changed → reset session so new pairing code / QR is issued automatically
+    if (phoneChanged && config.whatsappProvider === "baileys") {
+      botSessionManager.resetSession(req.restaurantId).catch((e) =>
+        console.error(`[r${req.restaurantId}] Auto session reset failed:`, e),
+      );
+      return res.json({ ...updated, sessionReset: true });
+    }
+
+    res.json(updated);
   });
 
   // --- Prompt Template ---
