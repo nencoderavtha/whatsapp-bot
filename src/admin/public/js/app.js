@@ -19,7 +19,7 @@ import { loadPayments } from "./payments.js";
 import { loadCustomers } from "./customers.js";
 import {
   loadSettings, saveRestaurantInfo, savePaymentConfig,
-  saveRazorpay, savePrompt, savePause, getCachedConfig, setCachedConfig,
+  saveRazorpay, savePause, getCachedConfig, setCachedConfig,
   togglePaymentExpand,
 } from "./settings.js";
 
@@ -36,7 +36,7 @@ Object.assign(window, {
   addVariant, updateVariant, delVariant,
   // payments (reuses same markPaid — both call same API)
   // settings
-  saveRestaurantInfo, savePaymentConfig, saveRazorpay, savePrompt,
+  saveRestaurantInfo, savePaymentConfig, saveRazorpay,
   savePause, togglePause, togglePauseFromSettings, togglePaymentExpand,
   // header
   openQRModal, closeQRModal, login, logout, resetWASession,

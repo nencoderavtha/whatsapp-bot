@@ -13,10 +13,6 @@ export async function loadSettings() {
   } catch (e) {
     showToast("Error", "Failed to load settings.");
   }
-  try {
-    const prompt = await api("/prompt");
-    document.getElementById("cfg-prompt").value = prompt.content || "";
-  } catch (e) {}
 }
 
 export function togglePaymentExpand(sectionId, show) {
@@ -149,18 +145,6 @@ export async function saveRazorpay() {
     showToast("Saved", "Razorpay settings updated.");
   } catch (e) {
     showToast("Error", "Could not save.");
-  }
-}
-
-export async function savePrompt() {
-  try {
-    await api("/prompt", {
-      method: "PUT",
-      body: JSON.stringify({ content: document.getElementById("cfg-prompt").value }),
-    });
-    showToast("Saved", "AI prompt template updated.");
-  } catch (e) {
-    showToast("Error", "Could not save prompt.");
   }
 }
 
