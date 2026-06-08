@@ -39,7 +39,7 @@ Object.assign(window, {
   saveRestaurantInfo, savePaymentConfig, saveRazorpay, savePrompt,
   savePause, togglePause, togglePauseFromSettings, togglePaymentExpand,
   // header
-  openQRModal, closeQRModal, login, logout,
+  openQRModal, closeQRModal, login, logout, resetWASession,
 });
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -94,12 +94,14 @@ function updateProviderUI(provider) {
 function updateWAStatusUI({ connected, qr, pairingCode, provider }) {
   const el = document.getElementById("wa-status");
   const btn = document.getElementById("btn-link-wa");
+  const btnReset = document.getElementById("btn-reset-session");
   currentQRString = qr || null;
   currentPairingCode = pairingCode || null;
   if (connected) {
     el.className = "text-[10px] text-green-400 font-bold uppercase tracking-widest -mt-1 flex items-center gap-1.5";
     el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>WhatsApp Live`;
     btn.classList.add("hidden");
+    btnReset?.classList.remove("hidden");
     closeQRModal();
   } else if (provider === "cloud") {
     // Cloud is configured but session hasn't started yet
@@ -110,8 +112,20 @@ function updateWAStatusUI({ connected, qr, pairingCode, provider }) {
     el.className = "text-[10px] text-amber-500 font-bold uppercase tracking-widest -mt-1 flex items-center gap-1.5";
     el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>Disconnected`;
     btn.classList.remove("hidden");
+    btnReset?.classList.add("hidden");
     const modal = document.getElementById("qr-modal");
     if (!modal.classList.contains("hidden")) renderLinkModal();
+  }
+}
+
+async function resetWASession() {
+  if (!confirm("This will clear the WhatsApp session and show a new QR code to re-link. Continue?")) return;
+  try {
+    await api("/session/reset", { method: "POST" });
+    showToast("Session Reset", "Scan the new QR code to reconnect WhatsApp.");
+    setTimeout(() => openQRModal(), 1500);
+  } catch (e) {
+    showToast("Error", "Could not reset session.");
   }
 }
 

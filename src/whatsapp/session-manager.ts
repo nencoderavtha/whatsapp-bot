@@ -171,6 +171,22 @@ export class BotSessionManager {
     await adapter?.ingest(msg);
   }
 
+  /**
+   * Clear the Baileys session files and restart — forces a fresh QR code.
+   * Use when session keys are corrupted (Bad MAC / key counter errors).
+   */
+  async resetSession(restaurantId: number): Promise<void> {
+    const existing = this.sessions.get(restaurantId);
+    if (existing instanceof BaileysAdapter) {
+      await existing.stop(true); // stop + delete session files
+    }
+    this.stopSession(restaurantId);
+
+    const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+    if (!cfg) throw new Error(`Restaurant ${restaurantId} not found`);
+    await this.startSession(restaurantId, cfg.restaurantName);
+  }
+
   getSession(restaurantId: number): WhatsAppAdapter | undefined {
     return this.sessions.get(restaurantId);
   }

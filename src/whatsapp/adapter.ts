@@ -5,6 +5,8 @@
 export interface WhatsAppAdapter {
   /** Start the connection (QR for Baileys, webhook server for Cloud). */
   start(): Promise<void>;
+  /** Gracefully stop the connection. */
+  stop?(): Promise<void>;
   /** Send a text message to a phone number (digits only, e.g. "919876543210"). */
   sendText(phone: string, text: string): Promise<void>;
   /** Show the "typing…" indicator to the customer (optional; no-op if unsupported). */

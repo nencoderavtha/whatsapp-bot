@@ -7,6 +7,7 @@ import {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
+import fs from "node:fs";
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 
@@ -22,6 +23,7 @@ function jidToPhone(jid: string): string {
 export class BaileysAdapter implements WhatsAppAdapter {
   private sock?: WASocket;
   private handler?: (msg: InboundMessage) => Promise<void>;
+  private stopped = false;
   // Remember the exact JID each customer messaged from (may be @lid, not the phone),
   // so we reply to the right address instead of guessing @s.whatsapp.net.
   private jidByPhone = new Map<string, string>();
@@ -88,6 +90,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
           );
           process.exit(1);
         }
+        if (this.stopped) return; // intentional stop — don't reconnect
         console.log(`⚠️  Connection closed (code ${code}, restaurant ${this.restaurantId ?? ""}). Reconnecting...`);
         this.start();
       }
@@ -134,6 +137,17 @@ export class BaileysAdapter implements WhatsAppAdapter {
   /** The exact JID to reply to (stored from the inbound message), else best-guess. */
   private jidFor(phone: string): string {
     return this.jidByPhone.get(phone) ?? `${phone}@s.whatsapp.net`;
+  }
+
+  /** Disconnect and optionally wipe session files (forces fresh QR on next start). */
+  async stop(clearSession = false): Promise<void> {
+    this.stopped = true;
+    try { this.sock?.end(undefined); } catch {}
+    this.sock = undefined;
+    if (clearSession && fs.existsSync(this.authDir)) {
+      fs.rmSync(this.authDir, { recursive: true, force: true });
+      console.log(`[r${this.restaurantId ?? "?"}] Session files cleared from ${this.authDir}`);
+    }
   }
 
   async setTyping(phone: string, on: boolean): Promise<void> {
