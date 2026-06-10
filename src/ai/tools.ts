@@ -207,12 +207,10 @@ export async function runTool(
         // Fetch restaurant payment config to pre-inform the bot
         const restaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
 
-        const razorpayReady = !!(
-          restaurant?.razorpayEnabled &&
-          restaurant.razorpayKeyId &&
-          restaurant.razorpayKeySecret
-        );
-        const requiresPayment = !!restaurant?.requiresPaymentBeforeOrder;
+        // Razorpay is active whenever both keys are present — ignores the toggle.
+        const razorpayReady = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
+        // Payment is always required before confirming an order.
+        const requiresPayment = true;
 
         let paymentNote: string;
         let upiPayLink: string | undefined;
@@ -305,13 +303,11 @@ export async function runTool(
 
         // ── Payment gate (BEFORE dedup/idempotency check) ─────────────────────
         const restaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
-        const razorpayConfigured = !!(
-          restaurant?.razorpayEnabled &&
-          restaurant.razorpayKeyId &&
-          restaurant.razorpayKeySecret
-        );
+        // Razorpay active when both keys present — ignores toggle.
+        const razorpayConfigured = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
 
-        if (restaurant?.requiresPaymentBeforeOrder) {
+        // Payment is always required.
+        {
           // If Razorpay is configured, payment must arrive via webhook — never manually confirm
           if (razorpayConfigured) {
             return {
@@ -324,15 +320,15 @@ export async function runTool(
               },
             };
           }
-          // Manual payment (UPI) — must have a recorded payment reference
+          // Manual payment (UPI) — must have a recorded payment method
           if (!cart.paymentMethod) {
             return {
               output: {
                 ok: false,
                 requiresPayment: true,
-                upiId: restaurant.upiId,
-                paymentMethods: restaurant.paymentMethods,
-                error: `Payment required. Share the UPI ID ${restaurant.upiId ?? ""} and ask the customer to pay. Once they confirm payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
+                upiId: restaurant?.upiId,
+                paymentMethods: restaurant?.paymentMethods,
+                error: `Payment required. Share the UPI ID ${restaurant?.upiId ?? ""} and ask the customer to pay. Once they confirm payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
               },
             };
           }

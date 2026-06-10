@@ -357,9 +357,17 @@ export function buildAdminApp() {
 
   api.delete("/categories/:id", async (req, res) => {
     const id = Number(req.params.id);
-    await prisma.category.delete({ where: { id } });
-    await notifyAdminOfEvent("menu_updated", { type: "category_deleted", id });
-    res.json({ ok: true });
+    try {
+      await prisma.category.delete({ where: { id } });
+      await notifyAdminOfEvent("menu_updated", { type: "category_deleted", id });
+      res.json({ ok: true });
+    } catch (e: any) {
+      if (e?.code === "P2003") {
+        res.status(409).json({ error: "Cannot delete — this category has items referenced by existing orders. Remove those orders first or soft-delete items instead." });
+      } else {
+        res.status(500).json({ error: e?.message ?? "Delete failed" });
+      }
+    }
   });
 
   // --- Menu items ---
@@ -405,9 +413,17 @@ export function buildAdminApp() {
 
   api.delete("/items/:id", async (req, res) => {
     const id = Number(req.params.id);
-    await prisma.menuItem.delete({ where: { id } });
-    await notifyAdminOfEvent("menu_updated", { type: "item_deleted", id });
-    res.json({ ok: true });
+    try {
+      await prisma.menuItem.delete({ where: { id } });
+      await notifyAdminOfEvent("menu_updated", { type: "item_deleted", id });
+      res.json({ ok: true });
+    } catch (e: any) {
+      if (e?.code === "P2003") {
+        res.status(409).json({ error: "Cannot delete — this item appears in existing orders. Toggle it unavailable instead." });
+      } else {
+        res.status(500).json({ error: e?.message ?? "Delete failed" });
+      }
+    }
   });
 
   // --- Menu item variants ---

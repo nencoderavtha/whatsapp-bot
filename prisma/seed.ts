@@ -236,11 +236,11 @@ async function main() {
   });
   console.log("✅ Seeded bot config.");
 
-  // Prompt template — always update so re-seeding picks up prompt changes
+  // Prompt template — only create if none exists; never overwrite a custom prompt
   await prisma.promptTemplate.upsert({
     where: { id: 1 },
     create: { content: PROMPT_TEMPLATE, restaurantId: 1 },
-    update: { content: PROMPT_TEMPLATE },
+    update: {},
   });
   console.log("✅ Seeded prompt template.");
 
@@ -264,33 +264,34 @@ async function main() {
   }
   console.log("✅ Seeded tool definitions.");
 
-  let sort = 0;
-  for (const [catName, items] of Object.entries(MENU)) {
-    const cat = await prisma.category.upsert({
-      where: { name_restaurantId: { name: catName, restaurantId: 1 } },
-      update: { sortOrder: sort },
-      create: { name: catName, sortOrder: sort, restaurantId: 1 },
-    });
-    sort++;
-    for (const it of items) {
-      const existing = await prisma.menuItem.findFirst({
-        where: { name: it.name, categoryId: cat.id },
+  // Menu — only seed if the restaurant has no menu items at all (first-time setup).
+  // Once the owner has customised the menu, redeploys must never touch it.
+  const existingItemCount = await prisma.menuItem.count({ where: { restaurantId: 1 } });
+  if (existingItemCount === 0) {
+    let sort = 0;
+    for (const [catName, items] of Object.entries(MENU)) {
+      const cat = await prisma.category.create({
+        data: { name: catName, sortOrder: sort, restaurantId: 1 },
       });
-      if (existing) continue;
-      await prisma.menuItem.create({
-        data: {
-          name: it.name,
-          price: it.price,
-          description: it.desc,
-          isVeg: it.veg ?? false,
-          spiceLevel: it.spice,
-          categoryId: cat.id,
-          restaurantId: 1,
-        },
-      });
+      sort++;
+      for (const it of items) {
+        await prisma.menuItem.create({
+          data: {
+            name: it.name,
+            price: it.price,
+            description: it.desc,
+            isVeg: it.veg ?? false,
+            spiceLevel: it.spice,
+            categoryId: cat.id,
+            restaurantId: 1,
+          },
+        });
+      }
     }
+    console.log("✅ Seeded menu (first-time setup).");
+  } else {
+    console.log(`⏭️  Skipped menu seed — ${existingItemCount} items already exist.`);
   }
-  console.log("✅ Seeded menu.");
 }
 
 main()

@@ -74,8 +74,14 @@ export async function addCategory() {
 
 export async function delCategory(id) {
   if (!confirm("Delete this category and ALL its dishes?")) return;
-  await api("/categories/" + id, { method: "DELETE" });
-  loadMenu();
+  try {
+    await api("/categories/" + id, { method: "DELETE" });
+    loadMenu();
+  } catch (e) {
+    let msg = e?.message ?? "Delete failed";
+    try { msg = JSON.parse(msg).error ?? msg; } catch {}
+    showToast("Cannot Delete", msg);
+  }
 }
 
 export async function addItem() {
@@ -105,8 +111,14 @@ export async function toggleAvail(id, available) {
 
 export async function delItem(id) {
   if (!confirm("Delete this dish?")) return;
-  await api("/items/" + id, { method: "DELETE" });
-  loadMenu();
+  try {
+    await api("/items/" + id, { method: "DELETE" });
+    loadMenu();
+  } catch (e) {
+    let msg = e?.message ?? "Delete failed";
+    try { msg = JSON.parse(msg).error ?? msg; } catch {}
+    showToast("Cannot Delete", msg);
+  }
 }
 
 // ── Edit Item Modal ────────────────────────────────────────────────────────

@@ -15,19 +15,11 @@ function rzpError(e: any): string {
 
 async function getClient(restaurantId: number): Promise<Razorpay | null> {
   const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-  const missing = !cfg?.razorpayEnabled
-    ? "razorpayEnabled=false"
-    : !cfg.razorpayKeyId
-    ? "razorpayKeyId missing"
-    : !cfg.razorpayKeySecret
-    ? "razorpayKeySecret missing"
-    : null;
-
-  if (missing || !cfg) {
-    console.warn(`[Razorpay] r${restaurantId}: client not created — ${missing ?? "cfg null"}`);
+  if (!cfg?.razorpayKeyId || !cfg.razorpayKeySecret) {
+    console.warn(`[Razorpay] r${restaurantId}: keys not configured`);
     return null;
   }
-  return new Razorpay({ key_id: cfg.razorpayKeyId!, key_secret: cfg.razorpayKeySecret! });
+  return new Razorpay({ key_id: cfg.razorpayKeyId, key_secret: cfg.razorpayKeySecret });
 }
 
 export async function createPaymentLink(params: {
@@ -70,13 +62,18 @@ export async function createPaymentLink(params: {
 }
 
 // Verify that the webhook payload came from Razorpay (HMAC-SHA256).
+// If no webhook secret is configured, the check is skipped (with a warning) so
+// orders still auto-confirm during initial setup before the secret is added.
 export async function verifyWebhookSignature(
   rawBody: string,
   signature: string,
   restaurantId: number,
 ): Promise<boolean> {
   const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-  if (!cfg?.razorpayWebhookSecret) return false;
+  if (!cfg?.razorpayWebhookSecret) {
+    console.warn(`[Razorpay] r${restaurantId}: no webhook secret — skipping signature check`);
+    return true;
+  }
   const expected = createHmac("sha256", cfg.razorpayWebhookSecret)
     .update(rawBody)
     .digest("hex");

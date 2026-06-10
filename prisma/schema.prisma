@@ -140,9 +140,9 @@ model OrderItem {
   orderId      Int
   restaurant   BotConfig        @relation(fields: [restaurantId], references: [id])
   restaurantId Int
-  menuItem     MenuItem         @relation(fields: [menuItemId], references: [id])
-  menuItemId   Int
-  variant      MenuItemVariant? @relation(fields: [variantId], references: [id])
+  menuItem     MenuItem?        @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  menuItemId   Int?
+  variant      MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
   variantId    Int?
   nameSnap     String           // item name at order time
   variantSnap  String?          // variant name at order time (e.g. "Half")
