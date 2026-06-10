@@ -2,6 +2,7 @@ import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
 import { createPaymentLink } from "../services/razorpay.js";
+import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate } from "./templates.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 export interface PendingCart {
@@ -87,7 +88,7 @@ export async function runTool(
   restaurantId: number,
   name: string,
   args: Record<string, any>,
-): Promise<{ output: unknown; orderId?: number }> {
+): Promise<{ output: unknown; orderId?: number; templateReply?: string }> {
   try {
     switch (name) {
 
@@ -258,6 +259,7 @@ export async function runTool(
             paymentMethods: paymentPath === "manual" ? restaurant?.paymentMethods : undefined,
             note: paymentNote,
           },
+          templateReply: orderStagedTemplate(labels, total, args.type ?? "pickup", args.note),
         };
       }
 
@@ -388,9 +390,10 @@ export async function runTool(
             orderId: order.id,
             total: order.total,
             paymentRecorded: !!cart.paymentMethod,
-            note: "Order placed successfully. Send ONE short friendly confirmation message (1-2 sentences max, match customer language). Do NOT list the items or total — a formatted receipt is sent automatically.",
+            note: "Order placed. templateReply will be sent — do NOT generate your own confirmation.",
           },
           orderId: order.id,
+          templateReply: orderConfirmedTemplate(),
         };
       }
 
@@ -469,8 +472,9 @@ export async function runTool(
             ok: true,
             url: link.url,
             total,
-            note: `MANDATORY: Your reply MUST include the payment URL on its own line exactly as shown — do not paraphrase or describe it without including it:\n${link.url}\nAfter the URL tell the customer their order confirms automatically once they pay. Do NOT call confirm_order.`,
+            note: "Payment link generated. templateReply will be used — do NOT generate your own message.",
           },
+          templateReply: paymentLinkTemplate(link.url, total),
         };
       }
 

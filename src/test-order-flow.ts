@@ -25,8 +25,15 @@ async function main() {
   // Clean up any previous test session
   const existing = await prisma.customer.findFirst({ where: { phone: PHONE, restaurantId: RESTAURANT_ID } });
   if (existing) {
+    const orders = await prisma.order.findMany({ where: { customerId: existing.id }, select: { id: true } });
+    const orderIds = orders.map(o => o.id);
     await prisma.pendingOrder.deleteMany({ where: { customerId: existing.id } });
     await prisma.message.deleteMany({ where: { customerId: existing.id } });
+    if (orderIds.length) {
+      await prisma.payment.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    }
     await prisma.customer.delete({ where: { id: existing.id } });
     console.log("(cleaned up previous test session)\n");
   }

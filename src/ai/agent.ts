@@ -1,9 +1,12 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 import { buildSystemPrompt } from "./prompt.js";
+import { greetingTemplate } from "./templates.js";
 import { getOrCreateCustomer, logMessage, recentMessages } from "../services/customer.js";
 import { getEnabledTools, runTool } from "./tools.js";
 import { completeChat } from "./llm.js";
+import { prisma } from "../db.js";
+import { menuForCustomer } from "../services/menu.js";
 
 export interface AgentResult {
   reply: string;
@@ -59,6 +62,21 @@ async function processIncoming(
   // First message = only the current user message exists in history
   const isFirstMessage = history.length === 1;
 
+  // ── First message: skip LLM entirely, reply with greeting + menu template ──
+  if (isFirstMessage) {
+    const [cfg, menuText] = await Promise.all([
+      prisma.botConfig.findUnique({ where: { id: restaurantId } }),
+      menuForCustomer(restaurantId),
+    ]);
+    const reply = greetingTemplate(
+      cfg?.restaurantName ?? "us",
+      customer.name ?? undefined,
+      menuText,
+    );
+    await logMessage(customer.id, restaurantId, "assistant", reply);
+    return { reply };
+  }
+
   const [system, tools] = await Promise.all([
     buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage, customer.id),
     getEnabledTools(restaurantId),
@@ -75,7 +93,7 @@ async function processIncoming(
   ];
 
   let placedOrderId: number | undefined;
-  let pendingPaymentUrl: string | undefined;
+  let templateReply: string | undefined;
   let finalText = "";
 
   for (let hop = 0; hop < 6; hop++) {
@@ -83,7 +101,7 @@ async function processIncoming(
       messages,
       tools,
       temperature: 0.3,
-      maxTokens: isFirstMessage ? 900 : 400,
+      maxTokens: 400,
     });
 
     if (!toolCalls.length) {
@@ -108,14 +126,10 @@ async function processIncoming(
       }
 
       console.log(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
-      const { output, orderId } = await runTool(customer.id, restaurantId, tc.function.name, args);
+      const { output, orderId, templateReply: tr } = await runTool(customer.id, restaurantId, tc.function.name, args);
       console.log(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
       if (orderId) placedOrderId = orderId;
-
-      // Track payment link URL so we can guarantee it reaches the customer
-      if (tc.function.name === "generate_payment_link" && (output as any)?.url) {
-        pendingPaymentUrl = (output as any).url;
-      }
+      if (tr) templateReply = tr; // last tool with a template wins
 
       messages.push({
         role: "tool",
@@ -123,14 +137,12 @@ async function processIncoming(
         content: JSON.stringify(output),
       } as any);
     }
+
+    // If a tool provided a fixed reply, use it and skip further LLM generation
+    if (templateReply) break;
   }
 
-  if (!finalText) finalText = "Sorry, please retry again after sometime?";
-
-  // If a payment link was generated but the model forgot to include the URL, inject it.
-  if (pendingPaymentUrl && !finalText.includes(pendingPaymentUrl)) {
-    finalText = finalText.trimEnd() + "\n\n" + pendingPaymentUrl;
-  }
+  finalText = templateReply ?? (finalText || "Sorry, please try again in a moment.");
 
   await logMessage(customer.id, restaurantId, "assistant", finalText);
   return { reply: finalText, placedOrderId };
