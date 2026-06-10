@@ -75,6 +75,7 @@ async function processIncoming(
   ];
 
   let placedOrderId: number | undefined;
+  let pendingPaymentUrl: string | undefined;
   let finalText = "";
 
   for (let hop = 0; hop < 6; hop++) {
@@ -111,6 +112,11 @@ async function processIncoming(
       console.log(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
       if (orderId) placedOrderId = orderId;
 
+      // Track payment link URL so we can guarantee it reaches the customer
+      if (tc.function.name === "generate_payment_link" && (output as any)?.url) {
+        pendingPaymentUrl = (output as any).url;
+      }
+
       messages.push({
         role: "tool",
         tool_call_id: tc.id,
@@ -120,6 +126,12 @@ async function processIncoming(
   }
 
   if (!finalText) finalText = "Sorry, please retry again after sometime?";
+
+  // If a payment link was generated but the model forgot to include the URL, inject it.
+  if (pendingPaymentUrl && !finalText.includes(pendingPaymentUrl)) {
+    finalText = finalText.trimEnd() + "\n\n" + pendingPaymentUrl;
+  }
+
   await logMessage(customer.id, restaurantId, "assistant", finalText);
   return { reply: finalText, placedOrderId };
 }

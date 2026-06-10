@@ -469,7 +469,7 @@ export async function runTool(
             ok: true,
             url: link.url,
             total,
-            note: "Share this payment link with the customer. Order will be automatically confirmed once they pay — do NOT call confirm_order manually.",
+            note: `MANDATORY: Your reply MUST include the payment URL on its own line exactly as shown — do not paraphrase or describe it without including it:\n${link.url}\nAfter the URL tell the customer their order confirms automatically once they pay. Do NOT call confirm_order.`,
           },
         };
       }
