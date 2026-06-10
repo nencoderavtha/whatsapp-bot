@@ -2,8 +2,8 @@
 <html lang="en" class="dark h-full">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Military Rajamma Hotel — Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Admin Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <script>
@@ -13,502 +13,540 @@
     };
   </script>
   <style>
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: rgba(15,23,42,.3); }
-    ::-webkit-scrollbar-thumb { background: rgba(148,163,184,.2); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.4); }
+    ::-webkit-scrollbar-thumb { background: rgba(148,163,184,.18); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.35); }
     .glass {
-      background: rgba(30,41,59,.7);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,.05);
+      background: rgba(30,41,59,.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,.06);
     }
-    .gradient-btn { background: linear-gradient(135deg,#fb7185 0%,#e11d48 100%); transition: all .3s; }
-    .gradient-btn:hover { opacity: .95; box-shadow: 0 0 15px rgba(225,29,72,.4); }
-    .animate-fade-in { animation: fadeIn .4s cubic-bezier(.16,1,.3,1) forwards; }
-    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-    .toast-enter { animation: slideIn .3s cubic-bezier(.16,1,.3,1) forwards; }
-    @keyframes slideIn { from{transform:translateX(100%);opacity:0} to{transform:translateX(0);opacity:1} }
+    .gradient-btn { background: linear-gradient(135deg,#fb7185 0%,#e11d48 100%); transition: all .25s; }
+    .gradient-btn:hover { opacity: .92; box-shadow: 0 0 18px rgba(225,29,72,.35); }
+    .animate-fade-in { animation: fadeIn .35s cubic-bezier(.16,1,.3,1) forwards; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    .toast-enter { animation: slideUp .3s cubic-bezier(.16,1,.3,1) forwards; }
+    @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
+    button:disabled { opacity: 0.55; cursor: not-allowed; pointer-events: none; }
+    /* Bottom nav safe area */
+    .nav-safe { padding-bottom: env(safe-area-inset-bottom, 0); }
+    /* Content safe area below bottom nav */
+    .content-safe { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 4px)); }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 h-full flex flex-col antialiased">
 
-  <!-- Toast Container -->
-  <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+  <!-- Toast: bottom-center on mobile (above bottom nav), top-right on desktop -->
+  <div id="toast-container" class="fixed z-[60] flex flex-col gap-2 pointer-events-none
+    bottom-20 left-3 right-3
+    md:bottom-auto md:top-4 md:left-auto md:right-4 md:w-80 md:max-w-sm"></div>
 
-  <!-- ── Login Screen ─────────────────────────────────────────────────────── -->
+  <!-- ── Login ─────────────────────────────────────────────────────────────── -->
   <div id="login" class="min-h-screen flex items-center justify-center bg-slate-950 px-4 relative overflow-hidden">
-    <div class="absolute w-[400px] h-[400px] rounded-full bg-rose-600/10 blur-[100px] -top-20 -left-20"></div>
-    <div class="absolute w-[400px] h-[400px] rounded-full bg-amber-600/10 blur-[100px] -bottom-20 -right-20"></div>
-    <div class="glass rounded-3xl p-8 w-full max-w-md shadow-2xl relative z-10">
+    <div class="absolute w-[500px] h-[500px] rounded-full bg-rose-600/8 blur-[120px] -top-24 -left-24 pointer-events-none"></div>
+    <div class="absolute w-[500px] h-[500px] rounded-full bg-amber-600/8 blur-[120px] -bottom-24 -right-24 pointer-events-none"></div>
+    <div class="glass rounded-3xl p-8 w-full max-w-sm shadow-2xl relative z-10">
       <div class="text-center mb-8">
-        <span class="text-4xl">🍗</span>
-        <h1 class="text-3xl font-extrabold tracking-tight mt-3 mb-1">Military Rajamma</h1>
-        <p class="text-slate-400 text-sm">Hotel WhatsApp Agent Dashboard</p>
+        <div class="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-3xl mx-auto mb-4">🍗</div>
+        <h1 id="login-restaurant-name" class="text-2xl font-extrabold tracking-tight">Restaurant Admin</h1>
+        <p class="text-slate-500 text-sm mt-1">WhatsApp Bot Dashboard</p>
       </div>
-      <div class="space-y-4">
-        <div>
-          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Password</label>
-          <input id="pw" type="password" placeholder="••••••••"
-            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
-        </div>
-        <button onclick="window.login()" class="w-full gradient-btn text-white rounded-xl py-3 font-semibold">Enter Dashboard</button>
-        <p id="loginErr" class="text-rose-400 text-sm text-center font-medium hidden">⚠️ Access Denied. Wrong Password.</p>
-        <div class="pt-2 text-center">
-          <a href="/founder.html" class="text-xs text-slate-500 hover:text-slate-300 transition-colors">Founder Panel →</a>
+      <div class="space-y-3">
+        <input id="pw" type="password" placeholder="Enter password"
+          class="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
+        <button onclick="window.login()" class="w-full gradient-btn text-white rounded-2xl py-3.5 font-bold text-sm">
+          Enter Dashboard
+        </button>
+        <p id="loginErr" class="text-rose-400 text-sm text-center font-medium hidden">Wrong password. Try again.</p>
+        <div class="pt-1 text-center">
+          <a href="/founder.html" class="text-xs text-slate-600 hover:text-slate-400 transition-colors">Founder Panel →</a>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ── Main App ─────────────────────────────────────────────────────────── -->
+  <!-- ── Main App ──────────────────────────────────────────────────────────── -->
   <div id="app" class="hidden h-full flex flex-col">
 
     <!-- Header -->
-    <header class="glass sticky top-0 z-40 border-b border-slate-900">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-3 flex-wrap">
-        <div class="flex items-center gap-3 mr-2">
-          <span class="text-2xl">🍗</span>
-          <div>
-            <h1 class="font-extrabold text-lg tracking-tight">Military Rajamma</h1>
-            <p id="wa-status" class="text-[10px] text-slate-400 font-bold uppercase tracking-widest -mt-1 flex items-center gap-1.5">
-              <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse"></span>Checking...
+    <header class="glass sticky top-0 z-40 border-b border-slate-900/80">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center gap-3">
+
+        <!-- Brand -->
+        <div class="flex items-center gap-2.5 flex-shrink-0">
+          <div class="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-rose-500/10 border border-rose-500/15 flex items-center justify-center text-lg md:text-xl flex-shrink-0">🍗</div>
+          <div class="min-w-0">
+            <h1 id="restaurant-name" class="font-extrabold text-sm md:text-base tracking-tight truncate max-w-[140px] md:max-w-none">Restaurant</h1>
+            <p id="wa-status" class="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse"></span>Checking…
             </p>
           </div>
         </div>
 
-        <!-- Tab Navigation -->
-        <nav class="flex gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800 flex-1 overflow-x-auto min-w-0">
-          <button data-tab="orders"    class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap">Orders</button>
-          <button data-tab="livechat"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap">Chats</button>
-          <button data-tab="menu"      class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap">Menu</button>
-          <button data-tab="payments"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap">Payments</button>
-          <button data-tab="customers" class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap">Customers</button>
-          <button data-tab="settings"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap">Settings</button>
+        <!-- Desktop tab nav (hidden on mobile — replaced by bottom nav) -->
+        <nav class="hidden md:flex gap-0.5 bg-slate-900/70 p-1 rounded-xl border border-slate-800/80 flex-1 overflow-x-auto mx-2">
+          <button data-tab="orders" class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 text-slate-400">
+            Orders
+            <span id="orders-pending-badge" class="hidden bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-tight">0</span>
+          </button>
+          <button data-tab="livechat"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Chats</button>
+          <button data-tab="menu"      class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Menu</button>
+          <button data-tab="payments"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Payments</button>
+          <button data-tab="customers" class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Customers</button>
+          <button data-tab="settings"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Settings</button>
         </nav>
 
-        <div class="flex items-center gap-2 ml-auto flex-shrink-0">
-          <button id="btn-pause" onclick="window.togglePause()" class="hidden text-xs px-3 py-1.5 rounded-xl font-bold border transition-all"></button>
-          <button id="btn-link-wa" onclick="window.openQRModal()" class="hidden text-xs bg-rose-950 text-rose-400 border border-rose-500/30 px-3 py-1.5 rounded-xl font-bold hover:bg-rose-900/40 transition-all animate-pulse">
-            📱 Link WhatsApp
+        <!-- Action buttons -->
+        <div class="flex items-center gap-1.5 ml-auto flex-shrink-0">
+          <button id="btn-pause" onclick="window.togglePause()" class="hidden text-xs px-2.5 md:px-3 py-1.5 rounded-xl font-bold border transition-all"></button>
+          <button id="btn-link-wa" onclick="window.openQRModal()" class="hidden text-xs bg-rose-950 text-rose-400 border border-rose-500/30 px-2.5 py-1.5 rounded-xl font-bold hover:bg-rose-900/40 transition-all animate-pulse">
+            📱 <span class="hidden md:inline">Link WhatsApp</span>
           </button>
-          <button id="btn-reset-session" onclick="window.resetWASession()" class="hidden text-xs bg-amber-950 text-amber-400 border border-amber-500/30 px-3 py-1.5 rounded-xl font-bold hover:bg-amber-900/40 transition-all" title="Clear corrupted session and get a fresh QR code">
-            🔄 Reset Session
+          <button id="btn-reset-session" onclick="window.resetWASession()" class="hidden text-xs bg-amber-950 text-amber-400 border border-amber-500/30 px-2.5 py-1.5 rounded-xl font-bold hover:bg-amber-900/40 transition-all" title="Reset session">
+            🔄 <span class="hidden md:inline">Reset</span>
           </button>
-          <button onclick="window.logout()" class="text-xs font-semibold text-slate-400 hover:text-rose-400 transition-colors">Logout 🚪</button>
+          <!-- Logout: text on desktop, icon on mobile -->
+          <button onclick="window.logout()" class="hidden md:block text-xs font-semibold text-slate-500 hover:text-rose-400 transition-colors px-2 py-1">Logout</button>
+          <button onclick="window.logout()" class="md:hidden w-8 h-8 flex items-center justify-center text-slate-500 hover:text-rose-400 transition-colors rounded-lg" title="Logout">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          </button>
         </div>
       </div>
     </header>
 
     <!-- Main Content -->
-    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 overflow-hidden flex flex-col">
+    <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 md:pt-5 content-safe md:pb-6 overflow-auto md:overflow-hidden flex flex-col min-h-0">
 
-      <!-- ── ORDERS ────────────────────────────────────────────────────────── -->
-      <section id="tab-orders" class="tab-panel h-full flex flex-col hidden animate-fade-in">
-        <div class="flex items-center justify-between mb-4 flex-shrink-0 flex-wrap gap-2">
+      <!-- ── ORDERS ─────────────────────────────────────────────────────────── -->
+      <section id="tab-orders" class="tab-panel flex flex-col hidden animate-fade-in min-h-0 h-full">
+        <div class="flex items-start justify-between mb-3 flex-shrink-0 gap-3 flex-wrap">
           <div>
-            <h2 class="text-xl font-bold">Incoming Orders</h2>
-            <p class="text-xs text-slate-400">Live updates via SSE</p>
+            <h2 class="text-lg md:text-xl font-bold">Live Orders</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Tap action buttons to advance order status</p>
           </div>
-          <div class="flex items-center gap-2">
-            <select id="order-filter" onchange="window.loadOrders?.()"
-              class="bg-slate-900 border border-slate-800 rounded-lg text-xs px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-rose-500">
-              <option value="">All</option>
-              <option value="pending">Pending</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="preparing">Preparing</option>
-              <option value="ready">Ready</option>
-              <option value="delivered">Delivered</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-            <button onclick="window.loadOrders?.()" class="bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors">↻</button>
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex bg-slate-900/80 border border-slate-800 rounded-xl p-1 gap-0.5 text-[11px] font-semibold">
+              <button onclick="document.getElementById('order-filter').value='';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-300" data-val="">All</button>
+              <button onclick="document.getElementById('order-filter').value='pending';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-amber-400" data-val="pending">Pending</button>
+              <button onclick="document.getElementById('order-filter').value='preparing';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-indigo-400" data-val="preparing">Cooking</button>
+              <button onclick="document.getElementById('order-filter').value='ready';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-emerald-400" data-val="ready">Ready</button>
+            </div>
+            <select id="order-filter" class="hidden"></select>
+            <button onclick="window.loadOrders?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm hover:bg-slate-800 transition-colors flex items-center justify-center" title="Refresh">↻</button>
           </div>
         </div>
-        <div class="flex-1 overflow-y-auto pr-1">
-          <div id="orders" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        <div class="flex-1 overflow-y-auto -mx-1 px-1">
+          <div id="orders" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3 pb-2"></div>
         </div>
       </section>
 
-      <!-- ── LIVE CHAT ─────────────────────────────────────────────────────── -->
-      <section id="tab-livechat" class="tab-panel h-full flex gap-4 hidden animate-fade-in overflow-hidden">
-        <div class="w-72 glass rounded-2xl flex flex-col overflow-hidden border border-slate-900 flex-shrink-0">
-          <div class="p-4 border-b border-slate-900 bg-slate-900/30 flex justify-between items-center">
-            <h3 class="font-bold text-sm">Conversations</h3>
-            <span id="chat-count" class="text-[10px] bg-rose-950 text-rose-400 px-2 py-0.5 rounded-full font-bold">0</span>
+      <!-- ── LIVE CHAT ──────────────────────────────────────────────────────── -->
+      <section id="tab-livechat" class="tab-panel hidden animate-fade-in h-full min-h-0">
+        <div class="h-full flex md:gap-4">
+
+          <!-- Thread list: full-width on mobile, sidebar on desktop -->
+          <div id="chat-threads-panel" class="flex flex-col w-full md:w-72 md:flex-shrink-0 glass md:rounded-2xl overflow-hidden border-0 md:border md:border-slate-900">
+            <div class="p-3.5 md:p-4 border-b border-slate-900 bg-slate-900/30 flex justify-between items-center flex-shrink-0">
+              <h3 class="font-bold text-sm">Conversations</h3>
+              <span id="chat-count" class="text-[10px] bg-rose-950 text-rose-400 px-2 py-0.5 rounded-full font-bold border border-rose-500/20">0</span>
+            </div>
+            <div id="chat-threads" class="flex-1 overflow-y-auto divide-y divide-slate-900/60"></div>
           </div>
-          <div id="chat-threads" class="flex-1 overflow-y-auto divide-y divide-slate-900"></div>
-        </div>
-        <div class="flex-1 flex gap-4 overflow-hidden h-full">
-          <div class="flex-1 glass rounded-2xl flex flex-col overflow-hidden border border-slate-900">
-            <div class="p-4 border-b border-slate-900 bg-slate-900/30 flex items-center gap-3">
-              <div id="chat-avatar" class="w-9 h-9 rounded-full bg-rose-600/20 border border-rose-500/20 flex items-center justify-center font-bold text-rose-400">?</div>
-              <div>
-                <h4 id="chat-title" class="font-bold text-sm">Select a Conversation</h4>
-                <p id="chat-subtitle" class="text-xs text-slate-400">Choose from the sidebar</p>
+
+          <!-- Chat + profile: hidden on mobile until thread selected, flex on desktop -->
+          <div id="chat-main-panel" class="hidden md:flex flex-1 gap-4 overflow-hidden min-w-0">
+            <!-- Chat window -->
+            <div class="flex-1 glass md:rounded-2xl flex flex-col overflow-hidden border-0 md:border md:border-slate-900 min-w-0">
+              <div class="p-3 md:p-4 border-b border-slate-900 bg-slate-900/30 flex items-center gap-2.5 flex-shrink-0">
+                <button id="btn-back-to-threads" onclick="window.showChatThreads()"
+                  class="md:hidden flex items-center gap-1 text-rose-400 font-bold text-sm py-1 pr-2 -ml-1 flex-shrink-0">
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                </button>
+                <div id="chat-avatar" class="w-8 h-8 md:w-9 md:h-9 rounded-full bg-rose-600/20 border border-rose-500/20 flex items-center justify-center font-bold text-rose-400 text-sm flex-shrink-0">?</div>
+                <div class="min-w-0 flex-1">
+                  <h4 id="chat-title" class="font-bold text-sm truncate">Select a Conversation</h4>
+                  <p id="chat-subtitle" class="text-xs text-slate-400 truncate">Choose from the list</p>
+                </div>
+              </div>
+              <div id="chat-messages" class="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 bg-slate-950/20">
+                <div class="h-full flex items-center justify-center text-slate-500 text-sm">Select a conversation</div>
               </div>
             </div>
-            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950/20">
-              <div class="h-full flex items-center justify-center text-slate-500 text-sm">Select a conversation to view</div>
-            </div>
-          </div>
-          <div class="w-64 glass rounded-2xl p-4 flex flex-col gap-4 border border-slate-900 overflow-y-auto flex-shrink-0">
-            <h3 class="font-bold text-sm border-b border-slate-900 pb-2">Customer Profile</h3>
-            <div id="no-profile-selected" class="text-slate-500 text-xs text-center py-8">No customer selected</div>
-            <div id="profile-details" class="hidden space-y-3">
-              <input type="hidden" id="cust-id" />
-              <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Phone</label>
-                <div id="cust-phone" class="text-xs font-mono bg-slate-900/60 p-2 rounded-lg border border-slate-800 text-slate-300"></div>
+            <!-- Customer profile: desktop only -->
+            <div class="hidden md:flex flex-col w-60 glass rounded-2xl p-4 gap-3 border border-slate-900 overflow-y-auto flex-shrink-0">
+              <h3 class="font-bold text-sm border-b border-slate-900 pb-2 flex-shrink-0">Customer</h3>
+              <div id="no-profile-selected" class="text-slate-500 text-xs text-center py-8">No customer selected</div>
+              <div id="profile-details" class="hidden space-y-3">
+                <input type="hidden" id="cust-id" />
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Phone</label>
+                  <div id="cust-phone" class="text-xs font-mono bg-slate-900/60 px-3 py-2 rounded-lg border border-slate-800 text-slate-300"></div>
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Name</label>
+                  <input id="cust-name" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Address</label>
+                  <textarea id="cust-address" rows="2" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 resize-none"></textarea>
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Notes</label>
+                  <textarea id="cust-notes" rows="2" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 resize-none"></textarea>
+                </div>
+                <button onclick="window.saveCustProfile()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-slate-700 transition-colors">Save</button>
               </div>
-              <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Name</label>
-                <input id="cust-name" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-              </div>
-              <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Address</label>
-                <textarea id="cust-address" rows="2" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 resize-none"></textarea>
-              </div>
-              <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Notes</label>
-                <textarea id="cust-notes" rows="2" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 resize-none"></textarea>
-              </div>
-              <button onclick="window.saveCustProfile()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold border border-slate-700">Save</button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- ── MENU ──────────────────────────────────────────────────────────── -->
-      <section id="tab-menu" class="tab-panel h-full flex flex-col hidden animate-fade-in overflow-hidden">
-        <div class="grid md:grid-cols-3 gap-6 h-full overflow-hidden">
-          <!-- Forms -->
-          <div class="md:col-span-1 space-y-4 overflow-y-auto pr-1">
-            <div class="glass rounded-2xl p-5 border border-slate-900">
+      <!-- ── MENU ───────────────────────────────────────────────────────────── -->
+      <section id="tab-menu" class="tab-panel hidden animate-fade-in">
+        <!-- On mobile: stack (menu list first, then add forms). On desktop: 3-col grid -->
+        <div class="flex flex-col md:grid md:grid-cols-3 md:gap-6 md:h-full md:overflow-hidden gap-4">
+
+          <!-- Add forms (order-2 on mobile = below menu list) -->
+          <div class="order-2 md:order-1 md:col-span-1 space-y-4 md:overflow-y-auto md:pr-1">
+            <div class="glass rounded-2xl p-4 md:p-5 border border-slate-900">
               <h3 class="font-bold text-sm mb-3 text-slate-300">📂 Add Category</h3>
               <input id="catName" placeholder="e.g. Mutton Specials"
-                class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 mb-3 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-              <button onclick="window.addCategory()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition-all">Add Category</button>
+                class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 mb-3 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              <button onclick="window.addCategory()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-semibold transition-all">Add Category</button>
             </div>
-            <div class="glass rounded-2xl p-5 border border-slate-900">
+            <div class="glass rounded-2xl p-4 md:p-5 border border-slate-900">
               <h3 class="font-bold text-sm mb-3 text-slate-300">🍳 Add Dish</h3>
               <div class="space-y-2.5">
-                <input id="itName" placeholder="Dish name" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <input id="itName" placeholder="Dish name" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 <div class="grid grid-cols-2 gap-2">
-                  <input id="itPrice" type="number" placeholder="Price (₹)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                  <select id="itCat" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-rose-500"></select>
+                  <input id="itPrice" type="number" placeholder="Price (₹)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                  <select id="itCat" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-3 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-rose-500"></select>
                 </div>
-                <input id="itDesc" placeholder="Description (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                <input id="itSpice" placeholder="Spice level (e.g. Spicy)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <input id="itDesc" placeholder="Description (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <input id="itSpice" placeholder="Spice level (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Stock (units) — blank = unlimited</label>
-                  <input id="itStock" type="number" min="0" placeholder="∞ Unlimited" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                  <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1.5">Stock — blank = unlimited</label>
+                  <input id="itStock" type="number" min="0" placeholder="∞ Unlimited" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 </div>
-                <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                  <input type="checkbox" id="itVeg" class="rounded border-slate-800 bg-slate-900" /> 🟢 Vegetarian
+                <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer py-1">
+                  <input type="checkbox" id="itVeg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian
                 </label>
-                <button onclick="window.addItem()" class="w-full py-2.5 gradient-btn text-white rounded-xl text-xs font-semibold">Add Dish</button>
+                <button onclick="window.addItem()" class="w-full py-3 gradient-btn text-white rounded-xl text-sm font-bold">Add Dish</button>
               </div>
             </div>
           </div>
-          <!-- Menu list -->
-          <div class="md:col-span-2 flex flex-col overflow-hidden h-full">
+
+          <!-- Menu list (order-1 = first on mobile) -->
+          <div class="order-1 md:order-2 md:col-span-2 flex flex-col md:overflow-hidden md:h-full">
             <div class="flex justify-between items-center mb-3 flex-shrink-0">
-              <h2 class="text-xl font-bold">Menu</h2>
-              <button onclick="window.loadMenu?.()" class="text-xs text-rose-400 font-semibold">↻ Reload</button>
+              <h2 class="text-lg md:text-xl font-bold">Menu</h2>
+              <button onclick="window.loadMenu?.()" class="text-xs text-rose-400 font-semibold hover:text-rose-300 transition-colors">↻ Reload</button>
             </div>
-            <div id="menu" class="flex-grow overflow-y-auto space-y-4 pr-1"></div>
+            <div id="menu" class="md:flex-grow md:overflow-y-auto space-y-4 md:pr-1"></div>
           </div>
         </div>
       </section>
 
-      <!-- ── PAYMENTS ──────────────────────────────────────────────────────── -->
-      <section id="tab-payments" class="tab-panel h-full flex flex-col hidden animate-fade-in">
-        <div class="flex items-center justify-between mb-4 flex-shrink-0">
+      <!-- ── PAYMENTS ───────────────────────────────────────────────────────── -->
+      <section id="tab-payments" class="tab-panel h-full flex flex-col hidden animate-fade-in min-h-0">
+        <div class="flex items-center justify-between mb-3 flex-shrink-0">
           <div>
-            <h2 class="text-xl font-bold">Payments</h2>
-            <p class="text-xs text-slate-400">All payment records</p>
+            <h2 class="text-lg md:text-xl font-bold">Payments</h2>
+            <p class="text-xs text-slate-500 mt-0.5">All payment records</p>
           </div>
-          <button onclick="window.loadPayments?.()" class="bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-slate-800">↻ Refresh</button>
+          <button onclick="window.loadPayments?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm font-semibold hover:bg-slate-800 flex items-center justify-center transition-colors">↻</button>
         </div>
-        <div class="flex-1 overflow-y-auto pr-1">
-          <div class="glass rounded-2xl overflow-hidden border border-slate-900">
+        <div class="flex-1 overflow-auto -mx-1 px-1">
+          <div class="glass rounded-2xl overflow-hidden border border-slate-900 min-w-[500px] md:min-w-0">
             <table class="w-full text-xs">
               <thead>
                 <tr class="border-b border-slate-900 bg-slate-900/50 text-slate-400 text-[10px] uppercase tracking-wider">
-                  <th class="px-4 py-3 text-left">Order</th>
-                  <th class="px-4 py-3 text-left">Customer</th>
-                  <th class="px-4 py-3 text-left">Amount</th>
-                  <th class="px-4 py-3 text-left">Method</th>
-                  <th class="px-4 py-3 text-left">Status</th>
-                  <th class="px-4 py-3 text-left">Date</th>
-                  <th class="px-4 py-3 text-left">Actions</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Order</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Customer</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Amount</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Method</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Status</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Date</th>
+                  <th class="px-3 md:px-4 py-3 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody id="payments-tbody" class="divide-y divide-slate-900/60"></tbody>
             </table>
-            <div id="payments-empty" class="hidden py-16 text-center text-slate-500">No payment records yet.</div>
+            <div id="payments-empty" class="hidden py-16 text-center text-slate-500 text-sm">No payment records yet.</div>
           </div>
         </div>
       </section>
 
-      <!-- ── CUSTOMERS ─────────────────────────────────────────────────────── -->
-      <section id="tab-customers" class="tab-panel h-full flex flex-col hidden animate-fade-in overflow-hidden">
-        <h2 class="text-xl font-bold mb-3 flex-shrink-0">Registered Customers</h2>
-        <div class="flex-grow overflow-y-auto pr-1">
-          <div id="customers" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+      <!-- ── CUSTOMERS ──────────────────────────────────────────────────────── -->
+      <section id="tab-customers" class="tab-panel h-full flex flex-col hidden animate-fade-in min-h-0">
+        <h2 class="text-lg md:text-xl font-bold mb-3 flex-shrink-0">Customers</h2>
+        <div class="flex-1 overflow-y-auto -mx-1 px-1">
+          <div id="customers" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
         </div>
       </section>
 
-      <!-- ── SETTINGS ──────────────────────────────────────────────────────── -->
-      <section id="tab-settings" class="tab-panel h-full flex flex-col hidden animate-fade-in overflow-hidden">
-        <h2 class="text-xl font-bold mb-4 flex-shrink-0">Settings</h2>
-        <div class="flex-1 overflow-y-auto pr-1 space-y-5">
+      <!-- ── SETTINGS ───────────────────────────────────────────────────────── -->
+      <section id="tab-settings" class="tab-panel h-full flex flex-col hidden animate-fade-in min-h-0">
+        <div class="flex items-center justify-between mb-4 flex-shrink-0">
+          <h2 class="text-lg md:text-xl font-bold">Settings</h2>
+          <!-- Logout in settings on mobile -->
+          <button onclick="window.logout()" class="md:hidden text-xs text-slate-400 hover:text-rose-400 font-semibold px-3 py-2 rounded-xl border border-slate-800 hover:border-rose-500/30 transition-all">
+            Logout
+          </button>
+        </div>
+        <div class="flex-1 overflow-y-auto -mx-1 px-1 space-y-4">
 
           <!-- Bot Control -->
-          <div class="glass rounded-2xl p-6 border border-slate-900">
+          <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
             <h3 class="font-bold text-sm mb-4">⚡ Bot Control</h3>
             <div class="space-y-4">
               <div class="flex items-center justify-between">
                 <div>
                   <p class="text-sm font-semibold text-slate-200">Bot Status</p>
-                  <p class="text-xs text-slate-400">Toggle the WhatsApp bot on or off</p>
+                  <p class="text-xs text-slate-500 mt-0.5">Toggle WhatsApp bot on / off</p>
                 </div>
-                <button id="pause-toggle-btn" onclick="window.togglePauseFromSettings()" class="px-5 py-2 rounded-xl text-xs font-bold border transition-all">Loading...</button>
+                <button id="pause-toggle-btn" onclick="window.togglePauseFromSettings()" class="px-4 py-2 rounded-xl text-xs font-bold border transition-all">Loading…</button>
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pause Message (sent to customers when bot is off)</label>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Pause Message</label>
                 <textarea id="cfg-pauseMessage" rows="2"
                   placeholder="Sorry, we're temporarily unavailable. We'll be back shortly!"
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 resize-none"></textarea>
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 resize-none"></textarea>
               </div>
-              <button onclick="window.savePause()" class="py-2 px-5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold border border-slate-700">Save Pause Message</button>
+              <button onclick="window.savePause()" class="py-2.5 px-5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-slate-700 transition-colors">Save Pause Message</button>
             </div>
           </div>
 
           <!-- Restaurant Info -->
-          <div class="glass rounded-2xl p-6 border border-slate-900">
+          <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
             <h3 class="font-bold text-sm mb-4">🏪 Restaurant Info</h3>
-            <div class="grid md:grid-cols-2 gap-4">
+            <div class="grid md:grid-cols-2 gap-3 md:gap-4">
               <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Restaurant Name</label>
-                <input id="cfg-name" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Restaurant Name</label>
+                <input id="cfg-name" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">City</label>
-                <input id="cfg-city" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">City</label>
+                <input id="cfg-city" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div class="md:col-span-2">
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Owner WhatsApp Numbers (comma-separated, with country code)</label>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Owner Numbers (comma-separated, with country code)</label>
                 <input id="cfg-owners" type="text" placeholder="919876543210, 917654321098"
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Dashboard Password</label>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Dashboard Password</label>
                 <input id="cfg-password" type="password" placeholder="Leave blank to keep current"
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div id="baileys-phone-section" class="md:col-span-2">
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Bot WhatsApp Number — for pairing code (optional)</label>
-                <input id="cfg-wa-phone" type="text" placeholder="919876543210 — with country code, no + or spaces"
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
-                <p class="text-[10px] text-slate-500 mt-1">
-                  Leave blank → QR scan (default). Fill this in → bot sends an 8-digit pairing code to your WhatsApp.
-                  Changing this automatically resets the session and shows the new QR / pairing code.
-                </p>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Bot WhatsApp Number (for pairing code)</label>
+                <input id="cfg-wa-phone" type="text" placeholder="919876543210 — no + or spaces"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
+                <p class="text-[11px] text-slate-600 mt-1.5">Leave blank → QR scan. Fill in → pairing code mode. Changing this auto-resets the session.</p>
               </div>
-              <!-- Cloud API fields — shown only when WHATSAPP_PROVIDER=cloud -->
               <div id="cloud-phone-section" class="md:col-span-2 hidden">
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">WhatsApp Phone Number ID <span class="text-rose-400 normal-case font-normal">required for Cloud API</span></label>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">WhatsApp Phone Number ID</label>
                 <input id="cfg-cloud-phone-id" type="text" placeholder="123456789012345"
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
-                <p class="text-[10px] text-slate-500 mt-1">Meta Developer Console → WhatsApp → Phone Numbers → Phone Number ID</p>
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
               </div>
               <div id="cloud-token-section" class="md:col-span-2 hidden">
-                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Access Token <span class="text-slate-500 normal-case font-normal">(leave blank to use platform token from .env)</span></label>
-                <input id="cfg-cloud-token" type="password" placeholder="EAABxxxxxx… — leave blank to use WHATSAPP_CLOUD_TOKEN from .env"
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
-                <p class="text-[10px] text-slate-500 mt-1">Per-restaurant token. Leave blank if all restaurants share one platform token set in .env.</p>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Access Token</label>
+                <input id="cfg-cloud-token" type="password" placeholder="EAABxxxxxx…"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
               </div>
             </div>
-            <button onclick="window.saveRestaurantInfo()" class="mt-4 py-2 px-5 gradient-btn text-white rounded-xl text-xs font-semibold">Save</button>
+            <button onclick="window.saveRestaurantInfo()" class="mt-4 py-2.5 px-5 gradient-btn text-white rounded-xl text-sm font-bold">Save</button>
           </div>
 
           <!-- Payment Methods -->
-          <div class="glass rounded-2xl p-6 border border-slate-900">
+          <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
             <h3 class="font-bold text-sm mb-1">💳 Payment Methods</h3>
-            <p class="text-xs text-slate-400 mb-4">Choose which payment methods your restaurant accepts</p>
-
+            <p class="text-xs text-slate-500 mb-4">Choose which payment methods your restaurant accepts</p>
             <div class="space-y-2">
-
-              <!-- Cash -->
-              <div class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-                <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors">
+              <div class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+                <label class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-800/30 transition-colors">
                   <input type="checkbox" id="pm-cash" value="cash" class="rounded border-slate-700 bg-slate-800 h-4 w-4 accent-rose-500 shrink-0" />
                   <span class="text-base leading-none shrink-0">💵</span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-xs font-semibold text-slate-200">Cash</p>
-                    <p class="text-[10px] text-slate-400">Customer pays cash at pickup or delivery</p>
+                    <p class="text-sm font-semibold text-slate-200">Cash</p>
+                    <p class="text-xs text-slate-500">Customer pays cash at pickup or delivery</p>
                   </div>
                 </label>
               </div>
-
-              <!-- UPI — expands to show UPI ID field -->
-              <div class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-                <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors">
+              <div class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+                <label class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-800/30 transition-colors">
                   <input type="checkbox" id="pm-upi" value="upi" class="rounded border-slate-700 bg-slate-800 h-4 w-4 accent-rose-500 shrink-0"
                     onchange="window.togglePaymentExpand('upi-expand', this.checked)" />
                   <span class="text-base leading-none shrink-0">📱</span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-xs font-semibold text-slate-200">UPI</p>
-                    <p class="text-[10px] text-slate-400">GPay, PhonePe, Paytm — customer pays manually</p>
+                    <p class="text-sm font-semibold text-slate-200">UPI</p>
+                    <p class="text-xs text-slate-500">GPay, PhonePe, Paytm</p>
                   </div>
                 </label>
                 <div id="upi-expand" class="hidden border-t border-slate-800 px-4 pb-4 pt-3">
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">UPI ID <span class="text-rose-400 normal-case font-normal">required</span></label>
+                  <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">UPI ID <span class="text-rose-400 normal-case font-normal">required</span></label>
                   <input id="cfg-upi" type="text" placeholder="yourname@upi"
-                    class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                  <p class="text-[10px] text-slate-500 mt-1.5">Bot shares this ID with customers so they can pay and share the UTR</p>
+                    class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 </div>
               </div>
-
-              <!-- Card -->
-              <div class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-                <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors">
+              <div class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+                <label class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-800/30 transition-colors">
                   <input type="checkbox" id="pm-card" value="card" class="rounded border-slate-700 bg-slate-800 h-4 w-4 accent-rose-500 shrink-0" />
                   <span class="text-base leading-none shrink-0">💳</span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-xs font-semibold text-slate-200">Card</p>
-                    <p class="text-[10px] text-slate-400">Credit / debit card at your POS terminal</p>
+                    <p class="text-sm font-semibold text-slate-200">Card</p>
+                    <p class="text-xs text-slate-500">Credit / debit at POS terminal</p>
                   </div>
                 </label>
               </div>
-
-              <!-- Online / Razorpay — expands to show Razorpay config -->
-              <div class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-                <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors">
+              <div class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+                <label class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-800/30 transition-colors">
                   <input type="checkbox" id="pm-online" value="online" class="rounded border-slate-700 bg-slate-800 h-4 w-4 accent-rose-500 shrink-0"
                     onchange="window.togglePaymentExpand('online-expand', this.checked)" />
                   <span class="text-base leading-none shrink-0">🌐</span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-xs font-semibold text-slate-200">Online — Razorpay</p>
-                    <p class="text-[10px] text-slate-400">Bot sends a payment link; order auto-confirms when customer pays</p>
+                    <p class="text-sm font-semibold text-slate-200">Online — Razorpay</p>
+                    <p class="text-xs text-slate-500">Bot sends payment link; auto-confirms on pay</p>
                   </div>
                 </label>
                 <div id="online-expand" class="hidden border-t border-slate-800 px-4 pb-4 pt-3 space-y-3">
                   <label class="flex items-center gap-3 cursor-pointer">
                     <input type="checkbox" id="cfg-rzpEnabled" class="rounded border-slate-700 bg-slate-800 h-4 w-4 accent-rose-500 shrink-0" />
                     <div>
-                      <p class="text-xs font-semibold text-slate-200">Enable Razorpay Payment Links</p>
-                      <p class="text-[10px] text-slate-400">Customer pays via GPay / PhonePe / UPI — order auto-confirms on payment</p>
+                      <p class="text-sm font-semibold text-slate-200">Enable Razorpay</p>
+                      <p class="text-xs text-slate-500">Order auto-confirms when customer pays</p>
                     </div>
                   </label>
                   <div class="grid md:grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Key ID</label>
+                      <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Key ID</label>
                       <input id="cfg-rzpKeyId" type="text" placeholder="rzp_test_..."
-                        class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
+                        class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
                     </div>
                     <div>
-                      <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Key Secret</label>
+                      <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Key Secret</label>
                       <input id="cfg-rzpKeySecret" type="password" placeholder="••••••••••••"
-                        class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
+                        class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
                     </div>
                     <div class="md:col-span-2">
-                      <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Webhook Secret</label>
+                      <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Webhook Secret</label>
                       <input id="cfg-rzpWebhook" type="password" placeholder="Razorpay webhook signing secret"
-                        class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
-                      <p class="text-[10px] text-slate-500 mt-1.5">
-                        Register this URL in Razorpay → Settings → Webhooks:
+                        class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
+                      <p class="text-[10px] text-slate-600 mt-1.5">
+                        Register in Razorpay → Settings → Webhooks:
                         <code id="webhook-url-display" class="bg-slate-950 border border-slate-800 px-1.5 py-0.5 rounded text-rose-400 ml-1 font-mono text-[10px]"></code>
                       </p>
                     </div>
                   </div>
                 </div>
               </div>
-
             </div>
-
-            <!-- Require payment toggle -->
-            <label class="flex items-center gap-3 cursor-pointer mt-5 px-1">
+            <label class="flex items-center gap-3 cursor-pointer mt-4 px-1">
               <input type="checkbox" id="cfg-requirePayment" class="rounded border-slate-800 bg-slate-900 h-4 w-4 accent-rose-500 shrink-0" />
               <div>
-                <p class="text-xs font-semibold text-slate-200">Require payment before confirming order</p>
-                <p class="text-[10px] text-slate-400">Customer must pay (UPI / online) before the order is placed. Uncheck = cash-on-pickup allowed.</p>
+                <p class="text-sm font-semibold text-slate-200">Require payment before confirming order</p>
+                <p class="text-xs text-slate-500 mt-0.5">Customer must pay before order is placed.</p>
               </div>
             </label>
-
-            <button onclick="window.savePaymentConfig()" class="mt-4 py-2 px-5 gradient-btn text-white rounded-xl text-xs font-semibold">Save Payment Config</button>
+            <button onclick="window.savePaymentConfig()" class="mt-4 py-2.5 px-5 gradient-btn text-white rounded-xl text-sm font-bold">Save Payment Config</button>
           </div>
-
 
         </div>
       </section>
 
     </main>
+
+    <!-- ── Mobile Bottom Navigation ──────────────────────────────────────── -->
+    <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 glass border-t border-slate-800/80 nav-safe">
+      <div class="flex">
+        <button data-tab="orders" class="mob-tab flex-1 flex flex-col items-center justify-center gap-0.5 py-2 relative text-slate-500 transition-colors">
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          <span class="text-[10px] font-semibold">Orders</span>
+          <span id="mob-orders-badge" class="hidden absolute top-1.5 right-[calc(50%-10px)] bg-rose-500 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center leading-none">0</span>
+        </button>
+        <button data-tab="livechat" class="mob-tab flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-slate-500 transition-colors">
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+          <span class="text-[10px] font-semibold">Chats</span>
+        </button>
+        <button data-tab="menu" class="mob-tab flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-slate-500 transition-colors">
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+          <span class="text-[10px] font-semibold">Menu</span>
+        </button>
+        <button data-tab="payments" class="mob-tab flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-slate-500 transition-colors">
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+          <span class="text-[10px] font-semibold">Pay</span>
+        </button>
+        <button data-tab="settings" class="mob-tab flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-slate-500 transition-colors">
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span class="text-[10px] font-semibold">Settings</span>
+        </button>
+      </div>
+    </nav>
+
   </div>
 
-  <!-- ── Link WhatsApp Modal (QR or Pairing Code) ────────────────────────── -->
+  <!-- ── QR Modal ──────────────────────────────────────────────────────────── -->
   <div id="qr-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm px-4 hidden">
     <div class="glass rounded-3xl p-6 w-full max-w-sm shadow-2xl relative border border-slate-800 text-center animate-fade-in">
-      <button onclick="window.closeQRModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200">✕</button>
-      <span class="text-3xl">📱</span>
-      <h3 id="qr-modal-title" class="text-lg font-bold mt-2">Link WhatsApp Bot</h3>
+      <button onclick="window.closeQRModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800 transition-colors">✕</button>
+      <div class="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-2xl mx-auto mb-3">📱</div>
+      <h3 id="qr-modal-title" class="text-base font-bold">Link WhatsApp Bot</h3>
       <p id="qr-modal-subtitle" class="text-xs text-slate-400 mt-1 mb-4">QR code or pairing code will appear here</p>
       <div id="qr-container" class="bg-white p-4 rounded-2xl inline-block shadow-inner relative min-w-[200px] min-h-[200px]">
-        <div id="qr-loading" class="absolute inset-0 flex items-center justify-center bg-white text-slate-900 font-semibold text-xs">Loading...</div>
+        <div id="qr-loading" class="absolute inset-0 flex items-center justify-center bg-white text-slate-900 font-semibold text-xs rounded-2xl">Loading…</div>
       </div>
       <p id="qr-status-text" class="text-xs font-semibold text-slate-400 mt-3">Waiting for server…</p>
-      <p class="text-[10px] text-slate-500 mt-2">Set a phone number in Settings → Restaurant Info to use pairing code instead of QR</p>
+      <p class="text-[10px] text-slate-600 mt-2">Set a phone number in Settings to use pairing code instead of QR</p>
     </div>
   </div>
 
-  <!-- ── Edit Item Modal ───────────────────────────────────────────────────── -->
-  <div id="edit-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm px-4 hidden">
-    <div class="glass rounded-3xl p-6 w-full max-w-lg shadow-2xl relative border border-slate-800 animate-fade-in max-h-[90vh] overflow-y-auto">
-      <button onclick="window.closeEditModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200">✕</button>
-      <h3 class="text-lg font-bold mb-5">Edit Dish</h3>
+  <!-- ── Edit Item Modal ────────────────────────────────────────────────────── -->
+  <div id="edit-modal" class="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-slate-950/80 backdrop-blur-sm px-0 md:px-4 hidden">
+    <div class="glass rounded-t-3xl md:rounded-3xl p-6 w-full md:max-w-lg shadow-2xl relative border border-slate-800 animate-fade-in max-h-[90vh] overflow-y-auto">
+      <button onclick="window.closeEditModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800">✕</button>
+      <h3 class="text-base font-bold mb-4">Edit Dish</h3>
       <input type="hidden" id="edit-id" />
       <div class="space-y-3">
         <input id="edit-name" type="text" placeholder="Dish name"
-          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Price (₹)</label>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Price (₹)</label>
             <input id="edit-price" type="number"
-              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Stock (blank = unlimited)</label>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Stock (blank = ∞)</label>
             <input id="edit-stock" type="number" min="0" placeholder="∞"
-              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
           </div>
         </div>
         <input id="edit-desc" type="text" placeholder="Description"
-          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
         <input id="edit-spice" type="text" placeholder="Spice level"
-          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-        <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-          <input type="checkbox" id="edit-veg" class="rounded border-slate-800 bg-slate-900" /> 🟢 Vegetarian
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+          <input type="checkbox" id="edit-veg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian
         </label>
-        <button onclick="window.saveEditItem()" class="w-full py-2.5 gradient-btn text-white rounded-xl text-xs font-semibold">Save Changes</button>
+        <button onclick="window.saveEditItem()" class="w-full py-3 gradient-btn text-white rounded-xl text-sm font-bold">Save Changes</button>
       </div>
-
-      <!-- Variants -->
-      <div class="mt-6 border-t border-slate-800 pt-4">
-        <h4 class="font-bold text-xs text-slate-300 mb-3">Size Variants (Half / Full / Family Pack…)</h4>
+      <div class="mt-5 border-t border-slate-800 pt-4">
+        <h4 class="font-bold text-xs text-slate-400 mb-3 uppercase tracking-wider">Size Variants</h4>
         <div id="edit-variants" class="space-y-2 mb-3"></div>
         <div class="flex gap-2">
           <input id="var-name" placeholder="Variant name"
-            class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-          <input id="var-price" type="number" placeholder="₹ Price"
-            class="w-24 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-          <button onclick="window.addVariant()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold">Add</button>
+            class="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          <input id="var-price" type="number" placeholder="₹"
+            class="w-20 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          <button onclick="window.addVariant()" class="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-semibold transition-colors">Add</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Load JS as ES module -->
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>

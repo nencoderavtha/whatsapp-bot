@@ -81,8 +81,8 @@ async function processIncoming(
     const { content, toolCalls } = await completeChat({
       messages,
       tools,
-      temperature: 0.3,   // lower = more consistent, less hallucination
-      maxTokens: 400,     // WhatsApp messages should be concise
+      temperature: 0.3,
+      maxTokens: isFirstMessage ? 900 : 400,
     });
 
     if (!toolCalls.length) {

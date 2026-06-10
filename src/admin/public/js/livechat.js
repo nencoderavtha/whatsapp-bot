@@ -38,6 +38,16 @@ export async function selectConversation(id) {
   const c = activeConversations.find(x => x.id === id);
   if (!c) return;
   loadCustomerProfile(c);
+  // Mobile: switch from threads list to chat panel
+  if (window.innerWidth < 768) {
+    const threads = document.getElementById("chat-threads-panel");
+    const main = document.getElementById("chat-main-panel");
+    if (threads && main) {
+      threads.classList.add("hidden");
+      main.classList.remove("hidden");
+      main.classList.add("flex");
+    }
+  }
   document.getElementById("chat-title").textContent = c.name || "(Unknown)";
   document.getElementById("chat-subtitle").textContent = c.phone;
   document.getElementById("chat-avatar").textContent = c.name ? c.name[0].toUpperCase() : "?";
@@ -88,6 +98,15 @@ export function loadCustomerProfile(c) {
   document.getElementById("cust-name").value = c.name || "";
   document.getElementById("cust-address").value = c.address || "";
   document.getElementById("cust-notes").value = c.notes || "";
+}
+
+export function showChatThreads() {
+  const threads = document.getElementById("chat-threads-panel");
+  const main = document.getElementById("chat-main-panel");
+  if (!threads || !main) return;
+  threads.classList.remove("hidden");
+  main.classList.add("hidden");
+  main.classList.remove("flex");
 }
 
 export async function saveCustProfile() {

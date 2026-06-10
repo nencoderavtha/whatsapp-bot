@@ -8,26 +8,14 @@ import { config } from "../config.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 function splitBubbles(text: string): string[] {
   const parts = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-  return parts.length ? parts.slice(0, 4) : [text];
-}
-
-function typingDelay(text: string): number {
-  return Math.min(Math.max(700 + text.length * 45, 900), 4500);
+  return parts.length ? parts.slice(0, 8) : [text];
 }
 
 async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: string[]) {
-  await sleep(600 + Math.random() * 700);
-  for (let i = 0; i < bubbles.length; i++) {
-    const bubble = bubbles[i];
-    await adapter.setTyping?.(phone, true);
-    await sleep(typingDelay(bubble));
-    await adapter.setTyping?.(phone, false);
+  for (const bubble of bubbles) {
     await adapter.sendText(phone, bubble);
-    if (i < bubbles.length - 1) await sleep(500 + Math.random() * 600);
   }
 }
 
@@ -57,7 +45,6 @@ async function sendOrderReceipt(adapter: WhatsAppAdapter, phone: string, restaur
       prisma.botConfig.findUnique({ where: { id: restaurantId } }),
     ]);
     if (!order || !cfg) return;
-    await sleep(800);
     await adapter.sendText(phone, orderConfirmationMsg(order, cfg.restaurantName));
   } catch (e) {
     console.error(`[r${restaurantId}] Receipt send failed:`, e);

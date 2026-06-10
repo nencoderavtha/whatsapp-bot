@@ -8,7 +8,7 @@ import { showToast, playChime, isTabActive } from "./utils.js";
 import { loadOrders, setOrderStatus, markPaid as orderMarkPaid } from "./orders.js";
 import {
   loadChatThreads, selectConversation, appendChatMessage,
-  loadCustomerProfile, saveCustProfile, getSelectedCustomerId,
+  loadCustomerProfile, saveCustProfile, getSelectedCustomerId, showChatThreads,
 } from "./livechat.js";
 import {
   loadMenu, addCategory, delCategory, addItem, toggleAvail, delItem,
@@ -29,7 +29,7 @@ Object.assign(window, {
   // orders — markPaid works for both orders and payments tabs (same API call)
   setOrderStatus, markPaid: orderMarkPaid, loadOrders, loadPayments,
   // livechat
-  selectConversation, saveCustProfile,
+  selectConversation, saveCustProfile, showChatThreads,
   // menu
   addCategory, delCategory, addItem, toggleAvail, delItem,
   loadMenu, openEditModal, closeEditModal, saveEditItem,
@@ -242,6 +242,12 @@ async function loadBotPauseHeader() {
     const cfg = await api("/config");
     setCachedConfig(cfg);
     updatePauseHeaderBtn(cfg.botPaused);
+    const name = cfg.restaurantName || "Restaurant";
+    const headerEl = document.getElementById("restaurant-name");
+    if (headerEl) headerEl.textContent = name;
+    const loginEl = document.getElementById("login-restaurant-name");
+    if (loginEl) loginEl.textContent = name;
+    document.title = name + " — Admin";
   } catch (e) {}
 }
 
@@ -309,16 +315,26 @@ const TAB_LOADERS = {
 function switchTab(name) {
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
   document.getElementById("tab-" + name)?.classList.remove("hidden");
+
+  // Desktop top nav
   document.querySelectorAll(".tab").forEach(b => {
     const active = b.dataset.tab === name;
     b.classList.toggle("bg-rose-500", active);
     b.classList.toggle("text-white", active);
     b.classList.toggle("text-slate-400", !active);
   });
+
+  // Mobile bottom nav
+  document.querySelectorAll(".mob-tab").forEach(b => {
+    const active = b.dataset.tab === name;
+    b.classList.toggle("text-rose-400", active);
+    b.classList.toggle("text-slate-500", !active);
+  });
+
   TAB_LOADERS[name]?.();
 }
 
-document.querySelectorAll(".tab").forEach(b =>
+document.querySelectorAll(".tab, .mob-tab").forEach(b =>
   b.addEventListener("click", () => switchTab(b.dataset.tab))
 );
 

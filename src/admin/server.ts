@@ -613,7 +613,7 @@ export function buildAdminApp() {
   // Reset Baileys session: clears corrupted keys and triggers fresh QR
   api.post("/session/reset", async (req, res) => {
     try {
-      const restaurantId = Number((req as any).user?.restaurantId ?? 1);
+      const restaurantId = req.restaurantId;
       await botSessionManager.resetSession(restaurantId);
       res.json({ ok: true, message: "Session reset — scan the new QR to reconnect." });
     } catch (e: any) {

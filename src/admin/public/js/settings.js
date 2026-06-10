@@ -48,6 +48,11 @@ function populateConfig(cfg) {
   const rzpKeyIdEl = document.getElementById("cfg-rzpKeyId");
   if (rzpKeyIdEl) rzpKeyIdEl.value = cfg.razorpayKeyId || "";
   // Never pre-fill secrets (rzpKeySecret, rzpWebhook)
+
+  const name = cfg.restaurantName || "Restaurant";
+  const headerEl = document.getElementById("restaurant-name");
+  if (headerEl) headerEl.textContent = name;
+  document.title = name + " — Admin";
 }
 
 export async function saveRestaurantInfo() {
