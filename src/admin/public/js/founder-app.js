@@ -86,12 +86,12 @@ function renderRestaurantList() {
   el.innerHTML = restaurants.map(r => `
     <div onclick="window.selectRestaurant(${r.id})"
       class="p-3.5 flex items-center gap-3 cursor-pointer hover:bg-slate-900/40 transition-all ${selectedId === r.id ? "bg-slate-900 border-l-2 border-rose-500" : ""}">
-      <div class="w-8 h-8 rounded-full bg-rose-600/20 border border-rose-500/20 flex items-center justify-center text-sm font-bold text-rose-400">
+      <div class="w-8 h-8 rounded-full bg-rose-600/20 border border-rose-500/20 flex items-center justify-center text-sm font-bold text-rose-400 flex-shrink-0">
         ${r.restaurantName[0].toUpperCase()}
       </div>
       <div class="flex-1 min-w-0">
         <div class="font-bold text-xs truncate text-slate-200">${esc(r.restaurantName)}</div>
-        <div class="text-[10px] text-slate-400">${esc(r.restaurantCity)}</div>
+        <div class="text-[10px] text-violet-400 font-mono truncate">${esc(r.loginUsername || "no username")}</div>
       </div>
       <div class="flex flex-col items-end gap-1">
         <span class="text-[9px] px-1.5 py-0.5 rounded font-bold border ${r.isActive ? "bg-green-950 text-green-400 border-green-900/40" : "bg-slate-900 text-slate-500 border-slate-800"}">
@@ -162,6 +162,14 @@ async function loadConfig() {
     document.getElementById("f-cfg-requirePmt").checked = !!cfg.requiresPaymentBeforeOrder;
     document.getElementById("f-cfg-rzpEnabled").checked = !!cfg.razorpayEnabled;
     document.getElementById("f-cfg-rzpKeyId").value = cfg.razorpayKeyId || "";
+    // Login credentials
+    const username = cfg.loginUsername || "";
+    const usernameEl = document.getElementById("f-cfg-username");
+    if (usernameEl) usernameEl.value = username;
+    const credsUsernameEl = document.getElementById("f-creds-username");
+    if (credsUsernameEl) credsUsernameEl.textContent = username || "—";
+    const credsPasswordEl = document.getElementById("f-creds-password");
+    if (credsPasswordEl) credsPasswordEl.textContent = cfg.dashboardPassword || "changeme";
   } catch (e) { showToast("Error", "Failed to load config."); }
 }
 
@@ -186,14 +194,16 @@ async function saveConfig() {
   if (wh) body.razorpayWebhookSecret = wh;
   const pw = document.getElementById("f-cfg-password").value.trim();
   if (pw) body.dashboardPassword = pw;
+  const username = document.getElementById("f-cfg-username")?.value.trim();
+  if (username) body.loginUsername = username;
 
   try {
     await fApi(`/restaurants/${selectedId}/config`, { method: "PUT", body: JSON.stringify(body) });
     document.getElementById("f-cfg-rzpSecret").value = "";
     document.getElementById("f-cfg-rzpWebhook").value = "";
-    document.getElementById("f-cfg-password").value = "";
-    // Refresh local cache
+    // Refresh local cache + reload credentials display
     await loadRestaurants();
+    await loadConfig();
     showToast("Saved", "Restaurant config updated.");
   } catch (e) { showToast("Error", "Could not save config."); }
 }

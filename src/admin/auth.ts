@@ -91,7 +91,8 @@ export function founderMiddleware(req: Request, res: Response, next: NextFunctio
 
 // POST /api/auth/login
 export async function loginHandler(req: Request, res: Response): Promise<void> {
-  const { password, restaurantId: bodyRestaurantId } = req.body as {
+  const { username, password, restaurantId: bodyRestaurantId } = req.body as {
+    username?: string;
     password?: string;
     restaurantId?: number;
   };
@@ -104,7 +105,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   let restaurantId: number;
   let isMaster = false;
 
-  // Master env password — can optionally specify which restaurantId to scope to.
+  // Master env password bypass — no username required.
   if (config.adminPassword && password === config.adminPassword) {
     isMaster = true;
     if (bodyRestaurantId) {
@@ -118,12 +119,16 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
       restaurantId = r.id;
     }
   } else {
-    // Per-restaurant password stored in BotConfig.
+    // Per-restaurant: require username + password.
+    if (!username) {
+      res.status(401).json({ error: "username required" });
+      return;
+    }
     const r = await prisma.botConfig.findFirst({
-      where: { dashboardPassword: password, isActive: true },
+      where: { loginUsername: username, dashboardPassword: password, isActive: true },
     });
     if (!r) {
-      res.status(401).json({ error: "invalid password" });
+      res.status(401).json({ error: "invalid credentials" });
       return;
     }
     restaurantId = r.id;

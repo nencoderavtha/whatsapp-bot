@@ -54,12 +54,14 @@
         <p class="text-slate-500 text-sm mt-1">WhatsApp Bot Dashboard</p>
       </div>
       <div class="space-y-3">
-        <input id="pw" type="password" placeholder="Enter password"
+        <input id="un" type="text" placeholder="Username" autocomplete="username"
+          class="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
+        <input id="pw" type="password" placeholder="Password" autocomplete="current-password"
           class="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
         <button onclick="window.login()" class="w-full gradient-btn text-white rounded-2xl py-3.5 font-bold text-sm">
           Enter Dashboard
         </button>
-        <p id="loginErr" class="text-rose-400 text-sm text-center font-medium hidden">Wrong password. Try again.</p>
+        <p id="loginErr" class="text-rose-400 text-sm text-center font-medium hidden">Invalid username or password.</p>
         <div class="pt-1 text-center">
           <a href="/founder.html" class="text-xs text-slate-600 hover:text-slate-400 transition-colors">Founder Panel →</a>
         </div>
@@ -127,11 +129,12 @@
             <p class="text-xs text-slate-500 mt-0.5">Tap action buttons to advance order status</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <div class="flex bg-slate-900/80 border border-slate-800 rounded-xl p-1 gap-0.5 text-[11px] font-semibold">
-              <button onclick="document.getElementById('order-filter').value='';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-300" data-val="">All</button>
-              <button onclick="document.getElementById('order-filter').value='pending';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-amber-400" data-val="pending">Pending</button>
-              <button onclick="document.getElementById('order-filter').value='preparing';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-indigo-400" data-val="preparing">Cooking</button>
-              <button onclick="document.getElementById('order-filter').value='ready';window.loadOrders?.()" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-emerald-400" data-val="ready">Ready</button>
+            <div class="flex bg-slate-900/80 border border-slate-800 rounded-xl p-1 gap-0.5 text-[11px] font-semibold overflow-x-auto">
+              <button onclick="window.setOrderFilter('')"        class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-300 whitespace-nowrap"  data-val="">All</button>
+              <button onclick="window.setOrderFilter('pending')"  class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-amber-400 whitespace-nowrap"   data-val="pending">Pending</button>
+              <button onclick="window.setOrderFilter('preparing')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-indigo-400 whitespace-nowrap" data-val="preparing">Cooking</button>
+              <button onclick="window.setOrderFilter('ready')"    class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-emerald-400 whitespace-nowrap" data-val="ready">Ready</button>
+              <button onclick="window.setOrderFilter('delivered')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-400 whitespace-nowrap"  data-val="delivered">Delivered</button>
             </div>
             <select id="order-filter" class="hidden"></select>
             <button onclick="window.loadOrders?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm hover:bg-slate-800 transition-colors flex items-center justify-center" title="Refresh">↻</button>

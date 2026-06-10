@@ -279,3 +279,17 @@ export async function markPaid(orderId) {
     if (card) card.querySelectorAll("button").forEach(b => { b.disabled = false; });
   }
 }
+
+export function setOrderFilter(val) {
+  const sel = document.getElementById("order-filter");
+  if (sel) sel.value = val;
+
+  document.querySelectorAll(".order-filter-btn").forEach(btn => {
+    const active = btn.dataset.val === val;
+    btn.classList.toggle("bg-slate-700", active);
+    btn.classList.toggle("text-white", active);
+    btn.classList.toggle("shadow-inner", active);
+  });
+
+  loadOrders();
+}

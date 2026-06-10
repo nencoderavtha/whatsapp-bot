@@ -235,8 +235,8 @@ export async function runTool(
           }
           const methodsStr = restaurant?.paymentMethods ?? "UPI";
           paymentNote = upiPayLink
-            ? `Read the total back. Share this UPI link: ${upiPayLink} — customer taps it, pays ₹${total}, then shares their UTR. Once they do, call record_payment then confirm_order.`
-            : `Read the total back. Ask them to pay ₹${total} via ${methodsStr}${restaurant?.upiId ? ` to ${restaurant.upiId}` : ""}. Once they share the UTR/reference, call record_payment then confirm_order.`;
+            ? `Read the total back. Share this UPI link: ${upiPayLink} — customer taps it and pays ₹${total}. Once the customer says they have paid (no UTR needed), call record_payment (method="upi") then confirm_order.`
+            : `Read the total back. Ask them to pay ₹${total} via ${methodsStr}${restaurant?.upiId ? ` to ${restaurant.upiId}` : ""}. Once the customer confirms payment (no UTR needed), call record_payment (method="${restaurant?.paymentMethods?.split(",")[0] ?? "upi"}") then confirm_order.`;
         } else {
           // PATH C — No payment required, cash at pickup
           paymentPath = "cash";
@@ -332,7 +332,7 @@ export async function runTool(
                 requiresPayment: true,
                 upiId: restaurant.upiId,
                 paymentMethods: restaurant.paymentMethods,
-                error: `Payment required. Share the UPI ID ${restaurant.upiId ?? ""} and ask the customer to pay ₹ and send the UTR. Once they do, call record_payment then confirm_order.`,
+                error: `Payment required. Share the UPI ID ${restaurant.upiId ?? ""} and ask the customer to pay. Once they confirm payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
               },
             };
           }
@@ -450,7 +450,7 @@ export async function runTool(
                 ok: true,
                 upiLink,
                 total,
-                note: `Razorpay not enabled. Share this UPI link: ${upiLink} — Once customer shares UTR, call record_payment then confirm_order.`,
+                note: `Razorpay not enabled. Share this UPI link: ${upiLink} — Once customer confirms payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
               },
             };
           }

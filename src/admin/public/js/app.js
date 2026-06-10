@@ -5,7 +5,7 @@
 
 import { api, login as apiLogin, logout as apiLogout, checkSession } from "./api.js";
 import { showToast, playChime, isTabActive } from "./utils.js";
-import { loadOrders, setOrderStatus, markPaid as orderMarkPaid } from "./orders.js";
+import { loadOrders, setOrderStatus, markPaid as orderMarkPaid, setOrderFilter } from "./orders.js";
 import {
   loadChatThreads, selectConversation, appendChatMessage,
   loadCustomerProfile, saveCustProfile, getSelectedCustomerId, showChatThreads,
@@ -27,7 +27,7 @@ import {
 // (inline onclick in dynamically-generated HTML can't use ES module scope)
 Object.assign(window, {
   // orders — markPaid works for both orders and payments tabs (same API call)
-  setOrderStatus, markPaid: orderMarkPaid, loadOrders, loadPayments,
+  setOrderStatus, markPaid: orderMarkPaid, loadOrders, loadPayments, setOrderFilter,
   // livechat
   selectConversation, saveCustProfile, showChatThreads,
   // menu
@@ -49,9 +49,10 @@ let currentPairingCode = null;
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 async function login() {
+  const username = document.getElementById("un")?.value?.trim() ?? "";
   const password = document.getElementById("pw").value;
   try {
-    await apiLogin(password);
+    await apiLogin(username, password);
     document.getElementById("loginErr").classList.add("hidden");
     showApp();
   } catch {
@@ -351,6 +352,7 @@ function showApp() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
+document.getElementById("un")?.addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("pw")?.focus(); });
 document.getElementById("pw")?.addEventListener("keydown", e => { if (e.key === "Enter") login(); });
 
 checkSession()

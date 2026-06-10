@@ -162,6 +162,7 @@ model BotConfig {
   ownerNumbers               String           @default("")
   isActive                   Boolean          @default(true)
   dashboardPassword          String           @default("changeme")
+  loginUsername              String?          @unique
   // Bot on/off switch
   botPaused                  Boolean          @default(false)
   pauseMessage               String?

@@ -18,12 +18,12 @@ export async function api(path, opts = {}) {
   return res.json();
 }
 
-export async function login(password) {
+export async function login(username, password) {
   const res = await fetch("/api/auth/login", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   });
   if (!res.ok) throw new Error("denied");
   return res.json();

@@ -18,6 +18,25 @@ process.env.IS_ADMIN_SERVER = "true";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function generateUsername(restaurantName: string, id: number): string {
+  const slug = restaurantName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 20);
+  return (slug || "restaurant") + "-" + id;
+}
+
+/** Auto-assign loginUsername to any restaurant that doesn't have one. */
+async function ensureLoginUsernames(): Promise<void> {
+  const rows = await prisma.botConfig.findMany({ where: { loginUsername: null } });
+  for (const r of rows) {
+    const username = generateUsername(r.restaurantName, r.id);
+    await prisma.botConfig.update({ where: { id: r.id }, data: { loginUsername: username } });
+    console.log(`[startup] Assigned loginUsername="${username}" to restaurant ${r.id}`);
+  }
+}
+
 export function buildAdminApp() {
   const app = express();
   app.use(cookieParser());
@@ -188,14 +207,18 @@ export function buildAdminApp() {
   // Create new restaurant (onboard)
   founder.post("/restaurants", async (req, res) => {
     const { restaurantName, restaurantCity, ownerNumbers, dashboardPassword } = req.body;
+    const name = restaurantName ?? "New Restaurant";
     const cfg = await prisma.botConfig.create({
       data: {
-        restaurantName: restaurantName ?? "New Restaurant",
+        restaurantName: name,
         restaurantCity: restaurantCity ?? "Hyderabad",
         ownerNumbers: ownerNumbers ?? "",
         dashboardPassword: dashboardPassword ?? "changeme",
       },
     });
+    // Auto-assign a unique login username based on the restaurant name + ID
+    const username = generateUsername(cfg.restaurantName, cfg.id);
+    await prisma.botConfig.update({ where: { id: cfg.id }, data: { loginUsername: username } });
     // Seed default prompt template
     const defaultPrompt = await prisma.promptTemplate.findFirst({ where: { restaurantId: 1 } });
     if (defaultPrompt) {
@@ -227,7 +250,7 @@ export function buildAdminApp() {
     const id = Number(req.params.id);
     const allowed = [
       "restaurantName", "restaurantCity", "ownerNumbers", "dashboardPassword",
-      "isActive", "botPaused", "pauseMessage", "upiId", "paymentMethods",
+      "loginUsername", "isActive", "botPaused", "pauseMessage", "upiId", "paymentMethods",
       "requiresPaymentBeforeOrder", "razorpayEnabled", "razorpayKeyId",
       "razorpayKeySecret", "razorpayWebhookSecret",
       "cloudPhoneNumberId", "cloudToken",
@@ -247,15 +270,24 @@ export function buildAdminApp() {
     res.json(prompt ?? {});
   });
 
-  // Update prompt template (with variable substitution preview)
+  // Update prompt template
   founder.put("/restaurants/:id/prompt", async (req, res) => {
     const id = Number(req.params.id);
     const { content } = req.body;
-    const existing = await prisma.promptTemplate.findFirst({ where: { restaurantId: id } });
-    const result = existing
-      ? await prisma.promptTemplate.update({ where: { id: existing.id }, data: { content } })
-      : await prisma.promptTemplate.create({ data: { content, restaurantId: id } });
-    res.json(result);
+    if (typeof content !== "string") {
+      res.status(400).json({ error: "content must be a string" });
+      return;
+    }
+    try {
+      const existing = await prisma.promptTemplate.findFirst({ where: { restaurantId: id } });
+      const result = existing
+        ? await prisma.promptTemplate.update({ where: { id: existing.id }, data: { content } })
+        : await prisma.promptTemplate.create({ data: { content, restaurantId: id } });
+      res.json(result);
+    } catch (e: any) {
+      console.error(`[founder] prompt save failed for r${id}:`, e);
+      res.status(500).json({ error: e?.message ?? "save failed" });
+    }
   });
 
   // Restaurant stats overview
@@ -652,6 +684,9 @@ export function buildAdminApp() {
     eventBus.emit("event", { type, data });
     res.json({ ok: true });
   });
+
+  // Fill in loginUsername for any restaurant that doesn't have one yet
+  ensureLoginUsernames().catch(e => console.error("[startup] ensureLoginUsernames failed:", e));
 
   return app;
 }
