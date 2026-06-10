@@ -70,8 +70,9 @@ export class BaileysAdapter implements WhatsAppAdapter {
         }
       }
       if (connection === "open") {
-        console.log(`[r${rid ?? "?"}] WhatsApp connected.`);
-        await notifyAdminOfEvent("whatsapp_connected", { restaurantId: rid });
+        const phone = sock.user?.id ? jidToPhone(sock.user.id) : undefined;
+        console.log(`[r${rid ?? "?"}] WhatsApp connected${phone ? ` as +${phone}` : ""}.`);
+        await notifyAdminOfEvent("whatsapp_connected", { restaurantId: rid, phone });
       }
       if (connection === "close") {
         const code = (lastDisconnect?.error as Boom)?.output?.statusCode;

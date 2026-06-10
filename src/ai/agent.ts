@@ -60,7 +60,7 @@ async function processIncoming(
   const isFirstMessage = history.length === 1;
 
   const [system, tools] = await Promise.all([
-    buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage),
+    buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage, customer.id),
     getEnabledTools(restaurantId),
   ]);
 

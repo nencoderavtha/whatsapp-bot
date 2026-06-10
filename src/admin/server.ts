@@ -12,7 +12,7 @@ import { createOrder } from "../services/order.js";
 import { verifyWebhookSignature } from "../services/razorpay.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
 import type { InboundMessage } from "../whatsapp/adapter.js";
-import { orderStatusMsg, paymentReceivedMsg } from "../services/notifications.js";
+import { orderConfirmationMsg, ownerNewOrderMsg, orderStatusMsg } from "../services/notifications.js";
 
 process.env.IS_ADMIN_SERVER = "true";
 
@@ -118,21 +118,28 @@ export function buildAdminApp() {
         data: { confirmedOrderId: order.id },
       });
 
-      // Send WhatsApp confirmation to customer automatically
+      // Send WhatsApp confirmation to customer + owner automatically
       const [customer, cfg] = await Promise.all([
         prisma.customer.findUnique({ where: { id: customerId } }),
         prisma.botConfig.findUnique({ where: { id: restaurantId } }),
       ]);
-      if (customer) {
-        const session = botSessionManager.getSession(restaurantId);
-        if (session) {
-          try {
-            const fullOrder = { ...order, customer };
-            const msg = paymentReceivedMsg(fullOrder, cfg?.restaurantName ?? "Restaurant");
-            await session.sendText(customer.phone, msg);
-          } catch (e) {
-            console.error(`[r${restaurantId}] WhatsApp confirmation failed:`, e);
-          }
+      const session = botSessionManager.getSession(restaurantId);
+      if (customer && session) {
+        const restaurantName = cfg?.restaurantName ?? "Restaurant";
+        const fullOrder = { ...order, customer };
+        try {
+          // Full itemized receipt to customer
+          await session.sendText(customer.phone, orderConfirmationMsg(fullOrder, restaurantName));
+        } catch (e) {
+          console.error(`[r${restaurantId}] Customer receipt failed:`, e);
+        }
+        // Notify owner(s)
+        const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s: string) => s.trim()).filter(Boolean);
+        const ownerMsg = ownerNewOrderMsg(fullOrder);
+        for (const num of ownerNumbers) {
+          session.sendText(num, ownerMsg).catch((e: any) =>
+            console.error(`[r${restaurantId}] Owner notify failed for ${num}:`, e)
+          );
         }
       }
 
@@ -654,6 +661,7 @@ export function buildAdminApp() {
       qr: whatsappState.lastQR,
       pairingCode: whatsappState.lastPairingCode,
       connected: whatsappState.connected,
+      connectedPhone: whatsappState.connectedPhone,
       provider: config.whatsappProvider,
     });
   });

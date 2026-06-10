@@ -8,6 +8,7 @@ export const whatsappState = {
   lastQR: null as string | null,
   lastPairingCode: null as string | null,
   connected: false,
+  connectedPhone: null as string | null,
 };
 
 /**
@@ -28,10 +29,12 @@ export async function notifyAdminOfEvent(type: string, data: any) {
     whatsappState.lastQR = null;
     whatsappState.lastPairingCode = null;
     whatsappState.connected = true;
+    whatsappState.connectedPhone = data?.phone ?? whatsappState.connectedPhone;
   } else if (type === "whatsapp_disconnected") {
     whatsappState.lastQR = null;
     whatsappState.lastPairingCode = null;
     whatsappState.connected = false;
+    whatsappState.connectedPhone = null;
   }
 
   // Always emit locally (covers single-process mode)

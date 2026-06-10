@@ -92,7 +92,7 @@ function updateProviderUI(provider) {
   if (isCloud) document.getElementById("btn-link-wa")?.classList.add("hidden");
 }
 
-function updateWAStatusUI({ connected, qr, pairingCode, provider }) {
+function updateWAStatusUI({ connected, qr, pairingCode, provider, connectedPhone }) {
   const el = document.getElementById("wa-status");
   const btn = document.getElementById("btn-link-wa");
   const btnReset = document.getElementById("btn-reset-session");
@@ -100,7 +100,8 @@ function updateWAStatusUI({ connected, qr, pairingCode, provider }) {
   currentPairingCode = pairingCode || null;
   if (connected) {
     el.className = "text-[10px] text-green-400 font-bold uppercase tracking-widest -mt-1 flex items-center gap-1.5";
-    el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>WhatsApp Live`;
+    const phoneLabel = connectedPhone ? ` <span class="font-mono normal-case tracking-normal opacity-80">+${connectedPhone}</span>` : "";
+    el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>WhatsApp Live${phoneLabel}`;
     btn.classList.add("hidden");
     btnReset?.classList.remove("hidden");
     closeQRModal();
@@ -206,8 +207,8 @@ function handleSSE(type, data) {
       showToast("Pairing Code Ready", `Code: ${data.code} — enter it in WhatsApp Linked Devices`);
       break;
     case "whatsapp_connected":
-      updateWAStatusUI({ connected: true, qr: null, pairingCode: null });
-      showToast("WhatsApp Connected", "Bot is now online.");
+      updateWAStatusUI({ connected: true, qr: null, pairingCode: null, connectedPhone: data.phone });
+      showToast("WhatsApp Connected", data.phone ? `Bot online as +${data.phone}` : "Bot is now online.");
       break;
     case "whatsapp_disconnected":
       updateWAStatusUI({ connected: false, qr: null, pairingCode: null });
