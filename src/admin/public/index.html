@@ -136,7 +136,7 @@
               <button onclick="window.setOrderFilter('ready')"    class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-emerald-400 whitespace-nowrap" data-val="ready">Ready</button>
               <button onclick="window.setOrderFilter('delivered')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-400 whitespace-nowrap"  data-val="delivered">Delivered</button>
             </div>
-            <select id="order-filter" class="hidden"></select>
+            <input id="order-filter" type="hidden" value="">
             <button onclick="window.loadOrders?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm hover:bg-slate-800 transition-colors flex items-center justify-center" title="Refresh">↻</button>
           </div>
         </div>
