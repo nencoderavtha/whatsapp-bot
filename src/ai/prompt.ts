@@ -55,11 +55,22 @@ ${greetMenu}`;
       `DO NOT respond with "I can only help with orders" — the customer IS ordering.\n\n`;
   }
 
+  // Injected rule to handle "yes" / short affirmatives after the bot showed specific items.
+  // Without this, the AI asks "what would you like to order?" again instead of placing the item.
+  const contextYesRule =
+    `CONTEXT-AWARE SHORT REPLIES — MANDATORY\n` +
+    `If your PREVIOUS message mentioned or listed specific item(s) and the customer replies with\n` +
+    `"yes", "ok", "sure", "haan", "ante", "bilkul", "yeah", "yep", or any affirmative:\n` +
+    `→ Treat it as "I want to order those items." Call propose_order immediately (qty 1 each, pickup default).\n` +
+    `→ Do NOT ask "what would you like to order?" again — the customer already answered.\n` +
+    `→ If multiple items were listed, ask "which one?" only when it is genuinely unclear.\n` +
+    `→ If only ONE item was in context, never ask for clarification — just propose it.\n\n`;
+
   const basePrompt = template.content
     .replaceAll("{{restaurantName}}", botConfig.restaurantName)
     .replaceAll("{{restaurantCity}}", botConfig.restaurantCity)
     .replace("{{menu}}", menuText)
     .replace("{{customerGreeting}}", customerCtx);
 
-  return stagedOrderBlock + basePrompt;
+  return stagedOrderBlock + contextYesRule + basePrompt;
 }
