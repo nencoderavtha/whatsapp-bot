@@ -100,7 +100,9 @@ export async function savePaymentConfig() {
     const rzpEnabled = !!document.getElementById("cfg-rzpEnabled")?.checked;
     const rzpKeyId   = document.getElementById("cfg-rzpKeyId")?.value.trim() || "";
     const rzpSecret  = document.getElementById("cfg-rzpKeySecret")?.value.trim() || "";
-    const razorpayReady = !!(onlineChecked && rzpEnabled && rzpKeyId && rzpSecret);
+    // Secret is never pre-filled (security) — treat as saved if keyId already exists in DB
+    const secretProvided = !!rzpSecret || !!cachedCfg.razorpayKeyId;
+    const razorpayReady = !!(onlineChecked && rzpEnabled && rzpKeyId && secretProvided);
     const upiReady = upiChecked && !!upiId;
     if (!razorpayReady && !upiReady) {
       showToast(
