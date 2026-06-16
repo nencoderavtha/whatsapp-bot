@@ -17,9 +17,9 @@ export function greetingTemplate(
   menuText: string,
 ): string {
   const hi = customerName
-    ? `Welcome back, *${customerName}!* 👋`
-    : `Hello! Welcome to *${restaurantName}* 👋`;
-  return `${hi}\n\nHere's our menu:\n\n${menuText}\n\nWhat would you like to order? 😊`;
+    ? `Hi *${customerName}!* 👋 I can help you order anything from *${restaurantName}*'s menu.`
+    : `Hi! 👋 I can help you order anything from *${restaurantName}*'s menu.`;
+  return `${hi}\n\nHere's our menu:\n\n${menuText}\n\nWhat would you like to order?`;
 }
 
 // ── Sent after propose_order stages the cart ────────────────────────────────

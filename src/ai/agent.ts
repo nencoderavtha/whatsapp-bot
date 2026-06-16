@@ -62,8 +62,12 @@ async function processIncoming(
   // First message = only the current user message exists in history
   const isFirstMessage = history.length === 1;
 
-  // ── First message: skip LLM entirely, reply with greeting + menu template ──
-  if (isFirstMessage) {
+  // Returning customer sending a plain greeting — show menu again without going through LLM.
+  // Prevents the scope-rejection firing on innocent "hi / hello / hey" messages.
+  const isGreeting = /^(hi|hello|hey|helo|hai|hii|good\s*(morning|evening|afternoon|night)|namaste|vanakkam|start|menu)[\s!.,🙏]*$/i.test(userText.trim());
+
+  // ── First message OR returning-customer greeting: skip LLM, reply with menu ──
+  if (isFirstMessage || isGreeting) {
     const [cfg, menuText] = await Promise.all([
       prisma.botConfig.findUnique({ where: { id: restaurantId } }),
       menuForCustomer(restaurantId),
