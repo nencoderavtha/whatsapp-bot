@@ -652,7 +652,9 @@ export function buildAdminApp() {
     res.flushHeaders();
     const onEvent = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
     eventBus.on("event", onEvent);
-    req.on("close", () => eventBus.off("event", onEvent));
+    // Heartbeat every 25s to keep Railway's proxy from dropping the connection
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 25_000);
+    req.on("close", () => { eventBus.off("event", onEvent); clearInterval(heartbeat); });
   });
 
   // --- QR / connection state ---

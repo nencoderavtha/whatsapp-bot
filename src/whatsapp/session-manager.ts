@@ -92,7 +92,14 @@ export class BotSessionManager {
       this.phoneIdMap.set(phoneNumberId, restaurantId);
     } else {
       const authDir = `sessions/restaurant-${restaurantId}`;
-      adapter = new BaileysAdapter(authDir, restaurantId, botCfg?.whatsappPhone ?? undefined);
+      const onLoggedOut = async () => {
+        this.stopSession(restaurantId);
+        const { rm } = await import("node:fs/promises");
+        await rm(authDir, { recursive: true, force: true }).catch(() => {});
+        const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+        if (cfg) await this.startSession(restaurantId, cfg.restaurantName).catch(console.error);
+      };
+      adapter = new BaileysAdapter(authDir, restaurantId, botCfg?.whatsappPhone ?? undefined, onLoggedOut);
     }
 
     adapter.onMessage(async (msg) => {

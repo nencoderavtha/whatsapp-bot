@@ -176,11 +176,27 @@ function renderLinkModal() {
   }
 }
 
+let qrPollInterval = null;
+
 function openQRModal() {
   document.getElementById("qr-modal").classList.remove("hidden");
   renderLinkModal();
+  // Poll as fallback in case SSE events were missed (e.g. Railway proxy dropped connection)
+  if (!qrPollInterval) {
+    qrPollInterval = setInterval(async () => {
+      if (document.getElementById("qr-modal").classList.contains("hidden")) {
+        clearInterval(qrPollInterval); qrPollInterval = null; return;
+      }
+      if (currentPairingCode || currentQRString) return; // already have a code
+      await checkWAStatus();
+      renderLinkModal();
+    }, 5000);
+  }
 }
-function closeQRModal() { document.getElementById("qr-modal").classList.add("hidden"); }
+function closeQRModal() {
+  document.getElementById("qr-modal").classList.add("hidden");
+  if (qrPollInterval) { clearInterval(qrPollInterval); qrPollInterval = null; }
+}
 
 // ── SSE ────────────────────────────────────────────────────────────────────
 function connectSSE() {

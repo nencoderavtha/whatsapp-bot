@@ -32,6 +32,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
     private authDir = "auth_session",
     private restaurantId?: number,
     private phoneNumber?: string,  // if set, uses pairing code instead of QR
+    private onLoggedOut?: () => void,
   ) {}
 
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void {
@@ -78,8 +79,9 @@ export class BaileysAdapter implements WhatsAppAdapter {
         const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
         await notifyAdminOfEvent("whatsapp_disconnected", { code, restaurantId: rid });
         if (code === DisconnectReason.loggedOut) {
-          console.log(`[r${rid ?? "?"}] Logged out. Delete ${this.authDir}/ and re-scan from the dashboard.`);
-          return; // don't reconnect — credentials are gone
+          console.log(`[r${rid ?? "?"}] Logged out — clearing session files and restarting fresh.`);
+          this.onLoggedOut?.();
+          return;
         }
         if (code === DisconnectReason.connectionReplaced) {
           // 440: the same WhatsApp account got linked somewhere else. Reconnecting here
