@@ -123,15 +123,18 @@ export async function menuAsInteractiveListSections(restaurantId: number) {
 
   const sections: { title: string; rows: any[] }[] = [];
   let totalRows = 0;
+  const maxRowsTotal = 10;
+  const itemsPerCat = Math.max(1, Math.floor(maxRowsTotal / Math.max(1, categories.length)));
 
   for (const cat of categories) {
-    if (totalRows >= 10) break;
+    if (totalRows >= maxRowsTotal) break;
+
+    const availableItems = cat.items.filter((i) => i.available && (i.stockCount === null || i.stockCount > 0));
+    const itemsToInclude = availableItems.slice(0, itemsPerCat);
 
     const rows: any[] = [];
-    const availableItems = cat.items.filter((i) => i.available && (i.stockCount === null || i.stockCount > 0));
-
-    for (const item of availableItems) {
-      if (totalRows >= 10) break;
+    for (const item of itemsToInclude) {
+      if (totalRows >= maxRowsTotal) break;
 
       const veg = item.isVeg ? "🌿 " : "🍗 ";
       const rawTitle = `${veg}${item.name}`;
@@ -146,11 +149,7 @@ export async function menuAsInteractiveListSections(restaurantId: number) {
       } else {
         price = `₹${item.price}`;
       }
-      const stockTag =
-        item.stockCount !== null && item.stockCount <= 5
-          ? ` ⚠️ ${item.stockCount} left`
-          : "";
-      const rawDesc = `${price}${stockTag}${item.description ? ` · ${item.description}` : ""}`;
+      const rawDesc = `${price}${item.description ? ` · ${item.description}` : ""}`;
       const description = rawDesc.length > 72 ? rawDesc.slice(0, 69) + "…" : rawDesc;
 
       rows.push({

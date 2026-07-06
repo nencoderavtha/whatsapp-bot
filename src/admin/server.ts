@@ -13,6 +13,7 @@ import { createOrder } from "../services/order.js";
 import { verifyWebhookSignature } from "../services/razorpay.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
 import type { InboundMessage } from "../whatsapp/adapter.js";
+import { KapsoAdapter } from "../whatsapp/kapso.js";
 import { orderConfirmationMsg, ownerNewOrderMsg, orderStatusMsg } from "../services/notifications.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
 import { orderStagedTemplate } from "../ai/templates.js";
@@ -161,6 +162,11 @@ export function buildAdminApp() {
   app.use(express.json());
   app.use(express.static(path.join(__dirname, "public")));
 
+  // Serve Web Menu page
+  app.get("/menu", (_req, res) => {
+    res.sendFile(path.join(__dirname, "public", "menu.html"));
+  });
+
   // ── Public Menu API for Web Page (unauthenticated) ─────────────────────
   app.get("/public/api/menu/:restaurantId", asyncRoute(async (req, res) => {
     const restaurantId = Number(req.params.restaurantId);
@@ -269,7 +275,20 @@ export function buildAdminApp() {
 
       // Format staged order message
       const stagedMsg = orderStagedTemplate(labels, total, "pickup");
-      await session.sendText(phone, stagedMsg);
+      if (session instanceof KapsoAdapter) {
+        await session.sendInteractiveButtons(
+          phone,
+          stagedMsg,
+          [
+            { id: "confirm_order_btn", title: "✅ Confirm Order" },
+            { id: "add_more_items_btn", title: "➕ Add More Items" }
+          ],
+          "🛒 Order Summary",
+          "Tap button to confirm or message to add items"
+        );
+      } else {
+        await session.sendText(phone, stagedMsg);
+      }
 
       // Log assistant reply
       await logMessage(customer.id, restaurantId, "assistant", stagedMsg);

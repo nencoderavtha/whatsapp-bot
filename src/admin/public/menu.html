@@ -152,12 +152,15 @@
         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
       </svg>
     </div>
-    <h2 class="text-2xl font-bold tracking-tight text-white mb-2">Order Shared with Bot!</h2>
-    <p class="text-slate-400 text-sm max-w-xs mb-8 leading-relaxed">
-      We've sent your selections directly to our WhatsApp chat. Please switch back to WhatsApp to confirm and pay!
+    <h2 class="text-2xl font-bold tracking-tight text-white mb-2">Order Staged in Chat! 🎉</h2>
+    <p class="text-slate-400 text-sm max-w-xs mb-6 leading-relaxed">
+      Your selections have been sent directly to your WhatsApp chat with your order breakdown and confirm button!
     </p>
-    <button onclick="window.close()" class="px-6 py-2.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 transition-all rounded-xl text-slate-300 font-semibold text-sm">
-      Close Window
+    <a id="return-wa-btn" href="#" class="w-full max-w-xs py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-sm rounded-xl transition-all shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 mb-3">
+      Return to WhatsApp Chat 💬
+    </a>
+    <button onclick="window.close()" class="text-slate-500 text-xs font-semibold hover:text-slate-400 transition-colors">
+      Close Webview
     </button>
   </div>
 
@@ -222,13 +225,16 @@
       if (!menuData) return;
       document.getElementById('restaurant-name').textContent = menuData.restaurant.restaurantName;
       
-      const cityContainer = document.getElementById('restaurant-city');
       cityContainer.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
         </svg>
         ${menuData.restaurant.restaurantCity}
       `;
+      const returnBtn = document.getElementById('return-wa-btn');
+      if (returnBtn) {
+        returnBtn.href = phone ? `https://wa.me/${phone}` : '#';
+      }
     }
 
     function setFilter(filter) {

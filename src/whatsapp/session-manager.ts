@@ -375,7 +375,7 @@ export class BotSessionManager {
       try {
         const cfg = await prisma.botConfig.findUnique({
           where: { id: restaurantId },
-          select: { restaurantName: true, botPaused: true, pauseMessage: true },
+          select: { restaurantName: true, restaurantCity: true, botPaused: true, pauseMessage: true },
         });
         if (cfg?.botPaused) {
           const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
@@ -410,6 +410,51 @@ export class BotSessionManager {
             { type: "image", imageUrl: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=800" },
             `${rName} • Fresh & Authentic`
           );
+          return;
+        }
+
+        const rawText = msg.text.trim();
+        const lowerText = rawText.toLowerCase();
+
+        // ── Direct Action 1: View Menu ───────────────────────────────────────
+        if (rawText === "view_menu" || lowerText === "view menu" || lowerText === "menu" || lowerText === "show menu") {
+          const listSections = await menuAsInteractiveListSections(restaurantId);
+          const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
+          const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
+
+          if (adapter instanceof KapsoAdapter) {
+            await adapter.sendInteractiveList(
+              msg.phone,
+              `Here is a preview of our popular items at *${rName}*: 📋\n\nTap the button below to open our full visual web menu with photos, custom sizes & fast ordering! 🍽️✨`,
+              "📋 View Menu",
+              listSections,
+              "📋 Restaurant Menu",
+              `${rName} • Fresh & Authentic`
+            );
+            await adapter.sendInteractiveCtaUrl(
+              msg.phone,
+              "Tap below to browse the full visual menu with images & instant cart builder: 📲",
+              "🌐 Order on Web Menu",
+              webMenuUrl
+            );
+          } else {
+            await adapter.sendText(msg.phone, `Here is our full web menu:\n${webMenuUrl}`);
+          }
+          return;
+        }
+
+        // ── Direct Action 2: Reserve Table ───────────────────────────────────
+        if (rawText === "reserve_table" || lowerText === "reserve table" || lowerText.includes("table reservation") || lowerText.includes("book table")) {
+          const reserveMsg = `🍽️ *Table Reservation at ${rName}*\n\nPlease reply with:\n1️⃣ *Number of guests*\n2️⃣ *Date & Preferred Time*\n\nOur team will confirm your table reservation immediately! 🥂`;
+          await adapter.sendText(msg.phone, reserveMsg);
+          return;
+        }
+
+        // ── Direct Action 3: Location & Hours ────────────────────────────────
+        if (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("location") || lowerText.includes("opening hours")) {
+          const city = cfg?.restaurantCity ?? "Hyderabad";
+          const locationMsg = `📍 *${rName}*\n🏢 *Location:* ${city}\n⏰ *Operating Hours:* 11:00 AM – 11:00 PM (Mon – Sun)\n🛵 *Delivery & Pickup:* Active\n\nFeel free to ask for directions or place an order anytime! 😊`;
+          await adapter.sendText(msg.phone, locationMsg);
           return;
         }
 
