@@ -112,3 +112,130 @@ export async function findItems(restaurantId: number, query: string) {
     (i) => i.name.toLowerCase().includes(q) || q.includes(i.name.toLowerCase()),
   );
 }
+
+/**
+ * Format the restaurant menu as WhatsApp interactive list sections.
+ * WhatsApp limits: max 10 sections total, max 10 rows per section (100 rows overall).
+ * Row title: max 24 chars. Description: max 72 chars.
+ */
+export async function menuAsInteractiveListSections(restaurantId: number) {
+  const categories = await getMenu(restaurantId);
+
+  const sections: { title: string; rows: any[] }[] = [];
+  let totalRows = 0;
+
+  for (const cat of categories) {
+    if (totalRows >= 10) break;
+
+    const rows: any[] = [];
+    const availableItems = cat.items.filter((i) => i.available && (i.stockCount === null || i.stockCount > 0));
+
+    for (const item of availableItems) {
+      if (totalRows >= 10) break;
+
+      const veg = item.isVeg ? "🌿 " : "🍗 ";
+      const rawTitle = `${veg}${item.name}`;
+      const title = rawTitle.length > 24 ? rawTitle.slice(0, 21) + "…" : rawTitle;
+
+      let price = "";
+      if (item.variants.length > 0) {
+        const prices = item.variants.map((v) => v.price);
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        price = min === max ? `₹${min}` : `₹${min}–₹${max}`;
+      } else {
+        price = `₹${item.price}`;
+      }
+      const stockTag =
+        item.stockCount !== null && item.stockCount <= 5
+          ? ` ⚠️ ${item.stockCount} left`
+          : "";
+      const rawDesc = `${price}${stockTag}${item.description ? ` · ${item.description}` : ""}`;
+      const description = rawDesc.length > 72 ? rawDesc.slice(0, 69) + "…" : rawDesc;
+
+      rows.push({
+        id: `menu_item_${item.id}`,
+        title,
+        description,
+      });
+      totalRows++;
+    }
+
+    if (rows.length > 0) {
+      sections.push({ title: cat.name, rows });
+    }
+  }
+
+  return sections;
+}
+
+/**
+ * Build interactive list sections filtered by category or item search term (e.g. "Starters", "Biryani", "Veg", "Desserts").
+ */
+export async function menuAsInteractiveListSectionsForFilter(
+  restaurantId: number,
+  filterQuery: string,
+) {
+  const categories = await getMenu(restaurantId);
+  const q = filterQuery.trim().toLowerCase();
+
+  const sections: { title: string; rows: any[] }[] = [];
+  let totalRows = 0;
+
+  for (const cat of categories) {
+    if (totalRows >= 10) break;
+
+    const catMatches = cat.name.toLowerCase().includes(q) || q.includes(cat.name.toLowerCase());
+
+    const availableItems = cat.items.filter((i) => {
+      if (!i.available || (i.stockCount !== null && i.stockCount === 0)) return false;
+      if (catMatches) return true;
+      if (q === "veg" || q === "vegetarian") return i.isVeg;
+      if (q === "non-veg" || q === "nonveg") return !i.isVeg;
+      return (
+        i.name.toLowerCase().includes(q) ||
+        (i.description && i.description.toLowerCase().includes(q))
+      );
+    });
+
+    if (availableItems.length === 0) continue;
+
+    const rows: any[] = [];
+    for (const item of availableItems) {
+      if (totalRows >= 10) break;
+
+      const veg = item.isVeg ? "🌿 " : "🍗 ";
+      const rawTitle = `${veg}${item.name}`;
+      const title = rawTitle.length > 24 ? rawTitle.slice(0, 21) + "…" : rawTitle;
+
+      let price = "";
+      if (item.variants.length > 0) {
+        const prices = item.variants.map((v) => v.price);
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        price = min === max ? `₹${min}` : `₹${min}–₹${max}`;
+      } else {
+        price = `₹${item.price}`;
+      }
+      const stockTag =
+        item.stockCount !== null && item.stockCount <= 5
+          ? ` ⚠️ ${item.stockCount} left`
+          : "";
+      const rawDesc = `${price}${stockTag}${item.description ? ` · ${item.description}` : ""}`;
+      const description = rawDesc.length > 72 ? rawDesc.slice(0, 69) + "…" : rawDesc;
+
+      rows.push({
+        id: `menu_item_${item.id}`,
+        title,
+        description,
+      });
+      totalRows++;
+    }
+
+    if (rows.length > 0) {
+      sections.push({ title: cat.name, rows });
+    }
+  }
+
+  return sections;
+}

@@ -105,40 +105,45 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   let restaurantId: number;
   let isMaster = false;
 
-  // Master env password bypass — no username required.
-  if (config.adminPassword && password === config.adminPassword) {
-    isMaster = true;
-    if (bodyRestaurantId) {
-      restaurantId = Number(bodyRestaurantId);
+  try {
+    // Master env password bypass — no username required.
+    if (config.adminPassword && password === config.adminPassword) {
+      isMaster = true;
+      if (bodyRestaurantId) {
+        restaurantId = Number(bodyRestaurantId);
+      } else {
+        const r = await prisma.botConfig.findFirst({ where: { isActive: true } });
+        if (!r) {
+          res.status(500).json({ error: "no active restaurant found" });
+          return;
+        }
+        restaurantId = r.id;
+      }
     } else {
-      const r = await prisma.botConfig.findFirst({ where: { isActive: true } });
+      // Per-restaurant: require username + password.
+      if (!username) {
+        res.status(401).json({ error: "username required" });
+        return;
+      }
+      const r = await prisma.botConfig.findFirst({
+        where: { loginUsername: username, dashboardPassword: password, isActive: true },
+      });
       if (!r) {
-        res.status(500).json({ error: "no active restaurant found" });
+        res.status(401).json({ error: "invalid credentials" });
         return;
       }
       restaurantId = r.id;
     }
-  } else {
-    // Per-restaurant: require username + password.
-    if (!username) {
-      res.status(401).json({ error: "username required" });
-      return;
-    }
-    const r = await prisma.botConfig.findFirst({
-      where: { loginUsername: username, dashboardPassword: password, isActive: true },
-    });
-    if (!r) {
-      res.status(401).json({ error: "invalid credentials" });
-      return;
-    }
-    restaurantId = r.id;
+
+    const token = signToken({ restaurantId, isMaster });
+    setCookie(res, token);
+
+    const restaurant = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+    res.json({ ok: true, restaurantId, restaurantName: restaurant?.restaurantName });
+  } catch (e) {
+    console.error("[auth] login DB error:", e);
+    res.status(503).json({ error: "Service temporarily unavailable — please try again in a moment" });
   }
-
-  const token = signToken({ restaurantId, isMaster });
-  setCookie(res, token);
-
-  const restaurant = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-  res.json({ ok: true, restaurantId, restaurantName: restaurant?.restaurantName });
 }
 
 // POST /api/auth/logout
@@ -149,9 +154,13 @@ export function logoutHandler(_req: Request, res: Response): void {
 
 // GET /api/auth/me
 export async function meHandler(req: Request, res: Response): Promise<void> {
-  // authMiddleware runs first so req.restaurantId is set.
-  const restaurant = await prisma.botConfig.findUnique({ where: { id: req.restaurantId } });
-  res.json({ restaurantId: req.restaurantId, restaurantName: restaurant?.restaurantName });
+  try {
+    const restaurant = await prisma.botConfig.findUnique({ where: { id: req.restaurantId } });
+    res.json({ restaurantId: req.restaurantId, restaurantName: restaurant?.restaurantName });
+  } catch (e) {
+    console.error("[auth] me DB error:", e);
+    res.status(503).json({ error: "Service temporarily unavailable" });
+  }
 }
 
 // Middleware — validates session cookie or x-session-token header.

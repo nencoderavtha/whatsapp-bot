@@ -1,12 +1,10 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 import { buildSystemPrompt } from "./prompt.js";
-import { greetingTemplate } from "./templates.js";
 import { getOrCreateCustomer, logMessage, recentMessages } from "../services/customer.js";
 import { getEnabledTools, runTool } from "./tools.js";
 import { completeChat } from "./llm.js";
 import { prisma } from "../db.js";
-import { menuForCustomer } from "../services/menu.js";
 
 export interface AgentResult {
   reply: string;
@@ -54,6 +52,64 @@ async function processIncoming(
   restaurantId: number,
 ): Promise<AgentResult> {
   const customer = await getOrCreateCustomer(phone, restaurantId);
+
+  // Transform native WhatsApp interactive button/list row selections into natural intent
+  if (userText.startsWith("menu_item_")) {
+    const itemId = parseInt(userText.replace("menu_item_", ""), 10);
+    if (!isNaN(itemId)) {
+      const item = await prisma.menuItem.findUnique({
+        where: { id: itemId },
+        include: { variants: true },
+      });
+      if (item) {
+        userText = `I want to order 1 ${item.name}`;
+      }
+    }
+  } else if (userText === "pay_method_upi") {
+    userText = "I want to pay via UPI";
+  } else if (userText === "pay_method_razorpay") {
+    userText = "I want to pay online via Razorpay";
+  } else if (userText === "pay_method_cash") {
+    userText = "I want to pay cash on delivery or at counter";
+  } else if (userText === "use_saved_address") {
+    userText = "Please use my saved delivery address";
+  } else if (userText === "change_address") {
+    userText = "I want to update my delivery address";
+  }
+
+  // Clean up and reset session if last messages contain order confirmations or if the history is old.
+  const checkHistory = await recentMessages(customer.id, 5);
+  const isGreeting = ["hi", "hello", "hey", "namaste", "start", "menu", "yo", "hola", "namaskar", "namaskaram"].includes(userText.trim().toLowerCase());
+  
+  let shouldReset = false;
+  if (checkHistory.length > 0) {
+    const lastMsg = checkHistory[checkHistory.length - 1];
+    const diffMs = new Date().getTime() - new Date(lastMsg.createdAt).getTime();
+    const isOld = diffMs > 15 * 60 * 1000; // 15 minutes
+
+    const hasConfirmedInHistory = checkHistory.some(m => {
+      if (m.role !== "assistant") return false;
+      const content = m.content.toLowerCase();
+      return (
+        content.includes("order confirmed") ||
+        content.includes("confirmed!") ||
+        content.includes("being prepared") ||
+        content.includes("ready in")
+      );
+    });
+
+    if (isGreeting || isOld || hasConfirmedInHistory) {
+      shouldReset = true;
+    }
+  }
+
+  if (shouldReset) {
+    await prisma.$transaction([
+      prisma.message.deleteMany({ where: { customerId: customer.id } }),
+      prisma.pendingOrder.deleteMany({ where: { customerId: customer.id } }),
+    ]);
+  }
+
   await logMessage(customer.id, restaurantId, "user", userText);
 
   // Load up to 20 recent messages for context (includes the message just logged)
@@ -61,25 +117,6 @@ async function processIncoming(
 
   // First message = only the current user message exists in history
   const isFirstMessage = history.length === 1;
-
-  // Returning customer sending a plain greeting — show menu again without going through LLM.
-  // Prevents the scope-rejection firing on innocent "hi / hello / hey" messages.
-  const isGreeting = /^(hi|hello|hey|helo|hai|hii|good\s*(morning|evening|afternoon|night)|namaste|vanakkam|start|menu)[\s!.,🙏]*$/i.test(userText.trim());
-
-  // ── First message OR returning-customer greeting: skip LLM, reply with menu ──
-  if (isFirstMessage || isGreeting) {
-    const [cfg, menuText] = await Promise.all([
-      prisma.botConfig.findUnique({ where: { id: restaurantId } }),
-      menuForCustomer(restaurantId),
-    ]);
-    const reply = greetingTemplate(
-      cfg?.restaurantName ?? "us",
-      customer.name ?? undefined,
-      menuText,
-    );
-    await logMessage(customer.id, restaurantId, "assistant", reply);
-    return { reply };
-  }
 
   const [system, tools] = await Promise.all([
     buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage, customer.id),

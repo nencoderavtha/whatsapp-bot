@@ -1,4 +1,5 @@
 import express from "express";
+import type { Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -13,6 +14,15 @@ import { verifyWebhookSignature } from "../services/razorpay.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
 import type { InboundMessage } from "../whatsapp/adapter.js";
 import { orderConfirmationMsg, ownerNewOrderMsg, orderStatusMsg } from "../services/notifications.js";
+import { getOrCreateCustomer, logMessage } from "../services/customer.js";
+import { orderStagedTemplate } from "../ai/templates.js";
+
+/** Wraps an async Express handler so DB errors call next(err) instead of becoming unhandled rejections. */
+function asyncRoute(fn: (req: Request, res: Response, next: NextFunction) => Promise<void>) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    fn(req, res, next).catch(next);
+  };
+}
 
 process.env.IS_ADMIN_SERVER = "true";
 
@@ -151,41 +161,291 @@ export function buildAdminApp() {
   app.use(express.json());
   app.use(express.static(path.join(__dirname, "public")));
 
-  // ── WhatsApp Cloud API webhook ──────────────────────────────────────────
-  // GET: Meta verification handshake
+  // ── Public Menu API for Web Page (unauthenticated) ─────────────────────
+  app.get("/public/api/menu/:restaurantId", asyncRoute(async (req, res) => {
+    const restaurantId = Number(req.params.restaurantId);
+    const restaurant = await prisma.botConfig.findUnique({
+      where: { id: restaurantId },
+      select: { id: true, restaurantName: true, restaurantCity: true },
+    });
+    if (!restaurant) {
+      res.status(404).json({ error: "Restaurant not found" });
+      return;
+    }
+    const categories = await getMenu(restaurantId);
+    res.json({ restaurant, categories });
+  }));
+
+  // ── Public Menu API: Place order from Web Menu ─────────────────────────
+  app.post("/public/api/menu/order", asyncRoute(async (req, res) => {
+    const restaurantId = Number(req.body.restaurantId);
+    const phone = req.body.phone;
+    const items = req.body.items; // Array of { menuItemId, variantId, qty }
+
+    if (!restaurantId || !phone || !Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: "Missing required fields" });
+      return;
+    }
+
+    // 1. Get or create customer
+    const customer = await getOrCreateCustomer(phone, restaurantId);
+
+    // 2. Clear old session messages & pending orders so we start completely clean
+    await prisma.$transaction([
+      prisma.message.deleteMany({ where: { customerId: customer.id } }),
+      prisma.pendingOrder.deleteMany({ where: { customerId: customer.id } }),
+    ]);
+
+    // 3. Process items, fetch from DB to calculate totals and item summary labels
+    const rawLines = items.map((l: any) => ({
+      menuItemId: Number(l.menuItemId),
+      variantId: l.variantId ? Number(l.variantId) : undefined,
+      qty: Math.max(1, Number(l.qty ?? 1)),
+    }));
+
+    const menuItems = await prisma.menuItem.findMany({
+      where: { id: { in: rawLines.map((l) => l.menuItemId) } },
+      include: { variants: true },
+    });
+    const byId = new Map(menuItems.map((m) => [m.id, m]));
+
+    const validLines: any[] = [];
+    const labels: string[] = [];
+    let total = 0;
+
+    for (const l of rawLines) {
+      const mi = byId.get(l.menuItemId);
+      if (!mi || !mi.available) continue;
+
+      let price = mi.price;
+      let variantName: string | undefined;
+
+      if (l.variantId) {
+        const variant = mi.variants.find((v) => v.id === l.variantId);
+        if (!variant) continue;
+        price = variant.price;
+        variantName = variant.name;
+      }
+
+      validLines.push({
+        menuItemId: mi.id,
+        variantId: l.variantId,
+        qty: l.qty,
+      });
+
+      const label = variantName
+        ? `${l.qty}x ${mi.name} (${variantName})`
+        : `${l.qty}x ${mi.name}`;
+      labels.push(`${label} ₹${price * l.qty}`);
+      total += price * l.qty;
+    }
+
+    if (validLines.length === 0) {
+      res.status(400).json({ error: "No valid available items selected" });
+      return;
+    }
+
+    // 4. Persist the cart in database
+    const CART_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+    const cartData = {
+      lines: JSON.stringify(validLines),
+      type: "pickup", // default to pickup
+      expiresAt: new Date(Date.now() + CART_TTL_MS),
+    };
+    await prisma.pendingOrder.create({
+      data: {
+        customerId: customer.id,
+        restaurantId,
+        ...cartData,
+      },
+    });
+
+    // 5. Send order staged summary into the WhatsApp chat automatically!
+    const session = botSessionManager.getSession(restaurantId);
+    if (session) {
+      const promptText = `I selected some items from the web menu: ${validLines.map(v => `${v.qty}x ${byId.get(v.menuItemId)?.name}`).join(", ")}`;
+      // Log the user's action
+      await logMessage(customer.id, restaurantId, "user", promptText);
+
+      // Format staged order message
+      const stagedMsg = orderStagedTemplate(labels, total, "pickup");
+      await session.sendText(phone, stagedMsg);
+
+      // Log assistant reply
+      await logMessage(customer.id, restaurantId, "assistant", stagedMsg);
+    }
+
+    res.json({ ok: true });
+  }));
+
+  // ── WhatsApp webhook (Kapso v2 + Meta Cloud API fallback) ─────────────────
+  // GET: verification handshake — used by both Meta and Kapso
   app.get("/webhook", (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
+    const mode      = req.query["hub.mode"];
+    const token     = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    if (mode === "subscribe" && token === config.cloud.verifyToken) {
-      res.status(200).send(challenge);
+    if (token === config.cloud.verifyToken) {
+      // Meta format: mode must be "subscribe"
+      if (mode === "subscribe") {
+        res.status(200).send(challenge);
+      } else {
+        // Kapso may just GET with verify_token — return 200 ok
+        res.status(200).send(challenge ?? "ok");
+      }
     } else {
       res.sendStatus(403);
     }
   });
 
-  // POST: inbound messages from Meta — route to correct restaurant by phoneNumberId
+  // POST: inbound events from Kapso v2 or raw Meta Cloud API
   app.post("/webhook", async (req, res) => {
-    res.sendStatus(200); // ack immediately — Meta requires < 5s
+    res.sendStatus(200); // always ack immediately — Kapso/Meta requires < 5s
+
     try {
-      const entry = req.body?.entry?.[0]?.changes?.[0]?.value;
+      const body = req.body;
+
+      // 1. Kapso v2 Buffered Batch Format: { batch: true, data: [{ message, conversation, phone_number_id }, ...] }
+      if (body?.batch && Array.isArray(body?.data)) {
+        for (const item of body.data) {
+          const msg = item.message;
+          const phoneNumberId = item.phone_number_id ?? body.phone_number_id;
+          if (!msg || !phoneNumberId) continue;
+
+          // Only process inbound messages (skip status updates / echoes)
+          if (msg.kapso?.direction === "outbound") continue;
+
+          let text = "";
+          switch (msg.type) {
+            case "text":
+              text = msg.text?.body ?? "";
+              break;
+            case "interactive":
+              if (msg.interactive?.type === "address") {
+                const addr = msg.interactive.address;
+                const parts = [];
+                if (addr.name) parts.push(`Name: ${addr.name}`);
+                if (addr.phone_number) parts.push(`Phone: ${addr.phone_number}`);
+                const street = addr.street_house || addr.address || addr.full_address || "";
+                if (street) parts.push(`Address: ${street}`);
+                if (addr.city) parts.push(`City: ${addr.city}`);
+                if (addr.postal_code) parts.push(`PIN: ${addr.postal_code}`);
+                text = parts.join(", ");
+              } else {
+                text = msg.interactive?.button_reply?.title
+                  ?? msg.interactive?.list_reply?.title
+                  ?? msg.interactive?.nfm_reply?.body
+                  ?? "";
+              }
+              break;
+            case "location":
+              text = `Location: ${msg.location?.latitude}, ${msg.location?.longitude} (${msg.location?.address || msg.location?.name || "Shared Location"})`;
+              break;
+            case "audio":
+              text = msg.kapso?.transcript?.text ?? "";
+              break;
+            case "button":
+              text = msg.button?.text ?? "";
+              break;
+            default:
+              text = msg.kapso?.content ?? "";
+          }
+
+          if (!text.trim()) continue;
+
+          const phone = msg.from ?? item.conversation?.phone_number ?? "";
+          if (!phone) continue;
+
+          const name = item.conversation?.kapso?.contact_name ?? undefined;
+
+          const inbound: InboundMessage = { phone, text: text.trim(), name };
+          await botSessionManager.routeCloudMessage(phoneNumberId, inbound);
+        }
+        return;
+      }
+
+      // 2. Kapso v2 Single Message Format: { message: {...}, conversation: {...}, phone_number_id: "..." }
+      if (body?.message && (body?.phone_number_id || body?.conversation?.phone_number_id)) {
+        const msg = body.message;
+        const phoneNumberId = body.phone_number_id ?? body.conversation?.phone_number_id;
+
+        if (msg.kapso?.direction !== "outbound") {
+          let text = "";
+          switch (msg.type) {
+            case "text":
+              text = msg.text?.body ?? "";
+              break;
+            case "interactive":
+              if (msg.interactive?.type === "address") {
+                const addr = msg.interactive.address;
+                const parts = [];
+                if (addr.name) parts.push(`Name: ${addr.name}`);
+                if (addr.phone_number) parts.push(`Phone: ${addr.phone_number}`);
+                const street = addr.street_house || addr.address || addr.full_address || "";
+                if (street) parts.push(`Address: ${street}`);
+                if (addr.city) parts.push(`City: ${addr.city}`);
+                if (addr.postal_code) parts.push(`PIN: ${addr.postal_code}`);
+                text = parts.join(", ");
+              } else {
+                text = msg.interactive?.button_reply?.title
+                  ?? msg.interactive?.list_reply?.title
+                  ?? msg.interactive?.nfm_reply?.body
+                  ?? "";
+              }
+              break;
+            case "location":
+              text = `Location: ${msg.location?.latitude}, ${msg.location?.longitude} (${msg.location?.address || msg.location?.name || "Shared Location"})`;
+              break;
+            case "audio":
+              text = msg.kapso?.transcript?.text ?? "";
+              break;
+            case "button":
+              text = msg.button?.text ?? "";
+              break;
+            default:
+              text = msg.kapso?.content ?? "";
+          }
+
+          if (text.trim()) {
+            const phone = msg.from ?? body.conversation?.phone_number ?? "";
+            if (phone) {
+              const name = body.conversation?.kapso?.contact_name ?? undefined;
+              const inbound: InboundMessage = { phone, text: text.trim(), name };
+              await botSessionManager.routeCloudMessage(phoneNumberId, inbound);
+            }
+          }
+        }
+        return;
+      }
+
+      // 3. Legacy Meta Cloud API format (fallback)
+      const entry = body?.entry?.[0]?.changes?.[0]?.value;
       const msg = entry?.messages?.[0];
-      if (!msg) return;
-      const phoneNumberId: string = entry?.metadata?.phone_number_id;
-      if (!phoneNumberId) return;
-      const text: string =
-        msg.text?.body ?? msg.button?.text ?? msg.interactive?.list_reply?.title ?? "";
-      if (!text.trim()) return;
-      const inbound: InboundMessage = {
-        phone: msg.from as string,
-        text: text.trim(),
-        name: entry?.contacts?.[0]?.profile?.name as string | undefined,
-      };
-      await botSessionManager.routeCloudMessage(phoneNumberId, inbound);
+      if (msg) {
+        const phoneNumberId = entry?.metadata?.phone_number_id;
+        if (phoneNumberId) {
+          const text =
+            msg.text?.body
+            ?? msg.button?.text
+            ?? msg.interactive?.button_reply?.title
+            ?? msg.interactive?.list_reply?.title
+            ?? "";
+          if (text.trim()) {
+            const inbound: InboundMessage = {
+              phone: msg.from as string,
+              text: text.trim(),
+              name: entry?.contacts?.[0]?.profile?.name as string | undefined,
+            };
+            await botSessionManager.routeCloudMessage(phoneNumberId, inbound);
+          }
+        }
+      }
+
+
     } catch (e) {
-      console.error("[Cloud webhook]", e);
+      console.error("[Webhook]", e);
     }
   });
+
 
   // ── Public routes (no auth) ─────────────────────────────────────────────
   app.get("/api/ping", (_req, res) => res.json({ ok: true }));
@@ -510,7 +770,7 @@ export function buildAdminApp() {
   });
 
   // --- Payments ---
-  api.get("/payments", async (req, res) => {
+  api.get("/payments", asyncRoute(async (req, res) => {
     const payments = await prisma.payment.findMany({
       where: { restaurantId: req.restaurantId },
       orderBy: { createdAt: "desc" },
@@ -518,7 +778,7 @@ export function buildAdminApp() {
       take: 200,
     });
     res.json(payments);
-  });
+  }));
 
   // --- Bot pause toggle ---
   api.put("/bot/pause", async (req, res) => {
@@ -713,6 +973,15 @@ export function buildAdminApp() {
 
   // Fill in loginUsername for any restaurant that doesn't have one yet
   ensureLoginUsernames().catch(e => console.error("[startup] ensureLoginUsernames failed:", e));
+
+  // Catch errors forwarded via next(err) — e.g. asyncRoute wrapping a DB call that fails.
+  // Returns 503 so the admin UI shows an error message instead of hanging indefinitely.
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    console.error("[admin] Route error:", err);
+    if (!res.headersSent) {
+      res.status(503).json({ error: "Service temporarily unavailable — please try again" });
+    }
+  });
 
   return app;
 }

@@ -14,31 +14,31 @@ export type NotifOrder = {
 };
 
 const TYPE_LABEL: Record<string, string> = {
-  pickup: "Pickup",
-  delivery: "Delivery",
-  "dine-in": "Dine-in",
+  pickup:   "🏃 Pickup",
+  delivery: "🛵 Delivery",
+  "dine-in": "🍽️ Dine-in",
 };
 
 const STATUS_CONFIG: Record<string, { emoji: string; heading: string; body: string }> = {
   preparing: {
     emoji: "🍳",
     heading: "Being Prepared",
-    body: "Your order is in the kitchen! We'll let you know as soon as it's ready.",
+    body: "Great news! Your order is in the kitchen and being freshly prepared. We'll ping you the moment it's ready! 🙏",
   },
   ready: {
     emoji: "✅",
     heading: "Ready for Pickup!",
-    body: "Your order is ready at the counter. Please collect at your convenience 🙏",
+    body: "Your order is ready and waiting at the counter. Come collect it at your convenience! 🎉",
   },
   delivered: {
     emoji: "🎉",
     heading: "Delivered!",
-    body: "Thank you for ordering! Enjoy your meal 😊 Hope to see you again soon!",
+    body: "Hope you enjoy every bite! 😊 Thank you for ordering with us — we'd love to see you again soon!",
   },
   cancelled: {
     emoji: "❌",
-    heading: "Cancelled",
-    body: "Your order has been cancelled. Please contact us if you have any questions.",
+    heading: "Order Cancelled",
+    body: "Your order has been cancelled. We're sorry for the inconvenience. Please reach out if you have any questions.",
   },
 };
 
@@ -62,19 +62,23 @@ function itemLines(order: NotifOrder): string {
 
 export function orderConfirmationMsg(order: NotifOrder, restaurantName: string): string {
   const noteSection = order.note ? `\n📝 _Note: ${order.note}_` : "";
+  const typeLabel = TYPE_LABEL[order.type] ?? order.type;
+
   return [
     `✅ *Order #${order.id} Confirmed!*`,
+    `_Thank you for ordering from ${restaurantName}!_`,
     "",
-    `📋 *Your Order:*`,
+    `📋 *Items Ordered:*`,
     itemLines(order),
     "",
     `━━━━━━━━━━━━━━━━━━━━`,
     `💰 *Total: ₹${order.total.toFixed(0)}*`,
-    `📦 Type: ${TYPE_LABEL[order.type] ?? order.type}`,
-    `💵 Payment: ${paymentLabel(order)}${noteSection}`,
+    `📦 *Type:* ${typeLabel}`,
+    `💵 *Payment:* ${paymentLabel(order)}${noteSection}`,
     `━━━━━━━━━━━━━━━━━━━━`,
     "",
-    `⏱ Ready in ~20-25 mins. We'll send you an update! 🙏`,
+    `⏱ _Ready in ~20–25 mins. We'll send you an update!_ 🙏`,
+    "",
     `— _${restaurantName}_`,
   ].join("\n");
 }
@@ -92,7 +96,7 @@ export function orderStatusMsg(order: NotifOrder, status: string, restaurantName
     "",
     cfg.body,
     "",
-    `_${summary}_`,
+    `📋 _${summary}_`,
     `💰 ₹${order.total.toFixed(0)}`,
     "",
     `— _${restaurantName}_`,
@@ -112,19 +116,21 @@ export function ownerNewOrderMsg(order: NotifOrder): string {
     : order.customer.phone;
 
   const noteSection = order.note ? `\n📝 _${order.note}_` : "";
+  const typeLabel = TYPE_LABEL[order.type] ?? order.type;
 
   return [
     `🔔 *New Order #${order.id}!*`,
     "",
-    `👤 ${customer}`,
-    `📦 ${TYPE_LABEL[order.type] ?? order.type}  •  🕐 ${now}`,
+    `👤 *Customer:* ${customer}`,
+    `📦 *Type:* ${typeLabel}  •  🕐 ${now}`,
     "",
     `📋 *Items:*`,
     itemLines(order),
     "",
     `━━━━━━━━━━━━━━━━━━━━`,
     `💰 *Total: ₹${order.total.toFixed(0)}*`,
-    `💵 Payment: ${paymentLabel(order)}${noteSection}`,
+    `💵 *Payment:* ${paymentLabel(order)}${noteSection}`,
+    `━━━━━━━━━━━━━━━━━━━━`,
   ].join("\n");
 }
 
@@ -132,17 +138,16 @@ export function ownerNewOrderMsg(order: NotifOrder): string {
 
 export function paymentReceivedMsg(order: NotifOrder, restaurantName: string): string {
   const ref = order.payment?.reference;
-  const method = order.payment?.method ?? "online";
 
   return [
-    `✅ *Payment Received!*`,
+    `✅ *Payment Confirmed!*`,
+    `_₹${order.total.toFixed(0)} received for Order #${order.id}_`,
     "",
-    `₹${order.total.toFixed(0)} received for Order #${order.id}`,
-    `💳 Method: ${paymentLabel(order)}`,
-    ref ? `🔖 Ref: ${ref}` : "",
+    `💳 *Method:* ${paymentLabel(order)}`,
+    ref ? `🔖 *Ref:* ${ref}` : "",
     "",
-    `🍳 Your order is confirmed and being prepared!`,
-    `We'll send you an update when it's ready.`,
+    `🍳 Your order is now *confirmed* and being freshly prepared!`,
+    `We'll send you an update as soon as it's ready. 🙏`,
     "",
     `— _${restaurantName}_`,
   ]

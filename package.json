@@ -21,6 +21,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
+    "@kapso/whatsapp-cloud-api": "^0.2.2",
     "@prisma/client": "^6.5.0",
     "@whiskeysockets/baileys": "^6.7.16",
     "cookie-parser": "^1.4.7",

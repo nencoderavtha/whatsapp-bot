@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Menu</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: { extend: { fontFamily: { sans: ["Outfit", "sans-serif"] } } },
+    };
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: rgba(15,23,42,.3); }
+    ::-webkit-scrollbar-thumb { background: rgba(244,63,94,.18); border-radius: 4px; }
+    .glass {
+      background: rgba(15, 23, 42, 0.65);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .gradient-header {
+      background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-full flex flex-col font-sans selection:bg-rose-500 selection:text-white pb-24">
+
+  <!-- Header -->
+  <header class="gradient-header relative overflow-hidden px-6 py-10 shadow-lg text-center flex flex-col items-center">
+    <div class="absolute w-[200px] h-[200px] rounded-full bg-white/5 blur-3xl -top-12 -left-12 pointer-events-none"></div>
+    <div class="absolute w-[200px] h-[200px] rounded-full bg-slate-950/10 blur-3xl -bottom-12 -right-12 pointer-events-none"></div>
+    
+    <h1 id="restaurant-name" class="text-3xl md:text-4xl font-extrabold tracking-tight mb-1 text-white">Loading Menu...</h1>
+    <p id="restaurant-city" class="text-rose-200/90 text-sm font-medium uppercase tracking-widest flex items-center gap-1.5"></p>
+  </header>
+
+  <!-- Content Container -->
+  <main class="max-w-2xl w-full mx-auto px-4 flex-1 mt-6">
+    <!-- Controls (Search + Filters) -->
+    <div class="glass rounded-2xl p-4 mb-6 sticky top-4 z-30 shadow-xl">
+      <div class="flex flex-col gap-3">
+        <!-- Search bar -->
+        <div class="relative">
+          <input 
+            type="text" 
+            id="search-input" 
+            placeholder="Search items..." 
+            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 pl-10 text-sm focus:outline-none focus:border-rose-500 transition-colors placeholder:text-slate-500"
+          />
+          <div class="absolute left-3.5 top-3 text-slate-500">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+        </div>
+        <!-- Filter buttons -->
+        <div class="flex gap-2">
+          <button onclick="setFilter('all')" id="filter-all" class="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-rose-500 text-white transition-all">All</button>
+          <button onclick="setFilter('veg')" id="filter-veg" class="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800/80 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-1">Veg 🌿</button>
+          <button onclick="setFilter('nonveg')" id="filter-nonveg" class="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800/80 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-1">Non-Veg 🍗</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="hidden text-center py-12 flex flex-col items-center justify-center">
+      <p class="text-slate-500 text-sm">No items match your search or filter.</p>
+    </div>
+
+    <!-- Menu Sections -->
+    <div id="menu-sections" class="space-y-8"></div>
+  </main>
+
+  <!-- Detailed Modal (used for variant selection / adding custom quantities) -->
+  <div id="detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+    <div class="glass w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative transform translate-y-4 transition-transform duration-300">
+      <!-- Modal Close Button -->
+      <button onclick="closeModal()" class="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-slate-900/80 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+
+      <!-- Modal Content -->
+      <div class="p-6">
+        <div class="flex items-center gap-2 mb-3">
+          <span id="modal-badge-veg" class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase"></span>
+          <span id="modal-badge-spice" class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md bg-amber-500/10 text-amber-500 uppercase hidden"></span>
+        </div>
+        <h2 id="modal-title" class="text-xl font-bold tracking-tight text-white mb-2"></h2>
+        <p id="modal-description" class="text-slate-400 text-sm leading-relaxed mb-6"></p>
+        
+        <div id="modal-variants-section" class="border-t border-slate-800/80 pt-4 hidden">
+          <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">Choose Size</p>
+          <div id="modal-variants-list" class="space-y-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Cart Bar -->
+  <div id="cart-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 max-w-sm w-[calc(100%-2rem)] bg-rose-600 text-white rounded-2xl px-6 py-4 flex justify-between items-center shadow-2xl z-40 transition-all duration-300 translate-y-28 opacity-0 pointer-events-none">
+    <div class="flex flex-col">
+      <span id="cart-bar-qty" class="text-xs font-semibold uppercase tracking-wider text-rose-100">0 items selected</span>
+      <span id="cart-bar-total" class="text-lg font-bold">₹0</span>
+    </div>
+    <button onclick="openCartModal()" class="bg-white text-rose-600 font-extrabold text-sm px-5 py-2.5 rounded-xl hover:bg-rose-50 transition-colors shadow-md">
+      View Order 🛒
+    </button>
+  </div>
+
+  <!-- Cart List Modal -->
+  <div id="cart-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+    <div class="glass w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative transform translate-y-4 transition-transform duration-300">
+      <!-- Modal Close Button -->
+      <button onclick="closeCartModal()" class="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-slate-900/80 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+
+      <!-- Cart Content -->
+      <div class="p-6">
+        <h2 class="text-xl font-bold tracking-tight text-white mb-4 flex items-center gap-2">
+          🛒 Review Your Cart
+        </h2>
+        <div id="cart-items-list" class="max-h-[250px] overflow-y-auto space-y-3 mb-6 pr-1"></div>
+        
+        <div class="border-t border-slate-800/80 pt-4 mb-6">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-slate-400 text-sm">Total Price</span>
+            <span id="cart-modal-subtotal" class="text-rose-500 font-extrabold text-2xl">₹0</span>
+          </div>
+          <p class="text-[10px] text-slate-500">The order will be pre-staged in your active WhatsApp chat.</p>
+        </div>
+
+        <button onclick="submitOrder()" id="cart-submit-btn" class="w-full py-3.5 bg-rose-500 text-white rounded-xl font-extrabold text-sm hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2">
+          Send to WhatsApp Chat 💬
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Success Overlay -->
+  <div id="success-overlay" class="fixed inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center p-6 text-center hidden">
+    <div class="w-20 h-20 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mb-6 border border-emerald-500/20 animate-bounce">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    </div>
+    <h2 class="text-2xl font-bold tracking-tight text-white mb-2">Order Shared with Bot!</h2>
+    <p class="text-slate-400 text-sm max-w-xs mb-8 leading-relaxed">
+      We've sent your selections directly to our WhatsApp chat. Please switch back to WhatsApp to confirm and pay!
+    </p>
+    <button onclick="window.close()" class="px-6 py-2.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 transition-all rounded-xl text-slate-300 font-semibold text-sm">
+      Close Window
+    </button>
+  </div>
+
+  <!-- JavaScript logic -->
+  <script>
+    let menuData = null;
+    let currentFilter = 'all';
+    let searchQuery = '';
+    
+    // Cart state: { "itemId_variantId": { item, variant, qty } }
+    let cart = {};
+
+    // Extract restaurant ID & phone number from query params
+    const params = new URLSearchParams(window.location.search);
+    const rId = params.get('r') || '1';
+    const phone = params.get('phone') || '';
+
+    const IMAGE_MAP = {
+      biryani: "https://images.unsplash.com/photo-1633945274405-b6c8069047b0?q=80&w=300",
+      mutton: "https://images.unsplash.com/photo-1606471679093-4b65662ff143?q=80&w=300",
+      chicken: "https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?q=80&w=300",
+      roti: "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?q=80&w=300",
+      sangati: "https://images.unsplash.com/photo-1541832676-9b763b0239ab?q=80&w=300",
+      rice: "https://images.unsplash.com/photo-1516685018646-549198525c1b?q=80&w=300",
+      curry: "https://images.unsplash.com/photo-1547825405-2dbb3953408c?q=80&w=300",
+      parota: "https://images.unsplash.com/photo-1627308595229-7830a5c91f9f?q=80&w=300",
+      boti: "https://images.unsplash.com/photo-1544025162-d76694265947?q=80&w=300",
+      pappu: "https://images.unsplash.com/photo-1546833999-b9f581a1996d?q=80&w=300",
+      default: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300"
+    };
+
+    function getItemImage(name) {
+      const n = name.toLowerCase();
+      if (n.includes("biryani")) return IMAGE_MAP.biryani;
+      if (n.includes("mutton")) return IMAGE_MAP.mutton;
+      if (n.includes("chicken")) return IMAGE_MAP.chicken;
+      if (n.includes("roti")) return IMAGE_MAP.roti;
+      if (n.includes("sangati")) return IMAGE_MAP.sangati;
+      if (n.includes("rice")) return IMAGE_MAP.rice;
+      if (n.includes("curry")) return IMAGE_MAP.curry;
+      if (n.includes("parota")) return IMAGE_MAP.parota;
+      if (n.includes("boti") || n.includes("kheema")) return IMAGE_MAP.boti;
+      if (n.includes("pappu") || n.includes("dal")) return IMAGE_MAP.pappu;
+      return IMAGE_MAP.default;
+    }
+
+    async function fetchMenu() {
+      try {
+        const response = await fetch(`/public/api/menu/${rId}`);
+        if (!response.ok) throw new Error('Failed to fetch menu');
+        menuData = await response.json();
+        renderRestaurantHeader();
+        renderMenu();
+      } catch (err) {
+        console.error(err);
+        document.getElementById('restaurant-name').textContent = 'Error Loading Menu';
+        document.getElementById('restaurant-name').classList.add('text-rose-500');
+      }
+    }
+
+    function renderRestaurantHeader() {
+      if (!menuData) return;
+      document.getElementById('restaurant-name').textContent = menuData.restaurant.restaurantName;
+      
+      const cityContainer = document.getElementById('restaurant-city');
+      cityContainer.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
+        </svg>
+        ${menuData.restaurant.restaurantCity}
+      `;
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      ['all', 'veg', 'nonveg'].forEach(f => {
+        const btn = document.getElementById(`filter-${f}`);
+        if (f === filter) {
+          btn.className = 'flex-1 py-1.5 rounded-lg text-xs font-semibold bg-rose-500 text-white transition-all';
+        } else {
+          btn.className = 'flex-1 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800/80 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-1';
+        }
+      });
+      renderMenu();
+    }
+
+    // Search event
+    document.getElementById('search-input').addEventListener('input', (e) => {
+      searchQuery = e.target.value.toLowerCase().trim();
+      renderMenu();
+    });
+
+    function renderMenu() {
+      if (!menuData) return;
+      
+      const container = document.getElementById('menu-sections');
+      container.innerHTML = '';
+      
+      let matchesAny = false;
+
+      menuData.categories.forEach(category => {
+        const filteredItems = category.items.filter(item => {
+          const matchesSearch = item.name.toLowerCase().includes(searchQuery) || 
+                                (item.description && item.description.toLowerCase().includes(searchQuery));
+          if (!matchesSearch) return false;
+          if (currentFilter === 'veg' && !item.isVeg) return false;
+          if (currentFilter === 'nonveg' && item.isVeg) return false;
+          return true;
+        });
+
+        if (filteredItems.length > 0) {
+          matchesAny = true;
+          
+          const section = document.createElement('section');
+          section.className = 'space-y-4 animate-fade-in';
+          
+          const title = document.createElement('h2');
+          title.className = 'text-lg font-bold tracking-tight text-rose-500 uppercase border-b border-rose-500/10 pb-2 mb-3';
+          title.textContent = category.name;
+          section.appendChild(title);
+          
+          const grid = document.createElement('div');
+          grid.className = 'grid gap-3.5';
+
+          filteredItems.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'glass rounded-xl p-4 flex gap-4 items-center border border-transparent hover:border-slate-800 transition-all duration-200';
+            
+            // Food Thumbnail
+            const imgDiv = document.createElement('div');
+            imgDiv.className = 'w-20 h-20 shrink-0 overflow-hidden rounded-xl bg-slate-900 border border-white/5 cursor-pointer';
+            imgDiv.onclick = () => {
+              if (item.variants && item.variants.length > 0) {
+                openModal(item);
+              }
+            };
+            const img = document.createElement('img');
+            img.src = getItemImage(item.name);
+            img.className = 'w-full h-full object-cover hover:scale-105 transition-transform duration-300';
+            img.alt = item.name;
+            imgDiv.appendChild(img);
+            card.appendChild(imgDiv);
+
+            const info = document.createElement('div');
+            info.className = 'flex-1 pr-4 cursor-pointer';
+            info.onclick = () => {
+              if (item.variants && item.variants.length > 0) {
+                openModal(item);
+              }
+            };
+            
+            const flexRow = document.createElement('div');
+            flexRow.className = 'flex items-center gap-1.5 mb-1';
+            
+            const name = document.createElement('h3');
+            name.className = 'text-sm font-semibold tracking-tight text-white';
+            name.textContent = item.name;
+            flexRow.appendChild(name);
+            
+            const vegBadge = document.createElement('span');
+            vegBadge.className = item.isVeg 
+              ? 'px-1 py-0.25 text-[8px] font-bold rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/15'
+              : 'px-1 py-0.25 text-[8px] font-bold rounded bg-rose-500/10 text-rose-500 border border-rose-500/15';
+            vegBadge.textContent = item.isVeg ? 'Veg' : 'Non-Veg';
+            flexRow.appendChild(vegBadge);
+            
+            info.appendChild(flexRow);
+            
+            if (item.description) {
+              const desc = document.createElement('p');
+              desc.className = 'text-slate-400 text-xs line-clamp-1 leading-normal';
+              desc.textContent = item.description;
+              info.appendChild(desc);
+            }
+
+            const priceLabel = document.createElement('div');
+            priceLabel.className = 'mt-1';
+            if (item.variants && item.variants.length > 0) {
+              const startPrice = Math.min(...item.variants.map(v => v.price));
+              priceLabel.innerHTML = `<span class="text-sm font-extrabold text-white">₹${startPrice}</span> <span class="text-[9px] text-slate-500">(sizes available)</span>`;
+            } else {
+              priceLabel.innerHTML = `<span class="text-sm font-extrabold text-rose-500">₹${item.price}</span>`;
+            }
+            info.appendChild(priceLabel);
+            
+            card.appendChild(info);
+            
+            // Action section (Add / Quantity controller)
+            const actionDiv = document.createElement('div');
+            actionDiv.className = 'shrink-0 flex items-center justify-end min-w-[80px]';
+            
+            if (item.variants && item.variants.length > 0) {
+              // Variants need detail modal popup
+              const addBtn = document.createElement('button');
+              addBtn.onclick = () => openModal(item);
+              addBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-extrabold border border-rose-500/20 text-rose-500 hover:bg-rose-500/5 transition-all uppercase';
+              addBtn.textContent = 'Add +';
+              actionDiv.appendChild(addBtn);
+            } else {
+              // Single item cart controller
+              const cartKey = `${item.id}_null`;
+              const cartItem = cart[cartKey];
+              
+              if (cartItem) {
+                const counter = document.createElement('div');
+                counter.className = 'flex items-center gap-2.5 bg-slate-900 border border-slate-800 rounded-lg p-1';
+                counter.innerHTML = `
+                  <button onclick="updateQty('${cartKey}', -1)" class="w-6 h-6 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 font-extrabold text-slate-300 text-sm">-</button>
+                  <span class="text-xs font-bold text-white">${cartItem.qty}</span>
+                  <button onclick="updateQty('${cartKey}', 1)" class="w-6 h-6 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 font-extrabold text-slate-300 text-sm">+</button>
+                `;
+                actionDiv.appendChild(counter);
+              } else {
+                const addBtn = document.createElement('button');
+                addBtn.onclick = () => addToCart(item, null);
+                addBtn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-extrabold bg-rose-500/10 text-rose-500 border border-rose-500/25 hover:bg-rose-50 hover:text-white transition-all uppercase';
+                addBtn.textContent = 'Add';
+                actionDiv.appendChild(addBtn);
+              }
+            }
+            
+            card.appendChild(actionDiv);
+            grid.appendChild(card);
+          });
+          
+          section.appendChild(grid);
+          container.appendChild(section);
+        }
+      });
+
+      const emptyState = document.getElementById('empty-state');
+      if (matchesAny) {
+        emptyState.classList.add('hidden');
+      } else {
+        emptyState.classList.remove('hidden');
+      }
+    }
+
+    // Cart Handlers
+    function addToCart(item, variant) {
+      const vId = variant ? variant.id : 'null';
+      const key = `${item.id}_${vId}`;
+      
+      if (cart[key]) {
+        cart[key].qty++;
+      } else {
+        cart[key] = { item, variant, qty: 1 };
+      }
+      
+      updateCartUI();
+      renderMenu();
+      if (variant) closeModal();
+    }
+
+    function updateQty(key, delta) {
+      if (!cart[key]) return;
+      cart[key].qty += delta;
+      if (cart[key].qty <= 0) {
+        delete cart[key];
+      }
+      updateCartUI();
+      renderMenu();
+      if (document.getElementById('cart-modal').classList.contains('opacity-100')) {
+        renderCartModalItems();
+      }
+    }
+
+    function updateCartUI() {
+      let totalQty = 0;
+      let totalPrice = 0;
+      
+      for (const k in cart) {
+        const item = cart[k];
+        totalQty += item.qty;
+        const price = item.variant ? item.variant.price : item.item.price;
+        totalPrice += price * item.qty;
+      }
+      
+      const cartBar = document.getElementById('cart-bar');
+      if (totalQty > 0) {
+        document.getElementById('cart-bar-qty').textContent = `${totalQty} item${totalQty > 1 ? 's' : ''} selected`;
+        document.getElementById('cart-bar-total').textContent = `₹${totalPrice}`;
+        
+        cartBar.classList.remove('translate-y-28', 'opacity-0', 'pointer-events-none');
+        cartBar.classList.add('translate-y-0', 'opacity-100');
+      } else {
+        cartBar.classList.remove('translate-y-0', 'opacity-100');
+        cartBar.classList.add('translate-y-28', 'opacity-0', 'pointer-events-none');
+      }
+    }
+
+    // Modal Control
+    function openModal(item) {
+      const modal = document.getElementById('detail-modal');
+      const box = modal.querySelector('.glass');
+      
+      // Badges
+      const veg = document.getElementById('modal-badge-veg');
+      veg.textContent = item.isVeg ? 'Veg 🌿' : 'Non-Veg 🍗';
+      veg.className = item.isVeg
+        ? 'px-2 py-0.5 text-[9px] font-bold tracking-wider rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/15 uppercase'
+        : 'px-2 py-0.5 text-[9px] font-bold tracking-wider rounded-md bg-rose-500/10 text-rose-500 border border-rose-500/15 uppercase';
+
+      const spice = document.getElementById('modal-badge-spice');
+      if (item.spiceLevel) {
+        spice.textContent = `🌶️ ${item.spiceLevel}`;
+        spice.classList.remove('hidden');
+      } else {
+        spice.classList.add('hidden');
+      }
+
+      // Title & description
+      document.getElementById('modal-title').textContent = item.name;
+      document.getElementById('modal-description').textContent = item.description || 'No description available.';
+
+      const variantsSec = document.getElementById('modal-variants-section');
+      
+      if (item.variants && item.variants.length > 0) {
+        variantsSec.classList.remove('hidden');
+        
+        const list = document.getElementById('modal-variants-list');
+        list.innerHTML = '';
+        item.variants.forEach(v => {
+          const row = document.createElement('div');
+          row.className = 'flex justify-between items-center py-2.5 border-b border-slate-900 text-sm';
+          
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'text-white font-medium';
+          nameSpan.textContent = v.name;
+          row.appendChild(nameSpan);
+          
+          const actionWrap = document.createElement('div');
+          actionWrap.className = 'flex items-center gap-3';
+          
+          const priceSpan = document.createElement('span');
+          priceSpan.className = 'text-rose-500 font-extrabold';
+          priceSpan.textContent = `₹${v.price}`;
+          actionWrap.appendChild(priceSpan);
+          
+          const addOptBtn = document.createElement('button');
+          addOptBtn.onclick = () => addToCart(item, v);
+          addOptBtn.className = 'px-2 py-1 rounded bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs transition-colors';
+          addOptBtn.textContent = 'Add';
+          actionWrap.appendChild(addOptBtn);
+
+          row.appendChild(actionWrap);
+          list.appendChild(row);
+        });
+      } else {
+        variantsSec.classList.add('hidden');
+      }
+
+      // Animate Modal Open
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        modal.classList.replace('opacity-0', 'opacity-100');
+        box.classList.replace('translate-y-4', 'translate-y-0');
+      }, 20);
+    }
+
+    function closeModal() {
+      const modal = document.getElementById('detail-modal');
+      const box = modal.querySelector('.glass');
+      modal.classList.replace('opacity-100', 'opacity-0');
+      box.classList.replace('translate-y-0', 'translate-y-4');
+      setTimeout(() => modal.classList.add('hidden'), 300);
+    }
+
+    // Cart Modal Control
+    function openCartModal() {
+      const modal = document.getElementById('cart-modal');
+      const box = modal.querySelector('.glass');
+      
+      renderCartModalItems();
+      
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        modal.classList.replace('opacity-0', 'opacity-100');
+        box.classList.replace('translate-y-4', 'translate-y-0');
+      }, 20);
+    }
+
+    function closeCartModal() {
+      const modal = document.getElementById('cart-modal');
+      const box = modal.querySelector('.glass');
+      modal.classList.replace('opacity-100', 'opacity-0');
+      box.classList.replace('translate-y-0', 'translate-y-4');
+      setTimeout(() => modal.classList.add('hidden'), 300);
+    }
+
+    function renderCartModalItems() {
+      const container = document.getElementById('cart-items-list');
+      container.innerHTML = '';
+      
+      let totalPrice = 0;
+      let hasItems = false;
+      
+      for (const k in cart) {
+        hasItems = true;
+        const entry = cart[k];
+        const price = entry.variant ? entry.variant.price : entry.item.price;
+        const itemCost = price * entry.qty;
+        totalPrice += itemCost;
+        
+        const row = document.createElement('div');
+        row.className = 'glass rounded-xl p-3 flex justify-between items-center text-sm';
+        
+        const info = document.createElement('div');
+        info.innerHTML = `
+          <div class="font-bold text-white">${entry.item.name}</div>
+          <div class="text-xs text-slate-400">${entry.variant ? `Size: ${entry.variant.name} · ` : ''}₹${price} each</div>
+        `;
+        row.appendChild(info);
+        
+        const controlWrap = document.createElement('div');
+        controlWrap.className = 'flex items-center gap-3';
+        
+        const priceTag = document.createElement('span');
+        priceTag.className = 'font-semibold text-rose-500';
+        priceTag.textContent = `₹${itemCost}`;
+        controlWrap.appendChild(priceTag);
+        
+        const counter = document.createElement('div');
+        counter.className = 'flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg p-0.5';
+        counter.innerHTML = `
+          <button onclick="updateQty('${k}', -1)" class="w-5 h-5 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 font-extrabold text-slate-300 text-xs">-</button>
+          <span class="text-xs font-bold text-white px-0.5">${entry.qty}</span>
+          <button onclick="updateQty('${k}', 1)" class="w-5 h-5 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 font-extrabold text-slate-300 text-xs">+</button>
+        `;
+        controlWrap.appendChild(counter);
+        
+        row.appendChild(controlWrap);
+        container.appendChild(row);
+      }
+      
+      document.getElementById('cart-modal-subtotal').textContent = `₹${totalPrice}`;
+      
+      if (!hasItems) {
+        closeCartModal();
+      }
+    }
+
+    async function submitOrder() {
+      if (!phone) {
+        alert("Please access this menu via the link provided in your WhatsApp chat!");
+        return;
+      }
+      
+      const itemsList = [];
+      for (const k in cart) {
+        const entry = cart[k];
+        itemsList.push({
+          menuItemId: entry.item.id,
+          variantId: entry.variant ? entry.variant.id : null,
+          qty: entry.qty
+        });
+      }
+      
+      if (itemsList.length === 0) return;
+      
+      const submitBtn = document.getElementById('cart-submit-btn');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Sending... ⏳';
+      
+      try {
+        const response = await fetch('/public/api/menu/order', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            restaurantId: parseInt(rId),
+            phone: phone,
+            items: itemsList
+          })
+        });
+        
+        if (!response.ok) throw new Error('Order submission failed');
+        
+        closeCartModal();
+        document.getElementById('success-overlay').classList.remove('hidden');
+      } catch (err) {
+        console.error(err);
+        alert('Failed to send order. Please try again!');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Send to WhatsApp Chat 💬';
+      }
+    }
+
+    fetchMenu();
+  </script>
+</body>
+</html>

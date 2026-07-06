@@ -75,12 +75,17 @@ export const config = {
   adminPassword: process.env.ADMIN_PASSWORD ?? "changeme",
   jwtSecret: process.env.JWT_SECRET ?? "change-me-in-production",
 
-  whatsappProvider: (process.env.WHATSAPP_PROVIDER ?? "baileys") as "baileys" | "cloud",
+  whatsappProvider: (process.env.WHATSAPP_PROVIDER ?? "baileys") as "baileys" | "cloud" | "kapso",
   cloud: {
     token: process.env.WHATSAPP_CLOUD_TOKEN ?? "",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? "",
     verifyToken: process.env.WHATSAPP_VERIFY_TOKEN ?? "my-verify-token",
   },
+  kapso: {
+    apiKey: process.env.KAPSO_API_KEY ?? "",
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? "",
+  },
+  serverUrl: process.env.SERVER_URL ?? `http://localhost:${Number(process.env.PORT ?? process.env.ADMIN_PORT ?? 4000)}`,
 
   restaurantName: process.env.RESTAURANT_NAME ?? "Military Rajamma Hotel",
   restaurantCity: process.env.RESTAURANT_CITY ?? "Hyderabad",

@@ -2,6 +2,13 @@ import { config } from "./config.js";
 import { buildAdminApp } from "./admin/server.js";
 import { runBot } from "./whatsapp/run.js";
 
+// Prevent transient DB errors (e.g. Supabase pooler timeout) from crashing the process.
+// Express 4 async route handlers that throw become unhandled rejections without explicit
+// try/catch — this is the safety net so the bot stays alive.
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️  Unhandled rejection (process continues):", reason);
+});
+
 async function main() {
   // Admin portal
   const server = buildAdminApp().listen(config.adminPort, "0.0.0.0", () => {

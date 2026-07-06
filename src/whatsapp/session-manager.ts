@@ -1,20 +1,256 @@
 import { prisma } from "../db.js";
 import { BaileysAdapter } from "./baileys.js";
 import { CloudAdapter } from "./cloud.js";
+import { KapsoAdapter } from "./kapso.js";
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
 import { handleIncoming } from "../ai/agent.js";
 import { getOrder } from "../services/order.js";
 import { config } from "../config.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
+import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter } from "../services/menu.js";
 
 function splitBubbles(text: string): string[] {
   const parts = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
   return parts.length ? parts.slice(0, 8) : [text];
 }
 
-async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: string[]) {
+async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: string[], restaurantId: number) {
   for (const bubble of bubbles) {
+    if (config.whatsappProvider === "kapso" && adapter instanceof KapsoAdapter) {
+      const lower = bubble.toLowerCase();
+
+      // 1. Intercept category/filter requests -> native WhatsApp interactive list select modal (NO plain text list dumps!)
+      const categoryMatch = lower.match(/\b(starter|starters|appetizer|appetizers|biryani|biryanis|dessert|desserts|drink|drinks|beverage|beverages|veg|vegetarian|non-veg|nonveg|curry|curries|bread|breads|tandoori|sweet|sweets)\b/i);
+      const isCategoryFilter = categoryMatch !== null && (
+        lower.includes("starters") || lower.includes("starter") || lower.includes("biryani") ||
+        lower.includes("dessert") || lower.includes("drinks") || lower.includes("beverage") ||
+        lower.includes("veg") || lower.includes("curry") || lower.includes("sweets")
+      ) && !bubble.includes("Order #");
+
+      if (isCategoryFilter) {
+        try {
+          const filterTerm = categoryMatch[1].toLowerCase();
+          const filterSections = await menuAsInteractiveListSectionsForFilter(restaurantId, filterTerm);
+          if (filterSections.length > 0) {
+            const capTag = filterTerm.charAt(0).toUpperCase() + filterTerm.slice(1);
+            await adapter.sendInteractiveList(
+              phone,
+              `Here are our fresh *${capTag}* selections! Tap below to open the menu & pick yours 👇`,
+              `📋 Select ${capTag}`,
+              filterSections,
+              `✨ ${capTag} Menu`,
+              "Tap any item to order • Authentic Pure Ghee"
+            );
+            continue;
+          }
+        } catch (err) {
+          console.error("[Kapso] Category filter list failed:", err);
+        }
+      }
+
+      // 2. Intercept full menu requests/greetings → native WhatsApp interactive list
+      const isGreetingOrMenu =
+        bubble.includes("Here's our menu:") ||
+        bubble.includes("Here's our current menu") ||
+        bubble.includes("I can help you order anything from") ||
+        bubble.match(/here'?s?\s+(the|our)\s+(full\s+)?menu/i) !== null ||
+        bubble.match(/take\s+a\s+look\s+at\s+(our|the)\s+menu/i) !== null;
+
+      if (isGreetingOrMenu) {
+        try {
+          const sections = await menuAsInteractiveListSections(restaurantId);
+
+          if (sections.length > 0) {
+            let intro = "Welcome! 🙏 Browse our full menu and tap any item to add it to your order.";
+            await adapter.sendInteractiveList(
+              phone,
+              intro,
+              "📋 View Menu Modal",
+              sections,
+              "📖 Restaurant Menu",
+              "Tap an item to order • Prices shown per item",
+            );
+
+            const webMenuUrl = `${config.serverUrl}/menu.html?r=${restaurantId}&phone=${phone}`;
+            await adapter.sendInteractiveCtaUrl(
+              phone,
+              "Explore our interactive web menu with search, filters, and multi-select ordering: 🌐👇",
+              "Open Web Menu 🌐",
+              webMenuUrl
+            );
+            continue;
+          }
+        } catch (err) {
+          console.error("[Kapso] Failed to build interactive list for menu:", err);
+        }
+      }
+
+      // 3. Intercept payment option requests -> multiple payment method buttons
+      const isPaymentPrompt =
+        lower.includes("how would you like to pay") ||
+        lower.includes("choose your payment method") ||
+        lower.includes("select a payment option") ||
+        (lower.includes("shall i confirm") && lower.includes("total: ₹"));
+
+      if (isPaymentPrompt) {
+        try {
+          const botCfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+          const methods = (botCfg?.paymentMethods ?? "cash,upi").split(",").map(s => s.trim().toLowerCase());
+
+          const buttons: { id: string; title: string }[] = [];
+          if (methods.includes("upi") && botCfg?.upiId) {
+            buttons.push({ id: "pay_method_upi", title: "📱 Instant UPI" });
+          }
+          if (methods.includes("razorpay") && botCfg?.razorpayEnabled) {
+            buttons.push({ id: "pay_method_razorpay", title: "💳 Pay Online" });
+          }
+          if (methods.includes("cash")) {
+            buttons.push({ id: "pay_method_cash", title: "💵 Pay on Delivery" });
+          }
+
+          if (buttons.length > 0) {
+            await adapter.sendInteractiveButtons(
+              phone,
+              `${bubble}\n\nPlease select your preferred payment method below:`,
+              buttons.slice(0, 3),
+              "💳 Select Payment Method",
+              "Safe & Secure Payment Options"
+            );
+            continue;
+          }
+        } catch (err) {
+          console.error("[Kapso] Payment buttons failed:", err);
+        }
+      }
+
+      // 4. Intercept UPI payment links → native WhatsApp button message (no browser redirect)
+      if (bubble.includes("upi://pay?")) {
+        const upiMatch = bubble.match(/(upi:\/\/pay\?[^\s\n]+)/);
+        if (upiMatch) {
+          const upiLink = upiMatch[0];
+          try {
+            const urlObj = new URL(upiLink);
+            const pa = urlObj.searchParams.get("pa") ?? "";
+            const pn = urlObj.searchParams.get("pn") ?? "";
+            const am = urlObj.searchParams.get("am") ?? "";
+            const tn = urlObj.searchParams.get("tn") ?? "";
+
+            const orderMatch = bubble.match(/[Oo]rder\s*#?(\d+)/);
+            const orderId = orderMatch ? parseInt(orderMatch[1], 10) : 0;
+
+            await adapter.sendPaymentDetails(phone, pa, pn, am, tn, orderId);
+            continue;
+          } catch (err) {
+            console.error("Failed to parse UPI link for Kapso payment card:", err);
+          }
+        }
+      }
+
+      // 5. Intercept Razorpay links → interactive button (open in browser via CTA URL)
+      if (bubble.includes("https://") && (bubble.includes("rzp.io") || bubble.includes("razorpay"))) {
+        const rzpMatch = bubble.match(/(https:\/\/[^\s\n]+)/);
+        if (rzpMatch) {
+          const rzpUrl = rzpMatch[0];
+          const amountMatch = bubble.match(/₹\d+/);
+          const amountText = amountMatch ? ` of ${amountMatch[0]}` : "";
+          await adapter.sendInteractiveCtaUrl(
+            phone,
+            `Tap the button below to pay${amountText} online (UPI, Card, Netbanking) via Razorpay. 💳✨`,
+            "Pay Online 💳",
+            rzpUrl
+          );
+          continue;
+        }
+      }
+
+      // 6. Intercept delivery address requests → native WhatsApp address collection sheet or saved address buttons
+      const isAddressRequest =
+        bubble.toLowerCase().includes("delivery address") ||
+        bubble.toLowerCase().includes("provide your address") ||
+        bubble.toLowerCase().includes("share your address") ||
+        bubble.toLowerCase().includes("address details") ||
+        bubble.toLowerCase().includes("where should we deliver");
+
+      if (isAddressRequest && adapter instanceof KapsoAdapter) {
+        try {
+          const customer = await prisma.customer.findFirst({
+            where: { phone, restaurantId },
+            select: { name: true, address: true }
+          });
+
+          if (customer?.address) {
+            await adapter.sendInteractiveButtons(
+              phone,
+              `🏠 We have your saved delivery address:\n*${customer.address}*\n\nWould you like to use this address or enter a new one?`,
+              [
+                { id: "use_saved_address", title: "🏠 Use Saved Address" },
+                { id: "change_address", title: "✏️ Enter New Address" }
+              ],
+              "📍 Delivery Address",
+              "Fast & Reliable Delivery"
+            );
+            continue;
+          } else {
+            await adapter.sendInteractiveAddress(
+              phone,
+              "🏠 Please tap below to enter your delivery address details securely.",
+              { name: customer?.name ?? undefined }
+            );
+            continue;
+          }
+        } catch (err) {
+          console.error("[Kapso] Failed to send address collection card:", err);
+        }
+      }
+
+      // 7. Intercept recommendation requests → native WhatsApp horizontal carousel cards
+      const isSpecialsRequest =
+        bubble.toLowerCase().includes("recommend") ||
+        bubble.toLowerCase().includes("suggest") ||
+        bubble.toLowerCase().includes("specials") ||
+        bubble.toLowerCase().includes("famous") ||
+        bubble.match(/what'?s\s+good/i) !== null ||
+        bubble.match(/special\s+items/i) !== null;
+
+      if (isSpecialsRequest && adapter instanceof KapsoAdapter) {
+        try {
+          const specials = [
+            {
+              title: "Mutton Biryani",
+              desc: "Traditional military-style spiced mutton biryani (₹290)",
+              imageUrl: "https://images.unsplash.com/photo-1633945274405-b6c8069047b0?q=80&w=600",
+              buttonId: "Order Mutton Biryani",
+              buttonTitle: "Order Mutton Biryani"
+            },
+            {
+              title: "Chicken Biryani",
+              desc: "Fragrant basmati rice layered with spiced chicken (₹220)",
+              imageUrl: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?q=80&w=600",
+              buttonId: "Order Chicken Biryani",
+              buttonTitle: "Order Chicken Biryani"
+            },
+            {
+              title: "Mutton Curry",
+              desc: "Andhra-style hot and spicy mutton gravy (₹280)",
+              imageUrl: "https://images.unsplash.com/photo-1606471679093-4b65662ff143?q=80&w=600",
+              buttonId: "Order Mutton Curry",
+              buttonTitle: "Order Mutton Curry"
+            }
+          ];
+
+          await adapter.sendInteractiveCarousel(
+            phone,
+            "Here are our premium chef special recommendations: 🌟",
+            specials
+          );
+          continue;
+        } catch (err) {
+          console.error("[Kapso] Failed to send specials carousel:", err);
+        }
+      }
+    }
+
     await adapter.sendText(phone, bubble);
   }
 }
@@ -81,7 +317,16 @@ export class BotSessionManager {
 
     let adapter: WhatsAppAdapter;
 
-    if (config.whatsappProvider === "cloud") {
+    if (config.whatsappProvider === "kapso") {
+      const phoneNumberId = botCfg?.cloudPhoneNumberId ?? config.kapso.phoneNumberId;
+      const apiKey = botCfg?.cloudToken ?? config.kapso.apiKey;
+      if (!phoneNumberId || !apiKey) {
+        console.warn(`[r${restaurantId}] Kapso not configured (missing phoneNumberId or apiKey) — skipping.`);
+        return;
+      }
+      adapter = new KapsoAdapter(phoneNumberId, apiKey);
+      this.phoneIdMap.set(phoneNumberId, restaurantId);
+    } else if (config.whatsappProvider === "cloud") {
       const phoneNumberId = botCfg?.cloudPhoneNumberId ?? config.cloud.phoneNumberId;
       const token = botCfg?.cloudToken ?? config.cloud.token;
       if (!phoneNumberId || !token) {
@@ -107,17 +352,47 @@ export class BotSessionManager {
       try {
         const cfg = await prisma.botConfig.findUnique({
           where: { id: restaurantId },
-          select: { botPaused: true, pauseMessage: true },
+          select: { restaurantName: true, botPaused: true, pauseMessage: true },
         });
         if (cfg?.botPaused) {
           const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
-          await sendHumanly(adapter, msg.phone, [pauseMsg]);
+          await sendHumanly(adapter, msg.phone, [pauseMsg], restaurantId);
+          return;
+        }
+
+        const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
+
+        const customer = await prisma.customer.findFirst({
+          where: { phone: msg.phone, restaurantId },
+          include: { orders: true }
+        });
+
+        const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
+
+        if (isGreeting && adapter instanceof KapsoAdapter) {
+          const isReturning = customer && (customer.name || customer.orders.length > 0);
+          const nameStr = customer?.name ? ` ${customer.name}` : "";
+          const welcomeBody = isReturning
+            ? `Welcome back to *${rName}*${nameStr}! 😊 Great to see you again. What would you like to order today?`
+            : `Welcome to *${rName}*! 🌶️✨ Authentic delicacies cooked fresh. What can we serve you today?`;
+
+          await adapter.sendInteractiveButtons(
+            msg.phone,
+            welcomeBody,
+            [
+              { id: "view_menu", title: "📋 View Menu" },
+              { id: "reserve_table", title: "🍽️ Reserve Table" },
+              { id: "location_info", title: "📍 Location & Hours" }
+            ],
+            { type: "image", imageUrl: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=800" },
+            `${rName} • Fresh & Authentic`
+          );
           return;
         }
 
         const { reply, placedOrderId } = await handleIncoming(msg.phone, msg.text, restaurantId);
         console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
-        await sendHumanly(adapter, msg.phone, splitBubbles(reply));
+        await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
         if (placedOrderId) {
           // Send formatted receipt to customer + notify owner in parallel
           await Promise.all([
@@ -135,8 +410,8 @@ export class BotSessionManager {
     this.sessions.set(restaurantId, adapter);
     console.log(`✅ Bot session started: ${restaurantName} (restaurant ${restaurantId})`);
 
-    // Cloud API is always connected — signal the dashboard immediately.
-    if (config.whatsappProvider === "cloud") {
+    // Cloud/Kapso API is always connected — signal the dashboard immediately.
+    if (config.whatsappProvider === "cloud" || config.whatsappProvider === "kapso") {
       await notifyAdminOfEvent("whatsapp_connected", {});
     }
   }
