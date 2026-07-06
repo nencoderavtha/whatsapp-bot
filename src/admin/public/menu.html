@@ -139,7 +139,7 @@
         </div>
 
         <button onclick="submitOrder()" id="cart-submit-btn" class="w-full py-3.5 bg-rose-500 text-white rounded-xl font-extrabold text-sm hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2">
-          Send to WhatsApp Chat 💬
+          Confirm & Return to Chat 🚀
         </button>
       </div>
     </div>
@@ -643,13 +643,21 @@
         
         if (!response.ok) throw new Error('Order submission failed');
         
-        closeCartModal();
-        document.getElementById('success-overlay').classList.remove('hidden');
+        submitBtn.textContent = 'Redirecting to WhatsApp... 🚀';
+        
+        // Auto-redirect directly to WhatsApp chat thread
+        const waUrl = phone ? `https://wa.me/${phone}` : '#';
+        window.location.href = waUrl;
+
+        // Fallback: try closing webview window
+        setTimeout(() => {
+          try { window.close(); } catch (e) {}
+        }, 600);
       } catch (err) {
         console.error(err);
         alert('Failed to send order. Please try again!');
         submitBtn.disabled = false;
-        submitBtn.textContent = 'Send to WhatsApp Chat 💬';
+        submitBtn.textContent = 'Confirm & Return to Chat 🚀';
       }
     }
 
