@@ -75,7 +75,7 @@ export class KapsoAdapter implements WhatsAppAdapter {
       phoneNumberId: this.phoneNumberId,
       to: phone,
       bodyText,
-      buttons,
+      buttons: buttons.map((b) => ({ id: b.id, title: b.title.slice(0, 20) })),
       ...(headerObj ? { header: headerObj } : {}),
       ...(footerText ? { footerText } : {}),
     });
@@ -97,7 +97,7 @@ export class KapsoAdapter implements WhatsAppAdapter {
       phoneNumberId: this.phoneNumberId,
       to: phone,
       bodyText,
-      buttonText,
+      buttonText: buttonText.slice(0, 20),
       sections,
       ...(headerText ? { header: { type: "text", text: headerText } } : {}),
       ...(footerText ? { footerText } : {}),
@@ -209,7 +209,7 @@ export class KapsoAdapter implements WhatsAppAdapter {
         bodyText: `*${c.title}*\n${c.desc ?? ""}`,
         action: {
           buttons: [
-            { id: c.buttonId, title: c.buttonTitle },
+            { id: c.buttonId, title: c.buttonTitle.slice(0, 20) },
           ],
         },
       })),

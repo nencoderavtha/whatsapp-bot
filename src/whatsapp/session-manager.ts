@@ -221,21 +221,21 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
               desc: "Traditional military-style spiced mutton biryani (₹290)",
               imageUrl: "https://images.unsplash.com/photo-1633945274405-b6c8069047b0?q=80&w=600",
               buttonId: "Order Mutton Biryani",
-              buttonTitle: "Order Mutton Biryani"
+              buttonTitle: "Order Mutton"
             },
             {
               title: "Chicken Biryani",
               desc: "Fragrant basmati rice layered with spiced chicken (₹220)",
               imageUrl: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?q=80&w=600",
               buttonId: "Order Chicken Biryani",
-              buttonTitle: "Order Chicken Biryani"
+              buttonTitle: "Order Chicken"
             },
             {
               title: "Mutton Curry",
               desc: "Andhra-style hot and spicy mutton gravy (₹280)",
               imageUrl: "https://images.unsplash.com/photo-1606471679093-4b65662ff143?q=80&w=600",
               buttonId: "Order Mutton Curry",
-              buttonTitle: "Order Mutton Curry"
+              buttonTitle: "Order Curry"
             }
           ];
 
