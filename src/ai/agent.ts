@@ -116,8 +116,8 @@ async function processIncoming(
 
   await logMessage(customer.id, restaurantId, "user", userText);
 
-  // Load up to 20 recent messages for context (includes the message just logged)
-  const history = await recentMessages(customer.id, 20);
+  // Load up to 6 recent messages for fast context
+  const history = await recentMessages(customer.id, 6);
 
   // First message = only the current user message exists in history
   const isFirstMessage = history.length === 1;
@@ -183,8 +183,7 @@ async function processIncoming(
       } as any);
     }
 
-    // If a tool provided a fixed reply, use it and skip further LLM generation
-    if (templateReply) break;
+    if (templateReply) break; // Instant exit! Tool produced template reply — zero 2nd LLM roundtrip delay!
   }
 
   finalText = templateReply ?? (finalText || "Sorry, please try again in a moment.");

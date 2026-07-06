@@ -17,10 +17,10 @@ const keys: Record<ProviderName, string> = {
 
 // Provider registry
 const PROVIDERS = {
- openrouter: {
-  baseURL: "https://openrouter.ai/api/v1",
-  defaultModel: "google/gemini-2.5-flash",
-},
+  openrouter: {
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultModel: "google/gemini-2.0-flash-001",
+  },
   groq: {
     baseURL: "https://api.groq.com/openai/v1",
     defaultModel: "llama-3.3-70b-versatile",
@@ -32,7 +32,7 @@ const PROVIDERS = {
   gemini: {
     // Native Gemini SDK uses this model name directly.
     baseURL: "",
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-2.0-flash",
   },
 } as const;
 type ProviderName = keyof typeof PROVIDERS;
