@@ -26,7 +26,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         lower.includes("starters") || lower.includes("starter") || lower.includes("biryani") ||
         lower.includes("dessert") || lower.includes("drinks") || lower.includes("beverage") ||
         lower.includes("veg") || lower.includes("curry") || lower.includes("sweets")
-      ) && !bubble.includes("Order #");
+      ) && !bubble.includes("Order #") && !lower.includes("here's our menu") && !lower.includes("full menu") && !lower.includes("mood for");
 
       if (isCategoryFilter) {
         try {
@@ -415,9 +415,17 @@ export class BotSessionManager {
 
         const rawText = msg.text.trim();
         const lowerText = rawText.toLowerCase();
+        const cleanText = lowerText.replace(/[^\w\s]/g, "").trim();
 
         // ── Direct Action 1: View Menu ───────────────────────────────────────
-        if (rawText === "view_menu" || lowerText === "view menu" || lowerText === "menu" || lowerText === "show menu") {
+        if (
+          rawText === "view_menu" ||
+          cleanText === "view menu" ||
+          cleanText === "menu" ||
+          cleanText.includes("view menu") ||
+          cleanText.includes("show menu") ||
+          cleanText.includes("full menu")
+        ) {
           const listSections = await menuAsInteractiveListSections(restaurantId);
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
           const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
