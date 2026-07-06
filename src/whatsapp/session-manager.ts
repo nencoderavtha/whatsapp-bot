@@ -86,12 +86,35 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         }
       }
 
+      // 2.5 Intercept cart staged summary → native WhatsApp interactive buttons (Confirm Order / Add More)
+      const isCartSummary =
+        (lower.includes("total: ₹") || lower.includes("here's your order") || lower.includes("order summary") || lower.includes("order breakdown")) &&
+        !lower.includes("payment details") &&
+        !lower.includes("order #");
+
+      if (isCartSummary && adapter instanceof KapsoAdapter) {
+        try {
+          await adapter.sendInteractiveButtons(
+            phone,
+            bubble,
+            [
+              { id: "confirm_order_btn", title: "✅ Confirm Order" },
+              { id: "add_more_items_btn", title: "➕ Add More Items" }
+            ],
+            "🛒 Order Summary",
+            "Tap button to confirm or message to add items"
+          );
+          continue;
+        } catch (err) {
+          console.error("[Kapso] Cart summary buttons failed:", err);
+        }
+      }
+
       // 3. Intercept payment option requests -> multiple payment method buttons
       const isPaymentPrompt =
         lower.includes("how would you like to pay") ||
         lower.includes("choose your payment method") ||
-        lower.includes("select a payment option") ||
-        (lower.includes("shall i confirm") && lower.includes("total: ₹"));
+        lower.includes("select a payment option");
 
       if (isPaymentPrompt) {
         try {

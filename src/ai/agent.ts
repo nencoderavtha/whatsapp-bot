@@ -71,6 +71,10 @@ async function processIncoming(
     userText = "I want to pay online via Razorpay";
   } else if (userText === "pay_method_cash") {
     userText = "I want to pay cash on delivery or at counter";
+  } else if (userText === "confirm_order_btn") {
+    userText = "Yes, confirm my order";
+  } else if (userText === "add_more_items_btn") {
+    userText = "I want to add more items to my order";
   } else if (userText === "use_saved_address") {
     userText = "Please use my saved delivery address";
   } else if (userText === "change_address") {

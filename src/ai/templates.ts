@@ -38,10 +38,9 @@ export function orderStagedTemplate(
   ]);
 
   const confirm = pick([
-    `Shall I confirm this? ✅`,
-    `Looks good? Tap yes and I'll lock it in! ✅`,
-    `All set? Want me to go ahead? 😊`,
-    `Ready to confirm? ✅`,
+    `Tap *Confirm Order* below to proceed, or message me to add more items! 🛒`,
+    `Tap *Confirm Order* to lock it in, or tell me what else to add! ✨`,
+    `Tap *Confirm Order* below, or send a message to add more items! 😊`,
   ]);
 
   return (
