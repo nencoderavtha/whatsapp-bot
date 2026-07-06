@@ -9,6 +9,10 @@ import { config } from "../config.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
 import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter } from "../services/menu.js";
+import { getOrCreateCustomer } from "../services/customer.js";
+import { createOrder } from "../services/order.js";
+import { createPaymentLink } from "../services/razorpay.js";
+import { orderStagedTemplate, paymentLinkTemplate } from "../ai/templates.js";
 
 function splitBubbles(text: string): string[] {
   const lower = text.toLowerCase();
@@ -467,6 +471,203 @@ export class BotSessionManager {
           const city = cfg?.restaurantCity ?? "Hyderabad";
           const locationMsg = `📍 *${rName}*\n🏢 *Location:* ${city}\n⏰ *Operating Hours:* 11:00 AM – 11:00 PM (Mon – Sun)\n🛵 *Delivery & Pickup:* Active\n\nFeel free to ask for directions or place an order anytime! 😊`;
           await adapter.sendText(msg.phone, locationMsg);
+          return;
+        }
+
+        // ── Direct Action 4: Item Selection from WhatsApp List Modal ─────────────
+        if (rawText.startsWith("menu_item_")) {
+          const itemId = parseInt(rawText.replace("menu_item_", ""), 10);
+          if (!isNaN(itemId)) {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const pending = await prisma.pendingOrder.findFirst({
+              where: { customerId: cust.id, restaurantId, expiresAt: { gt: new Date() } }
+            });
+            let currentLines: any[] = [];
+            if (pending?.lines) {
+              try { currentLines = JSON.parse(pending.lines); } catch {}
+            }
+
+            const existingIdx = currentLines.findIndex((l) => l.menuItemId === itemId && !l.variantId);
+            if (existingIdx >= 0) {
+              currentLines[existingIdx].qty += 1;
+            } else {
+              currentLines.push({ menuItemId: itemId, qty: 1 });
+            }
+
+            const menuItems = await prisma.menuItem.findMany({
+              where: { id: { in: currentLines.map((l) => l.menuItemId) } },
+              include: { variants: true }
+            });
+            const byId = new Map(menuItems.map((m) => [m.id, m]));
+
+            let total = 0;
+            const labels: string[] = [];
+            const validLines: any[] = [];
+            for (const l of currentLines) {
+              const mi = byId.get(l.menuItemId);
+              if (!mi || !mi.available) continue;
+              let price = mi.price;
+              let variantName: string | undefined;
+              if (l.variantId) {
+                const v = mi.variants.find((v) => v.id === l.variantId);
+                if (v) { price = v.price; variantName = v.name; }
+              }
+              validLines.push(l);
+              const label = variantName ? `${l.qty}x ${mi.name} (${variantName})` : `${l.qty}x ${mi.name}`;
+              labels.push(`${label} ₹${price * l.qty}`);
+              total += price * l.qty;
+            }
+
+            const CART_TTL_MS = 2 * 60 * 60 * 1000;
+            if (pending) {
+              await prisma.pendingOrder.update({
+                where: { id: pending.id },
+                data: { lines: JSON.stringify(validLines), expiresAt: new Date(Date.now() + CART_TTL_MS) }
+              });
+            } else {
+              await prisma.pendingOrder.create({
+                data: { customerId: cust.id, restaurantId, lines: JSON.stringify(validLines), type: "pickup", expiresAt: new Date(Date.now() + CART_TTL_MS) }
+              });
+            }
+
+            const stagedMsg = orderStagedTemplate(labels, total, pending?.type ?? "pickup");
+            if (adapter instanceof KapsoAdapter) {
+              await adapter.sendInteractiveButtons(
+                msg.phone,
+                stagedMsg,
+                [
+                  { id: "confirm_order_btn", title: "✅ Confirm Order" },
+                  { id: "add_more_items_btn", title: "➕ Add More Items" }
+                ],
+                "🛒 Order Summary",
+                "Tap button to confirm or message to add items"
+              );
+            } else {
+              await adapter.sendText(msg.phone, stagedMsg);
+            }
+            return;
+          }
+        }
+
+        // ── Direct Action 5: Confirm Order Button ──────────────────────────────
+        if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const pending = await prisma.pendingOrder.findFirst({
+            where: { customerId: cust.id, restaurantId, expiresAt: { gt: new Date() } }
+          });
+
+          if (!pending || !pending.lines || pending.lines === "[]") {
+            await adapter.sendText(msg.phone, "Your cart is currently empty! Tap *📋 View Menu* to select items. 😊");
+            return;
+          }
+
+          let lines: any[] = [];
+          try { lines = JSON.parse(pending.lines); } catch {}
+          const menuItems = await prisma.menuItem.findMany({
+            where: { id: { in: lines.map((l) => l.menuItemId) } },
+            include: { variants: true }
+          });
+          const byId = new Map(menuItems.map((m) => [m.id, m]));
+          let total = 0;
+          for (const l of lines) {
+            const mi = byId.get(l.menuItemId);
+            if (!mi) continue;
+            let p = mi.price;
+            if (l.variantId) {
+              const v = mi.variants.find((v) => v.id === l.variantId);
+              if (v) p = v.price;
+            }
+            total += p * l.qty;
+          }
+
+          const botConfig = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+
+          if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
+            const payRes = await createPaymentLink({
+              restaurantId,
+              customerId: cust.id,
+              amount: total,
+              customerPhone: msg.phone,
+              restaurantName: botConfig.restaurantName,
+            });
+
+            if (payRes?.url) {
+              const payMsg = paymentLinkTemplate(payRes.url, total);
+              await adapter.sendText(msg.phone, payMsg);
+              return;
+            }
+          }
+
+          if (adapter instanceof KapsoAdapter) {
+            await adapter.sendInteractiveButtons(
+              msg.phone,
+              `💳 *Choose Payment Method for ₹${total}:*`,
+              [
+                { id: "pay_method_upi", title: "📱 Pay via UPI" },
+                { id: "pay_method_cash", title: "💵 Cash on Pickup" }
+              ],
+              "💳 Payment Selection",
+              "Tap a payment method to complete order"
+            );
+          } else {
+            await adapter.sendText(msg.phone, `Please pay ₹${total} via UPI or Cash on Pickup.`);
+          }
+          return;
+        }
+
+        // ── Direct Action 6: Add More Items Button ──────────────────────────────
+        if (rawText === "add_more_items_btn") {
+          const listSections = await menuAsInteractiveListSections(restaurantId);
+          const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
+          const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
+
+          if (adapter instanceof KapsoAdapter) {
+            await adapter.sendInteractiveList(
+              msg.phone,
+              `What else would you like to add? 🛒\n\nPick from popular categories below or open our full web menu:`,
+              "📋 Add More Items",
+              listSections,
+              "📋 Restaurant Menu",
+              `${rName} • Fresh & Authentic`
+            );
+            await adapter.sendInteractiveCtaUrl(
+              msg.phone,
+              "Tap below to open full visual menu: 📲",
+              "🌐 Order on Web Menu",
+              webMenuUrl
+            );
+          } else {
+            await adapter.sendText(msg.phone, `Here is our full web menu:\n${webMenuUrl}`);
+          }
+          return;
+        }
+
+        // ── Direct Action 7: Cash / UPI Payment Method Button ──────────────────
+        if (rawText === "pay_method_cash" || cleanText === "cash on pickup" || cleanText === "pay cash") {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const pending = await prisma.pendingOrder.findFirst({
+            where: { customerId: cust.id, restaurantId, expiresAt: { gt: new Date() } }
+          });
+          if (pending) {
+            let lines: any[] = [];
+            try { lines = JSON.parse(pending.lines); } catch {}
+            const newOrder = await createOrder({
+              restaurantId,
+              customerId: cust.id,
+              type: (pending.type as any) ?? "pickup",
+              lines: lines,
+              payment: { method: "cash", status: "pending" },
+            });
+
+            await prisma.pendingOrder.delete({ where: { id: pending.id } });
+
+            await Promise.all([
+              sendOrderReceipt(adapter, msg.phone, restaurantId, newOrder.id),
+              notifyOwner(adapter, restaurantId, newOrder.id)
+            ]);
+          } else {
+            await adapter.sendText(msg.phone, "No pending order found to complete.");
+          }
           return;
         }
 
