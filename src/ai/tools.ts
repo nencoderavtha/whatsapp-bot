@@ -79,6 +79,87 @@ async function setPendingCart(customerId: number, restaurantId: number, cart: Pe
   });
 }
 
+async function handleGeneratePaymentLink(customerId: number, restaurantId: number) {
+  const cart = await getPendingCart(customerId);
+  if (!cart) {
+    return { output: { ok: false, error: "No order staged. Call propose_order first." } };
+  }
+
+  // Recalculate total from staged cart
+  const menuItems = await prisma.menuItem.findMany({
+    where: { id: { in: cart.lines.map((l) => l.menuItemId) } },
+    include: { variants: true },
+  });
+  const byId = new Map(menuItems.map((m) => [m.id, m]));
+  const total = cart.lines.reduce((sum, l) => {
+    const mi = byId.get(l.menuItemId)!;
+    const v = l.variantId ? mi.variants.find((v) => v.id === l.variantId) : undefined;
+    return sum + (v?.price ?? mi.price) * l.qty;
+  }, 0);
+
+  // Idempotent — return existing link if already generated
+  if (cart.razorpayLinkId && cart.razorpayLinkUrl) {
+    return {
+      output: {
+        ok: true,
+        url: cart.razorpayLinkUrl,
+        alreadyGenerated: true,
+        note: "Payment link already sent. Remind the customer to tap and pay. Order auto-confirms on payment.",
+      },
+      templateReply: paymentLinkTemplate(cart.razorpayLinkUrl, total),
+    };
+  }
+
+  const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+  const restaurant = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+
+  const link = await createPaymentLink({
+    restaurantId,
+    customerId,
+    amount: total,
+    customerPhone: customer!.phone,
+    restaurantName: restaurant?.restaurantName ?? "Restaurant",
+  });
+
+  if (!link) {
+    // Razorpay not configured — fall back to UPI deep link
+    const upiId = restaurant?.upiId;
+    if (upiId) {
+      const upiLink = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(restaurant!.restaurantName)}&am=${total}&tn=WhatsApp+Order&cu=INR`;
+      return {
+        output: {
+          ok: true,
+          upiLink,
+          total,
+          note: `Razorpay not enabled. Share this UPI link: ${upiLink} — Once customer confirms payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
+        },
+      };
+    }
+    return {
+      output: {
+        ok: false,
+        error: "Payment gateway not configured. Inform the customer and ask them to contact the restaurant directly to arrange payment.",
+      },
+    };
+  }
+
+  await setPendingCart(customerId, restaurantId, {
+    ...cart,
+    razorpayLinkId: link.id,
+    razorpayLinkUrl: link.url,
+  });
+
+  return {
+    output: {
+      ok: true,
+      url: link.url,
+      total,
+      note: "Payment link generated. templateReply will be used — do NOT generate your own message.",
+    },
+    templateReply: paymentLinkTemplate(link.url, total),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tool execution — names must match ToolDefinition.name in the DB
 // ---------------------------------------------------------------------------
@@ -310,17 +391,9 @@ export async function runTool(
 
         // Payment is always required.
         {
-          // If Razorpay is configured, payment must arrive via webhook — never manually confirm
+          // If Razorpay is configured, generate payment link immediately (no extra LLM roundtrip delay!)
           if (razorpayConfigured) {
-            return {
-              output: {
-                ok: false,
-                action: "CALL_generate_payment_link_NOW",
-                error:
-                  "DO NOT reply with text yet. Your NEXT action MUST be to call generate_payment_link (no arguments). " +
-                  "Then share the returned URL with the customer. The order confirms automatically on payment.",
-              },
-            };
+            return await handleGeneratePaymentLink(customerId, restaurantId);
           }
           // Manual payment (UPI) — must have a recorded payment method
           if (!cart.paymentMethod) {
@@ -399,83 +472,7 @@ export async function runTool(
 
       // ── Generate Razorpay payment link (auto-confirms on payment) ──────────
       case "generate_payment_link": {
-        const cart = await getPendingCart(customerId);
-        if (!cart) {
-          return { output: { ok: false, error: "No order staged. Call propose_order first." } };
-        }
-
-        // Idempotent — return existing link if already generated
-        if (cart.razorpayLinkId && cart.razorpayLinkUrl) {
-          return {
-            output: {
-              ok: true,
-              url: cart.razorpayLinkUrl,
-              alreadyGenerated: true,
-              note: "Payment link already sent. Remind the customer to tap and pay. Order auto-confirms on payment.",
-            },
-          };
-        }
-
-        const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-        const restaurant = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-
-        // Recalculate total from staged cart
-        const menuItems = await prisma.menuItem.findMany({
-          where: { id: { in: cart.lines.map((l) => l.menuItemId) } },
-          include: { variants: true },
-        });
-        const byId = new Map(menuItems.map((m) => [m.id, m]));
-        const total = cart.lines.reduce((sum, l) => {
-          const mi = byId.get(l.menuItemId)!;
-          const v = l.variantId ? mi.variants.find((v) => v.id === l.variantId) : undefined;
-          return sum + (v?.price ?? mi.price) * l.qty;
-        }, 0);
-
-        const link = await createPaymentLink({
-          restaurantId,
-          customerId,
-          amount: total,
-          customerPhone: customer!.phone,
-          restaurantName: restaurant?.restaurantName ?? "Restaurant",
-        });
-
-        if (!link) {
-          // Razorpay not configured — fall back to UPI deep link
-          const upiId = restaurant?.upiId;
-          if (upiId) {
-            const upiLink = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(restaurant!.restaurantName)}&am=${total}&tn=WhatsApp+Order&cu=INR`;
-            return {
-              output: {
-                ok: true,
-                upiLink,
-                total,
-                note: `Razorpay not enabled. Share this UPI link: ${upiLink} — Once customer confirms payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
-              },
-            };
-          }
-          return {
-            output: {
-              ok: false,
-              error: "Payment gateway not configured. Inform the customer and ask them to contact the restaurant directly to arrange payment.",
-            },
-          };
-        }
-
-        await setPendingCart(customerId, restaurantId, {
-          ...cart,
-          razorpayLinkId: link.id,
-          razorpayLinkUrl: link.url,
-        });
-
-        return {
-          output: {
-            ok: true,
-            url: link.url,
-            total,
-            note: "Payment link generated. templateReply will be used — do NOT generate your own message.",
-          },
-          templateReply: paymentLinkTemplate(link.url, total),
-        };
+        return await handleGeneratePaymentLink(customerId, restaurantId);
       }
 
       default:
