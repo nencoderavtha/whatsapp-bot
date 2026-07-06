@@ -172,7 +172,7 @@ export function buildAdminApp() {
     const restaurantId = Number(req.params.restaurantId);
     const restaurant = await prisma.botConfig.findUnique({
       where: { id: restaurantId },
-      select: { id: true, restaurantName: true, restaurantCity: true },
+      select: { id: true, restaurantName: true, restaurantCity: true, whatsappPhone: true },
     });
     if (!restaurant) {
       res.status(404).json({ error: "Restaurant not found" });

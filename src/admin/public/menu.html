@@ -645,16 +645,21 @@
         
         submitBtn.textContent = 'Order Staged! Closing... 🚀';
         
-        // Immediately close in-app webview window
+        // 1. Immediately close in-app webview modal
         try { window.close(); } catch (e) {}
         try { top.close(); } catch (e) {}
 
-        // Fallback: if browser prevents window.close(), redirect to chat thread
+        // 2. Fallback for desktop browsers where script window.close() is blocked:
+        // Redirect to bot's chat thread (NOT customer's phone!), or history.back()
         setTimeout(() => {
-          if (phone) {
-            window.location.href = `https://wa.me/${phone}`;
+          const botNum = (menuData && menuData.restaurant && menuData.restaurant.whatsappPhone) || '';
+          const cleanBot = botNum.replace(/[^\d]/g, '');
+          if (cleanBot) {
+            window.location.href = `https://wa.me/${cleanBot}`;
+          } else {
+            try { history.back(); } catch (e) {}
           }
-        }, 400);
+        }, 300);
       } catch (err) {
         console.error(err);
         alert('Failed to send order. Please try again!');
