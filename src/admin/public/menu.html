@@ -643,16 +643,18 @@
         
         if (!response.ok) throw new Error('Order submission failed');
         
-        submitBtn.textContent = 'Redirecting to WhatsApp... 🚀';
+        submitBtn.textContent = 'Order Staged! Closing... 🚀';
         
-        // Auto-redirect directly to WhatsApp chat thread
-        const waUrl = phone ? `https://wa.me/${phone}` : '#';
-        window.location.href = waUrl;
+        // Immediately close in-app webview window
+        try { window.close(); } catch (e) {}
+        try { top.close(); } catch (e) {}
 
-        // Fallback: try closing webview window
+        // Fallback: if browser prevents window.close(), redirect to chat thread
         setTimeout(() => {
-          try { window.close(); } catch (e) {}
-        }, 600);
+          if (phone) {
+            window.location.href = `https://wa.me/${phone}`;
+          }
+        }, 400);
       } catch (err) {
         console.error(err);
         alert('Failed to send order. Please try again!');
