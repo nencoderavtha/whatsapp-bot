@@ -43,15 +43,15 @@ export function orderStagedTemplate(
     `Tap *Confirm Order* below, or send a message to add more items! 😊`,
   ]);
 
-  return (
-    `${header}\n\n` +
-    `${itemList}\n\n` +
-    `━━━━━━━━━━━━━━━━━\n` +
-    `💰 *Total: ₹${total}*\n` +
-    `📦 *Type:* ${typeLabel}${noteLine}\n` +
-    `━━━━━━━━━━━━━━━━━\n\n` +
-    `${confirm}`
-  );
+  return [
+    header,
+    itemList,
+    `━━━━━━━━━━━━━━━━━`,
+    `💰 *Total: ₹${total}*`,
+    `📦 *Type:* ${typeLabel}${noteLine}`,
+    `━━━━━━━━━━━━━━━━━`,
+    confirm,
+  ].join("\n");
 }
 
 // ── Sent after generate_payment_link creates a Razorpay link ────────────────

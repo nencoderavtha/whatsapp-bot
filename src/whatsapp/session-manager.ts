@@ -11,6 +11,10 @@ import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notification
 import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter } from "../services/menu.js";
 
 function splitBubbles(text: string): string[] {
+  const lower = text.toLowerCase();
+  if (lower.includes("total: ₹") || lower.includes("order breakdown") || lower.includes("here's your order") || lower.includes("order summary")) {
+    return [text];
+  }
   const parts = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
   return parts.length ? parts.slice(0, 8) : [text];
 }
