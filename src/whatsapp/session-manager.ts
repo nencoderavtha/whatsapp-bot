@@ -33,7 +33,8 @@ async function sendMenuVisual(
   bodyText: string,
 ): Promise<void> {
   const cards = await menuAsInteractiveCarouselCards(restaurantId);
-  if (cards.length > 0) {
+  // Meta requires 2-10 cards for a carousel — fall back to the list otherwise.
+  if (cards.length >= 2) {
     await adapter.sendInteractiveCarousel(phone, bodyText, cards);
     return;
   }

@@ -270,16 +270,20 @@ export class CloudAdapter implements WhatsAppAdapter {
       type: "carousel",
       body: { text: bodyText },
       action: {
-        cards: cards.map((c, idx) => ({
-          card_index: idx,
-          header: { type: "image", image: { link: c.imageUrl } },
-          body: { text: `*${c.title}*\n${c.desc ?? ""}` },
-          action: {
-            buttons: [
-              { type: "quick_reply", quick_reply: { id: c.buttonId, title: c.buttonTitle.slice(0, 20) } },
-            ],
-          },
-        })),
+        cards: cards.map((c, idx) => {
+          const bodyLine = `*${c.title}*\n${c.desc ?? ""}`.slice(0, 160);
+          return {
+            card_index: idx,
+            type: "button",
+            header: { type: "image", image: { link: c.imageUrl } },
+            body: { text: bodyLine },
+            action: {
+              buttons: [
+                { type: "quick_reply", quick_reply: { id: c.buttonId, title: c.buttonTitle.slice(0, 20) } },
+              ],
+            },
+          };
+        }),
       },
     });
   }
