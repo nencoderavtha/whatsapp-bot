@@ -463,7 +463,26 @@ export class BotSessionManager {
           return;
         }
 
-        // ── Direct Action 3: Item Selection from WhatsApp List Modal ─────────────
+        // ── Direct Action 3: Dish photo request (e.g. "chepala pulusu photo pampandi") ──
+        const photoKeywords = ["photo", "pic ", "pics", "picture", "image", "chupinchu", "chupincharu", "choodali", "chudali"];
+        if (photoKeywords.some((k) => lowerText.includes(k)) && isRichAdapter(adapter)) {
+          const items = await prisma.menuItem.findMany({
+            where: { restaurantId, available: true, imageUrl: { not: null } },
+            select: { name: true, imageUrl: true },
+          });
+          const matched = items.find((item) => {
+            const nameWords = item.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+            const hits = nameWords.filter((w) => lowerText.includes(w)).length;
+            return hits >= Math.min(2, nameWords.length);
+          });
+          if (matched?.imageUrl) {
+            await adapter.sendImage(msg.phone, matched.imageUrl, matched.name);
+            return;
+          }
+          // No confident dish match or no photo on file — fall through to the normal reply.
+        }
+
+        // ── Direct Action 4: Item Selection from WhatsApp List Modal ─────────────
         if (rawText.startsWith("menu_item_")) {
           const itemId = parseInt(rawText.replace("menu_item_", ""), 10);
           if (!isNaN(itemId)) {
@@ -538,7 +557,7 @@ export class BotSessionManager {
           }
         }
 
-        // ── Direct Action 4: Confirm Order Button ──────────────────────────────
+        // ── Direct Action 5: Confirm Order Button ──────────────────────────────
         if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const pending = await prisma.pendingOrder.findFirst({
@@ -602,7 +621,7 @@ export class BotSessionManager {
           return;
         }
 
-        // ── Direct Action 5: Add More Items Button ──────────────────────────────
+        // ── Direct Action 6: Add More Items Button ──────────────────────────────
         if (rawText === "add_more_items_btn") {
           const listSections = await menuAsInteractiveListSections(restaurantId);
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
@@ -623,7 +642,7 @@ export class BotSessionManager {
           return;
         }
 
-        // ── Direct Action 6: Cash / UPI Payment Method Button ──────────────────
+        // ── Direct Action 7: Cash / UPI Payment Method Button ──────────────────
         if (rawText === "pay_method_cash" || cleanText === "cash on pickup" || cleanText === "pay cash") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const pending = await prisma.pendingOrder.findFirst({

@@ -36,6 +36,7 @@ model MenuItem {
   spiceLevel   String?
   sortOrder    Int                @default(0) // customer-facing "#" for daily numbered menus
   pieceInfo    String?            // e.g. "2 pieces" — only mention to customers if asked
+  imageUrl     String?            // real dish photo — used on the web menu and WhatsApp
   category     Category           @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   categoryId   Int
   restaurant   BotConfig          @relation(fields: [restaurantId], references: [id])

@@ -36,6 +36,15 @@ export class KapsoAdapter implements WhatsAppAdapter {
     });
   }
 
+  /** Send a dish photo (by public URL) with an optional short caption. */
+  async sendImage(phone: string, imageUrl: string, caption?: string): Promise<void> {
+    await this.client.messages.sendImage({
+      phoneNumberId: this.phoneNumberId,
+      to: phone,
+      image: { link: imageUrl, ...(caption ? { caption } : {}) },
+    });
+  }
+
   async sendInteractiveCtaUrl(
     phone: string,
     bodyText: string,

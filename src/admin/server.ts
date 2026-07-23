@@ -18,6 +18,8 @@ import { orderConfirmationMsg, ownerNewOrderMsg, orderStatusMsg } from "../servi
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
 import { orderStagedTemplate } from "../ai/templates.js";
 import { logActivity } from "../services/activity.js";
+import { fetchMetaMedia } from "../whatsapp/media.js";
+import { transcribeAudio } from "../services/transcription.js";
 
 /** Wraps an async Express handler so DB errors call next(err) instead of becoming unhandled rejections. */
 function asyncRoute(fn: (req: Request, res: Response, next: NextFunction) => Promise<void>) {
@@ -444,16 +446,28 @@ export function buildAdminApp() {
       if (msg) {
         const phoneNumberId = entry?.metadata?.phone_number_id;
         if (phoneNumberId) {
-          // No speech-to-text yet — flag voice notes with a sentinel so
-          // session-manager can reply with the canned voice-note fallback
-          // instead of silently dropping the message.
-          const text =
+          let text =
             msg.text?.body
             ?? msg.button?.text
             ?? msg.interactive?.button_reply?.title
             ?? msg.interactive?.list_reply?.title
-            ?? (msg.type === "audio" ? VOICE_NOTE_SENTINEL : "")
             ?? "";
+
+          // Voice note — download + transcribe via Groq Whisper. Falls back to
+          // the canned "please send text" reply if transcription isn't available.
+          if (!text && msg.type === "audio" && msg.audio?.id) {
+            try {
+              const cfg = await prisma.botConfig.findFirst({ where: { cloudPhoneNumberId: phoneNumberId } });
+              const token = cfg?.cloudToken || config.cloud.token;
+              const { buffer, mimeType } = await fetchMetaMedia(msg.audio.id, token);
+              text = await transcribeAudio(buffer, mimeType);
+              console.log(`[Voice] Transcribed: "${text}"`);
+            } catch (e) {
+              console.error("[Voice] Transcription failed, falling back:", e);
+              text = VOICE_NOTE_SENTINEL;
+            }
+          }
+
           if (text.trim()) {
             const inbound: InboundMessage = {
               phone: msg.from as string,
@@ -669,7 +683,7 @@ export function buildAdminApp() {
   });
 
   api.post("/items", async (req, res) => {
-    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder } = req.body;
+    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder, imageUrl } = req.body;
     const item = await prisma.menuItem.create({
       data: {
         name,
@@ -683,6 +697,7 @@ export function buildAdminApp() {
         stockCount: stockCount === null || stockCount === undefined || stockCount === "" ? null : Number(stockCount),
         pieceInfo: pieceInfo || null,
         sortOrder: sortOrder !== undefined ? Number(sortOrder) : 0,
+        imageUrl: imageUrl || null,
       },
     });
     await notifyAdminOfEvent("menu_updated", { type: "item_created", item });
@@ -690,7 +705,7 @@ export function buildAdminApp() {
   });
 
   api.put("/items/:id", async (req, res) => {
-    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder } = req.body;
+    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder, imageUrl } = req.body;
     const id = Number(req.params.id);
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
@@ -704,6 +719,7 @@ export function buildAdminApp() {
     if (stockCount !== undefined) data.stockCount = stockCount === null || stockCount === "" ? null : Number(stockCount);
     if (pieceInfo !== undefined) data.pieceInfo = pieceInfo || null;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder);
+    if (imageUrl !== undefined) data.imageUrl = imageUrl || null;
     const item = await prisma.menuItem.update({ where: { id }, data });
     await notifyAdminOfEvent("menu_updated", { type: "item_updated", item });
     res.json(item);

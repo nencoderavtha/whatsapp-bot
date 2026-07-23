@@ -159,7 +159,7 @@ const TOOLS: Array<{
   {
     name: "request_human_handoff",
     description:
-      "Hand the conversation over to a human staff member. Call this ALWAYS for complaints, refund requests, bulk/party orders, allergy questions, or anything you cannot resolve within ordering — never argue or resolve these yourself. Also call it when the customer clearly wants to talk to a real person / staff / manager. This pauses the AI for this customer until staff resume it.",
+      "Hand the conversation over to a human staff member. Call this ONLY for: the customer explicitly asks for a human/staff/manager/person; a genuine complaint (unhappy about an order — wrong item, bad quality, missing item, food safety); an explicit refund request; or a clearly large/bulk or party order. This is the exception, not the default — do NOT call it for ordinary menu/price/availability/allergy questions, ambiguous replies, or customization requests (answer allergy questions directly from the menu's listed ingredients instead). This pauses the AI for this customer until staff resume it.",
     parameters: {
       type: "object",
       properties: {
@@ -167,6 +167,13 @@ const TOOLS: Array<{
       },
     },
     sortOrder: 6,
+  },
+  {
+    name: "cancel_order",
+    description:
+      "Cancel the customer's currently staged (not yet confirmed) order when they say 'cancel', 'cancel order', 'vaddu', 'nakoddu', etc. Only cancels an unconfirmed staged cart — if the order was already placed/confirmed, this tells you to apologize and call request_human_handoff instead. Takes no arguments.",
+    parameters: { type: "object", properties: {} },
+    sortOrder: 7,
   },
 ];
 

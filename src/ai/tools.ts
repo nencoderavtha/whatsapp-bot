@@ -514,6 +514,28 @@ export async function runTool(
         };
       }
 
+      // ── Cancel a staged (not yet confirmed) order ───────────────────────────
+      case "cancel_order": {
+        const cart = await getPendingCart(customerId);
+        if (!cart) {
+          return {
+            output: { ok: false, error: "No staged order to cancel. Tell the customer there's nothing to cancel." },
+          };
+        }
+        if (cart.confirmedOrderId) {
+          return {
+            output: {
+              ok: false,
+              alreadyConfirmed: true,
+              orderId: cart.confirmedOrderId,
+              error: "This order was already placed and sent to the kitchen — you can't cancel it yourself. Apologize once and call request_human_handoff so staff can handle it.",
+            },
+          };
+        }
+        await prisma.pendingOrder.delete({ where: { customerId } }).catch(() => {});
+        return { output: { ok: true, note: "Staged order cancelled. Confirm this to the customer in one short line." } };
+      }
+
       // ── Request a human staff member (pauses the AI for this customer) ──────
       case "request_human_handoff": {
         const updatedCustomer = await prisma.customer.update({

@@ -49,6 +49,28 @@ export class CloudAdapter implements WhatsAppAdapter {
     }
   }
 
+  /** Send a dish photo (by public URL) with an optional short caption. */
+  async sendImage(phone: string, imageUrl: string, caption?: string): Promise<void> {
+    const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: phone,
+        type: "image",
+        image: { link: imageUrl, ...(caption ? { caption } : {}) },
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error(`[Cloud ${this.phoneNumberId}] sendImage failed (${resp.status}):`, err);
+    }
+  }
+
   /** POST a raw `interactive` block via the official Meta Graph API — same message types Kapso proxies. */
   private async sendInteractive(phone: string, interactive: Record<string, unknown>): Promise<void> {
     const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;

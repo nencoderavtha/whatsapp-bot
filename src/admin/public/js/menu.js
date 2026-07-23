@@ -69,6 +69,7 @@ function renderItem(i) {
   const itemJson = esc(JSON.stringify(i));
   return `
     <li class="py-3.5 flex items-start gap-3 flex-wrap">
+      ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" class="w-12 h-12 rounded-lg object-cover border border-slate-800 flex-shrink-0" />` : ""}
       <div class="flex-grow min-w-0">
         <div class="flex items-center gap-2 flex-wrap">
           <span class="text-xs font-semibold ${i.available ? "text-slate-100" : "line-through text-slate-500"}">${esc(i.name)}</span>
@@ -122,6 +123,7 @@ export async function addItem() {
     description: document.getElementById("itDesc").value.trim() || null,
     spiceLevel: document.getElementById("itSpice").value.trim() || null,
     pieceInfo: document.getElementById("itPieceInfo").value.trim() || null,
+    imageUrl: document.getElementById("itImageUrl").value.trim() || null,
     isVeg: document.getElementById("itVeg").checked,
     stockCount: stockVal === "" ? null : Number(stockVal),
   };
@@ -130,7 +132,7 @@ export async function addItem() {
     return;
   }
   await api("/items", { method: "POST", body: JSON.stringify(body) });
-  ["itName", "itPrice", "itDesc", "itSpice", "itPieceInfo", "itStock"].forEach(id => (document.getElementById(id).value = ""));
+  ["itName", "itPrice", "itDesc", "itSpice", "itPieceInfo", "itImageUrl", "itStock"].forEach(id => (document.getElementById(id).value = ""));
   document.getElementById("itVeg").checked = false;
   loadMenu();
 }
@@ -162,6 +164,7 @@ export function openEditModal(item) {
   document.getElementById("edit-desc").value = item.description || "";
   document.getElementById("edit-spice").value = item.spiceLevel || "";
   document.getElementById("edit-pieceinfo").value = item.pieceInfo || "";
+  document.getElementById("edit-imageurl").value = item.imageUrl || "";
   document.getElementById("edit-veg").checked = item.isVeg;
   document.getElementById("edit-modal").classList.remove("hidden");
   loadVariants(item.id);
@@ -181,6 +184,7 @@ export async function saveEditItem() {
     description: document.getElementById("edit-desc").value.trim() || null,
     spiceLevel: document.getElementById("edit-spice").value.trim() || null,
     pieceInfo: document.getElementById("edit-pieceinfo").value.trim() || null,
+    imageUrl: document.getElementById("edit-imageurl").value.trim() || null,
     isVeg: document.getElementById("edit-veg").checked,
     stockCount: stockVal === "" ? null : Number(stockVal),
   };

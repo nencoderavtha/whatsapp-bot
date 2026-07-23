@@ -301,7 +301,7 @@
               }
             };
             const img = document.createElement('img');
-            img.src = getItemImage(item.name);
+            img.src = item.imageUrl || getItemImage(item.name);
             img.className = 'w-full h-full object-cover hover:scale-105 transition-transform duration-300';
             img.alt = item.name;
             imgDiv.appendChild(img);
