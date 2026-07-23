@@ -460,7 +460,7 @@ export function buildAdminApp() {
             ?? msg.interactive?.list_reply?.id
             ?? "";
 
-          // Voice note — download + transcribe via Groq Whisper. Falls back to
+          // Voice note — download + transcribe via Sarvam (Telugu/Hindi/English codemix). Falls back to
           // the canned "please send text" reply if transcription isn't available.
           if (!text && msg.type === "audio" && msg.audio?.id) {
             try {
