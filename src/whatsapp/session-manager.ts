@@ -14,6 +14,11 @@ import { createOrder } from "../services/order.js";
 import { createPaymentLink } from "../services/razorpay.js";
 import { orderStagedTemplate, paymentLinkTemplate } from "../ai/templates.js";
 
+/** Both Cloud and Kapso adapters speak Meta's native interactive message types; only Baileys falls back to plain text. */
+function isRichAdapter(adapter: WhatsAppAdapter): adapter is KapsoAdapter | CloudAdapter {
+  return adapter instanceof KapsoAdapter || adapter instanceof CloudAdapter;
+}
+
 function splitBubbles(text: string): string[] {
   const lower = text.toLowerCase();
   if (lower.includes("total: ₹") || lower.includes("order breakdown") || lower.includes("here's your order") || lower.includes("order summary")) {
@@ -25,7 +30,7 @@ function splitBubbles(text: string): string[] {
 
 async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: string[], restaurantId: number) {
   for (const bubble of bubbles) {
-    if (config.whatsappProvider === "kapso" && adapter instanceof KapsoAdapter) {
+    if ((config.whatsappProvider === "kapso" || config.whatsappProvider === "cloud") && isRichAdapter(adapter)) {
       const lower = bubble.toLowerCase();
 
       // 1. Intercept category/filter requests -> native WhatsApp interactive list select modal (NO plain text list dumps!)
@@ -80,12 +85,12 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
               "Tap an item to order • Prices shown per item",
             );
 
+            // Plain-text link (not a cta_url button) so WhatsApp opens it in its own in-app browser
+            // instead of handing off to the phone's external browser app.
             const webMenuUrl = `${config.serverUrl}/menu.html?r=${restaurantId}&phone=${phone}`;
-            await adapter.sendInteractiveCtaUrl(
+            await adapter.sendText(
               phone,
-              "Explore our interactive web menu with search, filters, and multi-select ordering: 🌐👇",
-              "Open Web Menu 🌐",
-              webMenuUrl
+              `Explore our interactive web menu with search, filters, and multi-select ordering: 🌐👇\n${webMenuUrl}`
             );
             continue;
           }
@@ -100,7 +105,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         !lower.includes("payment details") &&
         !lower.includes("order #");
 
-      if (isCartSummary && adapter instanceof KapsoAdapter) {
+      if (isCartSummary && isRichAdapter(adapter)) {
         try {
           await adapter.sendInteractiveButtons(
             phone,
@@ -203,7 +208,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         bubble.toLowerCase().includes("address details") ||
         bubble.toLowerCase().includes("where should we deliver");
 
-      if (isAddressRequest && adapter instanceof KapsoAdapter) {
+      if (isAddressRequest && isRichAdapter(adapter)) {
         try {
           const customer = await prisma.customer.findFirst({
             where: { phone, restaurantId },
@@ -244,7 +249,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         bubble.match(/what'?s\s+good/i) !== null ||
         bubble.match(/special\s+items/i) !== null;
 
-      if (isSpecialsRequest && adapter instanceof KapsoAdapter) {
+      if (isSpecialsRequest && isRichAdapter(adapter)) {
         try {
           const specials = [
             {
@@ -400,7 +405,7 @@ export class BotSessionManager {
 
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
-        if (isGreeting && adapter instanceof KapsoAdapter) {
+        if (isGreeting && isRichAdapter(adapter)) {
           const isReturning = customer && (customer.name || customer.orders.length > 0);
           const nameStr = customer?.name ? ` ${customer.name}` : "";
           const welcomeBody = isReturning
@@ -438,7 +443,7 @@ export class BotSessionManager {
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
           const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
 
-          if (adapter instanceof KapsoAdapter) {
+          if (isRichAdapter(adapter)) {
             await adapter.sendInteractiveList(
               msg.phone,
               `Here is a preview of our popular items at *${rName}*: 📋\n\nTap the button below to open our full visual web menu with photos, custom sizes & fast ordering! 🍽️✨`,
@@ -447,11 +452,10 @@ export class BotSessionManager {
               "📋 Restaurant Menu",
               `${rName} • Fresh & Authentic`
             );
-            await adapter.sendInteractiveCtaUrl(
+            // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
+            await adapter.sendText(
               msg.phone,
-              "Tap below to browse the full visual menu with images & instant cart builder: 📲",
-              "🌐 Order on Web Menu",
-              webMenuUrl
+              `Tap below to browse the full visual menu with images & instant cart builder: 📲\n${webMenuUrl}`
             );
           } else {
             await adapter.sendText(msg.phone, `Here is our full web menu:\n${webMenuUrl}`);
@@ -531,7 +535,7 @@ export class BotSessionManager {
             }
 
             const stagedMsg = orderStagedTemplate(labels, total, pending?.type ?? "pickup");
-            if (adapter instanceof KapsoAdapter) {
+            if (isRichAdapter(adapter)) {
               await adapter.sendInteractiveButtons(
                 msg.phone,
                 stagedMsg,
@@ -598,7 +602,7 @@ export class BotSessionManager {
             }
           }
 
-          if (adapter instanceof KapsoAdapter) {
+          if (isRichAdapter(adapter)) {
             await adapter.sendInteractiveButtons(
               msg.phone,
               `💳 *Choose Payment Method for ₹${total}:*`,
@@ -621,7 +625,7 @@ export class BotSessionManager {
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
           const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
 
-          if (adapter instanceof KapsoAdapter) {
+          if (isRichAdapter(adapter)) {
             await adapter.sendInteractiveList(
               msg.phone,
               `What else would you like to add? 🛒\n\nPick from popular categories below or open our full web menu:`,
@@ -630,12 +634,8 @@ export class BotSessionManager {
               "📋 Restaurant Menu",
               `${rName} • Fresh & Authentic`
             );
-            await adapter.sendInteractiveCtaUrl(
-              msg.phone,
-              "Tap below to open full visual menu: 📲",
-              "🌐 Order on Web Menu",
-              webMenuUrl
-            );
+            // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
+            await adapter.sendText(msg.phone, `Tap below to open full visual menu: 📲\n${webMenuUrl}`);
           } else {
             await adapter.sendText(msg.phone, `Here is our full web menu:\n${webMenuUrl}`);
           }
@@ -712,13 +712,18 @@ export class BotSessionManager {
    * Called by the admin server's POST /webhook route.
    */
   async routeCloudMessage(phoneNumberId: string, msg: InboundMessage): Promise<void> {
-    const restaurantId = this.phoneIdMap.get(phoneNumberId);
+    let restaurantId = this.phoneIdMap.get(phoneNumberId);
     if (restaurantId === undefined) {
-      console.warn(`[Cloud] No session found for phoneNumberId=${phoneNumberId}`);
+      restaurantId = Array.from(this.sessions.keys())[0];
+    }
+    if (restaurantId === undefined) {
+      console.warn(`[Cloud] No active session found to handle incoming message`);
       return;
     }
-    const adapter = this.sessions.get(restaurantId) as CloudAdapter;
-    await adapter?.ingest(msg);
+    const adapter = this.sessions.get(restaurantId);
+    if (adapter && "ingest" in adapter) {
+      await (adapter as CloudAdapter).ingest(msg);
+    }
   }
 
   /**

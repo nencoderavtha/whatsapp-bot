@@ -322,6 +322,7 @@ export function buildAdminApp() {
 
     try {
       const body = req.body;
+      console.log("📩 [Webhook Received]:", JSON.stringify(body));
 
       // 1. Kapso v2 Buffered Batch Format: { batch: true, data: [{ message, conversation, phone_number_id }, ...] }
       if (body?.batch && Array.isArray(body?.data)) {
