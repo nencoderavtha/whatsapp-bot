@@ -82,7 +82,7 @@ vars at deploy time (§4).
 ## 3. Build & push the image
 
 ```bash
-gcloud builds submit --tag asia-south1-docker.pkg.dev/<YOUR_PROJECT_ID>/bot/rajamma-bot:latest
+gcloud builds submit --tag asia-south1-docker.pkg.dev/<YOUR_PROJECT_ID>/bot/godavari-ruchulu-bot:latest
 ```
 
 (If the Artifact Registry repo doesn't exist yet:
@@ -95,8 +95,8 @@ gcloud builds submit --tag asia-south1-docker.pkg.dev/<YOUR_PROJECT_ID>/bot/raja
 `--min-instances=1` keeps the demo warm (no cold-start lag in front of a client).
 
 ```bash
-gcloud run deploy rajamma-bot \
-  --image asia-south1-docker.pkg.dev/<YOUR_PROJECT_ID>/bot/rajamma-bot:latest \
+gcloud run deploy godavari-ruchulu-bot \
+  --image asia-south1-docker.pkg.dev/<YOUR_PROJECT_ID>/bot/godavari-ruchulu-bot:latest \
   --region asia-south1 \
   --allow-unauthenticated \
   --min-instances=1 \
@@ -114,12 +114,12 @@ JWT_SECRET=JWT_SECRET:latest,\
 OWNER_NUMBERS=OWNER_NUMBERS:latest
 ```
 
-Note the service URL it prints (e.g. `https://rajamma-bot-xxxx.a.run.app`). Then set `SERVER_URL`
+Note the service URL it prints (e.g. `https://godavari-ruchulu-bot-xxxx.a.run.app`). Then set `SERVER_URL`
 to that URL so CTA menu/pay links resolve, and redeploy (add to `--set-env-vars`):
 
 ```bash
-gcloud run services update rajamma-bot --region asia-south1 \
-  --update-env-vars SERVER_URL=https://rajamma-bot-xxxx.a.run.app
+gcloud run services update godavari-ruchulu-bot --region asia-south1 \
+  --update-env-vars SERVER_URL=https://godavari-ruchulu-bot-xxxx.a.run.app
 ```
 
 ---
@@ -143,7 +143,7 @@ just env vars, no code change:
 
 In the Meta App dashboard → WhatsApp → Configuration → Webhook:
 
-- **Callback URL:** `https://rajamma-bot-xxxx.a.run.app/webhook`
+- **Callback URL:** `https://godavari-ruchulu-bot-xxxx.a.run.app/webhook`
 - **Verify token:** the same value you stored in `WHATSAPP_VERIFY_TOKEN`.
 
 Click Verify and Save, then make sure the **messages** field is subscribed. The app's

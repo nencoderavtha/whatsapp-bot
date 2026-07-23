@@ -10,7 +10,7 @@ export async function getMenu(
     include: {
       items: {
         where: opts.includeUnavailable ? {} : { available: true },
-        orderBy: { name: "asc" },
+        orderBy: { sortOrder: "asc" },
         include: {
           variants: {
             where: opts.includeUnavailable ? {} : { available: true },
@@ -44,6 +44,8 @@ export async function menuAsText(restaurantId: number): Promise<string> {
         i.isVeg ? "(veg)" : "",
         i.spiceLevel ? `[${i.spiceLevel}]` : "",
         i.description ? `— ${i.description}` : "",
+        // Only mention to the customer if THEY ask — never proactively.
+        i.pieceInfo ? `(pieceInfo: ${i.pieceInfo} — mention only if asked)` : "",
       ]
         .filter(Boolean)
         .join(" ");

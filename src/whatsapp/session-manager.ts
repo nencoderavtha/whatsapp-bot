@@ -2,7 +2,7 @@ import { prisma } from "../db.js";
 import { BaileysAdapter } from "./baileys.js";
 import { CloudAdapter } from "./cloud.js";
 import { KapsoAdapter } from "./kapso.js";
-import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
+import { VOICE_NOTE_SENTINEL, type WhatsAppAdapter, type InboundMessage } from "./adapter.js";
 import { handleIncoming } from "../ai/agent.js";
 import { getOrder } from "../services/order.js";
 import { config } from "../config.js";
@@ -12,7 +12,7 @@ import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter }
 import { getOrCreateCustomer } from "../services/customer.js";
 import { createOrder } from "../services/order.js";
 import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate, systemErrorTemplate } from "../ai/templates.js";
+import { orderStagedTemplate, paymentLinkTemplate, systemErrorTemplate, voiceNoteFallbackTemplate } from "../ai/templates.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 
@@ -242,51 +242,6 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         }
       }
 
-      // 7. Intercept recommendation requests → native WhatsApp horizontal carousel cards
-      const isSpecialsRequest =
-        bubble.toLowerCase().includes("recommend") ||
-        bubble.toLowerCase().includes("suggest") ||
-        bubble.toLowerCase().includes("specials") ||
-        bubble.toLowerCase().includes("famous") ||
-        bubble.match(/what'?s\s+good/i) !== null ||
-        bubble.match(/special\s+items/i) !== null;
-
-      if (isSpecialsRequest && isRichAdapter(adapter)) {
-        try {
-          const specials = [
-            {
-              title: "Mutton Biryani",
-              desc: "Traditional military-style spiced mutton biryani (₹290)",
-              imageUrl: "https://images.unsplash.com/photo-1633945274405-b6c8069047b0?q=80&w=600",
-              buttonId: "Order Mutton Biryani",
-              buttonTitle: "Order Mutton"
-            },
-            {
-              title: "Chicken Biryani",
-              desc: "Fragrant basmati rice layered with spiced chicken (₹220)",
-              imageUrl: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?q=80&w=600",
-              buttonId: "Order Chicken Biryani",
-              buttonTitle: "Order Chicken"
-            },
-            {
-              title: "Mutton Curry",
-              desc: "Andhra-style hot and spicy mutton gravy (₹280)",
-              imageUrl: "https://images.unsplash.com/photo-1606471679093-4b65662ff143?q=80&w=600",
-              buttonId: "Order Mutton Curry",
-              buttonTitle: "Order Curry"
-            }
-          ];
-
-          await adapter.sendInteractiveCarousel(
-            phone,
-            "Here are our premium chef special recommendations: 🌟",
-            specials
-          );
-          continue;
-        } catch (err) {
-          console.error("[Kapso] Failed to send specials carousel:", err);
-        }
-      }
     }
 
     await adapter.sendText(phone, bubble);
@@ -408,7 +363,13 @@ export class BotSessionManager {
       try {
         const cfg = await prisma.botConfig.findUnique({
           where: { id: restaurantId },
-          select: { restaurantName: true, restaurantCity: true, botPaused: true, pauseMessage: true },
+          select: {
+            restaurantName: true,
+            restaurantCity: true,
+            botPaused: true,
+            pauseMessage: true,
+            dailyMenuPublished: true,
+          },
         });
         if (cfg?.botPaused) {
           const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
@@ -431,25 +392,33 @@ export class BotSessionManager {
           return;
         }
 
+        // ── Voice note (no speech-to-text yet) — ask for text or a call instead ──
+        if (msg.text === VOICE_NOTE_SENTINEL) {
+          await adapter.sendText(msg.phone, voiceNoteFallbackTemplate());
+          return;
+        }
+
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
         if (isGreeting && isRichAdapter(adapter)) {
-          const isReturning = customer && (customer.name || customer.orders.length > 0);
+          if (!cfg?.dailyMenuPublished) {
+            await adapter.sendText(
+              msg.phone,
+              `Namaskaram andi 🙏 Ee roju menu inka ready kaledu andi. Konchem sepu tarvata malli try cheyandi.`,
+            );
+            return;
+          }
+
           const nameStr = customer?.name ? ` ${customer.name}` : "";
-          const welcomeBody = isReturning
-            ? `Welcome back to *${rName}*${nameStr}! 😊 Great to see you again. What would you like to order today?`
-            : `Welcome to *${rName}*! 🌶️✨ Authentic delicacies cooked fresh. What can we serve you today?`;
+          const welcomeBody = `Namaskaram${nameStr} andi 🙏 Ee roju menu ready undi.`;
 
           await adapter.sendInteractiveButtons(
             msg.phone,
             welcomeBody,
             [
-              { id: "view_menu", title: "📋 View Menu" },
-              { id: "reserve_table", title: "🍽️ Reserve Table" },
+              { id: "view_menu", title: "📋 Menu" },
               { id: "location_info", title: "📍 Location & Hours" }
             ],
-            { type: "image", imageUrl: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=800" },
-            `${rName} • Fresh & Authentic`
           );
           return;
         }
@@ -474,39 +443,27 @@ export class BotSessionManager {
           if (isRichAdapter(adapter)) {
             await adapter.sendInteractiveList(
               msg.phone,
-              `Here is a preview of our popular items at *${rName}*: 📋\n\nTap the button below to open our full visual web menu with photos, custom sizes & fast ordering! 🍽️✨`,
-              "📋 View Menu",
+              `Ee roju menu idi andi 📋`,
+              "📋 Menu",
               listSections,
-              "📋 Restaurant Menu",
-              `${rName} • Fresh & Authentic`
             );
             // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
-            await adapter.sendText(
-              msg.phone,
-              `Tap below to browse the full visual menu with images & instant cart builder: 📲\n${webMenuUrl}`
-            );
+            await adapter.sendText(msg.phone, `Full menu web lo: ${webMenuUrl}`);
           } else {
-            await adapter.sendText(msg.phone, `Here is our full web menu:\n${webMenuUrl}`);
+            await adapter.sendText(msg.phone, `Ee roju menu: ${webMenuUrl}`);
           }
           return;
         }
 
-        // ── Direct Action 2: Reserve Table ───────────────────────────────────
-        if (rawText === "reserve_table" || lowerText === "reserve table" || lowerText.includes("table reservation") || lowerText.includes("book table")) {
-          const reserveMsg = `🍽️ *Table Reservation at ${rName}*\n\nPlease reply with:\n1️⃣ *Number of guests*\n2️⃣ *Date & Preferred Time*\n\nOur team will confirm your table reservation immediately! 🥂`;
-          await adapter.sendText(msg.phone, reserveMsg);
-          return;
-        }
-
-        // ── Direct Action 3: Location & Hours ────────────────────────────────
+        // ── Direct Action 2: Location & Hours ────────────────────────────────
         if (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("location") || lowerText.includes("opening hours")) {
           const city = cfg?.restaurantCity ?? "Hyderabad";
-          const locationMsg = `📍 *${rName}*\n🏢 *Location:* ${city}\n⏰ *Operating Hours:* 11:00 AM – 11:00 PM (Mon – Sun)\n🛵 *Delivery & Pickup:* Active\n\nFeel free to ask for directions or place an order anytime! 😊`;
+          const locationMsg = `*${rName}*, ${city}\nEvening service 7:30 PM nunchi andi.`;
           await adapter.sendText(msg.phone, locationMsg);
           return;
         }
 
-        // ── Direct Action 4: Item Selection from WhatsApp List Modal ─────────────
+        // ── Direct Action 3: Item Selection from WhatsApp List Modal ─────────────
         if (rawText.startsWith("menu_item_")) {
           const itemId = parseInt(rawText.replace("menu_item_", ""), 10);
           if (!isNaN(itemId)) {
@@ -581,7 +538,7 @@ export class BotSessionManager {
           }
         }
 
-        // ── Direct Action 5: Confirm Order Button ──────────────────────────────
+        // ── Direct Action 4: Confirm Order Button ──────────────────────────────
         if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const pending = await prisma.pendingOrder.findFirst({
@@ -589,7 +546,7 @@ export class BotSessionManager {
           });
 
           if (!pending || !pending.lines || pending.lines === "[]") {
-            await adapter.sendText(msg.phone, "Your cart is currently empty! Tap *📋 View Menu* to select items. 😊");
+            await adapter.sendText(msg.phone, "Cart empty andi. *📋 Menu* tap cheyandi.");
             return;
           }
 
@@ -633,21 +590,19 @@ export class BotSessionManager {
           if (isRichAdapter(adapter)) {
             await adapter.sendInteractiveButtons(
               msg.phone,
-              `💳 *Choose Payment Method for ₹${total}:*`,
+              `₹${total} ela pay chestharu andi?`,
               [
-                { id: "pay_method_upi", title: "📱 Pay via UPI" },
+                { id: "pay_method_upi", title: "📱 UPI" },
                 { id: "pay_method_cash", title: "💵 Cash on Pickup" }
               ],
-              "💳 Payment Selection",
-              "Tap a payment method to complete order"
             );
           } else {
-            await adapter.sendText(msg.phone, `Please pay ₹${total} via UPI or Cash on Pickup.`);
+            await adapter.sendText(msg.phone, `₹${total} — UPI or Cash on Pickup?`);
           }
           return;
         }
 
-        // ── Direct Action 6: Add More Items Button ──────────────────────────────
+        // ── Direct Action 5: Add More Items Button ──────────────────────────────
         if (rawText === "add_more_items_btn") {
           const listSections = await menuAsInteractiveListSections(restaurantId);
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
@@ -656,21 +611,19 @@ export class BotSessionManager {
           if (isRichAdapter(adapter)) {
             await adapter.sendInteractiveList(
               msg.phone,
-              `What else would you like to add? 🛒\n\nPick from popular categories below or open our full web menu:`,
-              "📋 Add More Items",
+              `Inka em kavali andi?`,
+              "📋 Add More",
               listSections,
-              "📋 Restaurant Menu",
-              `${rName} • Fresh & Authentic`
             );
             // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
-            await adapter.sendText(msg.phone, `Tap below to open full visual menu: 📲\n${webMenuUrl}`);
+            await adapter.sendText(msg.phone, `Full menu web lo: ${webMenuUrl}`);
           } else {
-            await adapter.sendText(msg.phone, `Here is our full web menu:\n${webMenuUrl}`);
+            await adapter.sendText(msg.phone, `Ee roju menu: ${webMenuUrl}`);
           }
           return;
         }
 
-        // ── Direct Action 7: Cash / UPI Payment Method Button ──────────────────
+        // ── Direct Action 6: Cash / UPI Payment Method Button ──────────────────
         if (rawText === "pay_method_cash" || cleanText === "cash on pickup" || cleanText === "pay cash") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const pending = await prisma.pendingOrder.findFirst({

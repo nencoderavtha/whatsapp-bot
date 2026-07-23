@@ -4,9 +4,11 @@ import { showToast, esc } from "./utils.js";
 let editingItemId = null;
 
 export async function loadMenu() {
-  const [cats, menu] = await Promise.all([api("/categories"), api("/menu")]);
+  const [cats, menu, cfg] = await Promise.all([api("/categories"), api("/menu"), api("/config")]);
   const catSel = document.getElementById("itCat");
   catSel.innerHTML = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+
+  renderPublishBar(cfg);
 
   const el = document.getElementById("menu");
   if (!menu.length) {
@@ -25,6 +27,33 @@ export async function loadMenu() {
       </ul>
     </div>
   `).join("");
+}
+
+function renderPublishBar(cfg) {
+  const el = document.getElementById("daily-publish-bar");
+  if (!el) return;
+  const published = !!cfg?.dailyMenuPublished;
+  el.innerHTML = `
+    <div>
+      <div class="text-sm font-bold ${published ? "text-emerald-400" : "text-amber-400"}">
+        ${published ? "Today's menu is published — bot is taking orders" : "Today's menu is NOT published — bot will not take orders"}
+      </div>
+      <p class="text-[10px] text-slate-500 mt-0.5">Set today's dishes/prices/quantities below, then publish when the kitchen opens.</p>
+    </div>
+    <button onclick="window.togglePublish(${!published})"
+      class="flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold ${published ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "gradient-btn text-white"}">
+      ${published ? "Unpublish" : "Publish Today's Menu"}
+    </button>`;
+}
+
+export async function togglePublish(published) {
+  try {
+    await api("/daily-menu/publish", { method: "PUT", body: JSON.stringify({ published }) });
+    showToast(published ? "Published" : "Unpublished", published ? "Bot is now taking orders from today's menu." : "Bot will no longer take orders.");
+    loadMenu();
+  } catch (e) {
+    showToast("Error", "Could not update publish state.");
+  }
 }
 
 function stockBadge(stockCount) {
@@ -92,6 +121,7 @@ export async function addItem() {
     categoryId: document.getElementById("itCat").value,
     description: document.getElementById("itDesc").value.trim() || null,
     spiceLevel: document.getElementById("itSpice").value.trim() || null,
+    pieceInfo: document.getElementById("itPieceInfo").value.trim() || null,
     isVeg: document.getElementById("itVeg").checked,
     stockCount: stockVal === "" ? null : Number(stockVal),
   };
@@ -100,7 +130,7 @@ export async function addItem() {
     return;
   }
   await api("/items", { method: "POST", body: JSON.stringify(body) });
-  ["itName", "itPrice", "itDesc", "itSpice", "itStock"].forEach(id => (document.getElementById(id).value = ""));
+  ["itName", "itPrice", "itDesc", "itSpice", "itPieceInfo", "itStock"].forEach(id => (document.getElementById(id).value = ""));
   document.getElementById("itVeg").checked = false;
   loadMenu();
 }
@@ -131,6 +161,7 @@ export function openEditModal(item) {
   document.getElementById("edit-stock").value = item.stockCount ?? "";
   document.getElementById("edit-desc").value = item.description || "";
   document.getElementById("edit-spice").value = item.spiceLevel || "";
+  document.getElementById("edit-pieceinfo").value = item.pieceInfo || "";
   document.getElementById("edit-veg").checked = item.isVeg;
   document.getElementById("edit-modal").classList.remove("hidden");
   loadVariants(item.id);
@@ -149,6 +180,7 @@ export async function saveEditItem() {
     price: document.getElementById("edit-price").value,
     description: document.getElementById("edit-desc").value.trim() || null,
     spiceLevel: document.getElementById("edit-spice").value.trim() || null,
+    pieceInfo: document.getElementById("edit-pieceinfo").value.trim() || null,
     isVeg: document.getElementById("edit-veg").checked,
     stockCount: stockVal === "" ? null : Number(stockVal),
   };

@@ -242,8 +242,9 @@
                 </div>
                 <input id="itDesc" placeholder="Description (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 <input id="itSpice" placeholder="Spice level (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <input id="itPieceInfo" placeholder="Piece/serving count (optional, e.g. '2 pieces')" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 <div>
-                  <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1.5">Stock — blank = unlimited</label>
+                  <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1.5">Today's quantity — blank = unlimited</label>
                   <input id="itStock" type="number" min="0" placeholder="∞ Unlimited" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
                 </div>
                 <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer py-1">
@@ -256,8 +257,9 @@
 
           <!-- Menu list (order-1 = first on mobile) -->
           <div class="order-1 md:order-2 md:col-span-2 flex flex-col md:overflow-hidden md:h-full">
+            <div id="daily-publish-bar" class="glass rounded-2xl p-4 mb-3 flex-shrink-0 flex items-center justify-between gap-3 border border-slate-900"></div>
             <div class="flex justify-between items-center mb-3 flex-shrink-0">
-              <h2 class="text-lg md:text-xl font-bold">Menu</h2>
+              <h2 class="text-lg md:text-xl font-bold">Today's Menu</h2>
               <button onclick="window.loadMenu?.()" class="text-xs text-rose-400 font-semibold hover:text-rose-300 transition-colors">↻ Reload</button>
             </div>
             <div id="menu" class="md:flex-grow md:overflow-y-auto space-y-4 md:pr-1"></div>
@@ -560,6 +562,8 @@
         <input id="edit-desc" type="text" placeholder="Description"
           class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
         <input id="edit-spice" type="text" placeholder="Spice level"
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+        <input id="edit-pieceinfo" type="text" placeholder="Piece/serving count (optional)"
           class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
         <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
           <input type="checkbox" id="edit-veg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian

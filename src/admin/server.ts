@@ -12,7 +12,7 @@ import { loginHandler, logoutHandler, meHandler, authMiddleware, founderLoginHan
 import { createOrder } from "../services/order.js";
 import { verifyWebhookSignature } from "../services/razorpay.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
-import type { InboundMessage } from "../whatsapp/adapter.js";
+import { VOICE_NOTE_SENTINEL, type InboundMessage } from "../whatsapp/adapter.js";
 import { KapsoAdapter } from "../whatsapp/kapso.js";
 import { orderConfirmationMsg, ownerNewOrderMsg, orderStatusMsg } from "../services/notifications.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
@@ -444,11 +444,15 @@ export function buildAdminApp() {
       if (msg) {
         const phoneNumberId = entry?.metadata?.phone_number_id;
         if (phoneNumberId) {
+          // No speech-to-text yet — flag voice notes with a sentinel so
+          // session-manager can reply with the canned voice-note fallback
+          // instead of silently dropping the message.
           const text =
             msg.text?.body
             ?? msg.button?.text
             ?? msg.interactive?.button_reply?.title
             ?? msg.interactive?.list_reply?.title
+            ?? (msg.type === "audio" ? VOICE_NOTE_SENTINEL : "")
             ?? "";
           if (text.trim()) {
             const inbound: InboundMessage = {
@@ -665,7 +669,7 @@ export function buildAdminApp() {
   });
 
   api.post("/items", async (req, res) => {
-    const { name, description, price, categoryId, isVeg, spiceLevel, available } = req.body;
+    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder } = req.body;
     const item = await prisma.menuItem.create({
       data: {
         name,
@@ -676,6 +680,9 @@ export function buildAdminApp() {
         isVeg: !!isVeg,
         spiceLevel,
         available: available ?? true,
+        stockCount: stockCount === null || stockCount === undefined || stockCount === "" ? null : Number(stockCount),
+        pieceInfo: pieceInfo || null,
+        sortOrder: sortOrder !== undefined ? Number(sortOrder) : 0,
       },
     });
     await notifyAdminOfEvent("menu_updated", { type: "item_created", item });
@@ -683,7 +690,7 @@ export function buildAdminApp() {
   });
 
   api.put("/items/:id", async (req, res) => {
-    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount } = req.body;
+    const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder } = req.body;
     const id = Number(req.params.id);
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
@@ -695,6 +702,8 @@ export function buildAdminApp() {
     if (available !== undefined) data.available = !!available;
     // stockCount: null = unlimited, number = specific stock
     if (stockCount !== undefined) data.stockCount = stockCount === null || stockCount === "" ? null : Number(stockCount);
+    if (pieceInfo !== undefined) data.pieceInfo = pieceInfo || null;
+    if (sortOrder !== undefined) data.sortOrder = Number(sortOrder);
     const item = await prisma.menuItem.update({ where: { id }, data });
     await notifyAdminOfEvent("menu_updated", { type: "item_updated", item });
     res.json(item);
@@ -813,6 +822,20 @@ export function buildAdminApp() {
       },
     });
     res.json({ botPaused: cfg.botPaused, pauseMessage: cfg.pauseMessage });
+  });
+
+  // --- Daily menu publish toggle (gates ordering per prompt.ts's menu-state block) ---
+  api.put("/daily-menu/publish", async (req, res) => {
+    const { published } = req.body;
+    const cfg = await prisma.botConfig.update({
+      where: { id: req.restaurantId },
+      data: {
+        dailyMenuPublished: !!published,
+        dailyMenuPublishedAt: published ? new Date() : null,
+      },
+    });
+    await notifyAdminOfEvent("config_updated", { restaurantId: req.restaurantId });
+    res.json({ dailyMenuPublished: cfg.dailyMenuPublished, dailyMenuPublishedAt: cfg.dailyMenuPublishedAt });
   });
 
   // --- Bot Config ---

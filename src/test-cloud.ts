@@ -42,7 +42,7 @@ async function testSend() {
       messaging_product: "whatsapp",
       to: TO,
       type: "text",
-      text: { body: "🎉 Hello from Military Rajamma Bot! Cloud API is working!" },
+      text: { body: "🎉 Hello from Godavari Ruchulu Bot! Cloud API is working!" },
     }),
   });
 

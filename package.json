@@ -1,7 +1,7 @@
 {
-  "name": "military-rajamma-bot",
+  "name": "godavari-ruchulu-bot",
   "version": "0.1.0",
-  "description": "WhatsApp AI ordering agent for Military Rajamma Hotel, Hyderabad",
+  "description": "WhatsApp AI ordering agent for Godavari Ruchulu, Hyderabad",
   "private": true,
   "type": "module",
   "engines": {

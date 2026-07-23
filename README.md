@@ -1,11 +1,11 @@
-# Military Rajamma Hotel — WhatsApp AI Ordering Agent
+# Godavari Ruchulu — WhatsApp AI Ordering Agent
 
 A WhatsApp agent that chats like a real person at the counter, takes orders, and
 remembers customers. The menu is **dynamic** — stored in a database and edited
 live from an admin portal, so the bot always knows what's actually available today.
 
 ## What's inside
-- **Human-like AI agent** (Groq, free tier — Llama models) with a Hyderabadi hotel persona. Never reveals it's a bot.
+- **Human-like AI agent** with a plain, understated Konaseema-kitchen voice. Never reveals it's a bot.
 - **Dynamic menu** in a database (Prisma + SQLite for dev, Postgres for prod).
 - **Order taking** via tool-calling — confirms items + total, places the order, alerts the owner on WhatsApp.
 - **Per-customer memory** — full conversation history + saved name/address/preferences.

@@ -37,18 +37,18 @@ Browser: app.exter-ai.com
 ### Today (1 restaurant)
 
 ```
-app.exter-ai.com/          ← admin dashboard (Rajamma)
-app.exter-ai.com/api/*     ← REST API (Rajamma)
-                              WhatsApp bot process (Rajamma number)
+app.exter-ai.com/          ← admin dashboard (Godavari Ruchulu)
+app.exter-ai.com/api/*     ← REST API (Godavari Ruchulu)
+                              WhatsApp bot process (Godavari Ruchulu number)
                               Supabase DB
 ```
 
 ### Future (N restaurants — multi-tenant)
 
 ```
-app.exter-ai.com/rajamma/dashboard    ← Rajamma admin
+app.exter-ai.com/rajamma/dashboard    ← Godavari Ruchulu admin
 app.exter-ai.com/hotel-b/dashboard   ← Hotel B admin
-app.exter-ai.com/api/rajamma/*        ← Rajamma API (scoped by restaurantId)
+app.exter-ai.com/api/rajamma/*        ← Godavari Ruchulu API (scoped by restaurantId)
 app.exter-ai.com/api/hotel-b/*        ← Hotel B API (scoped by restaurantId)
 
 Database: ONE Supabase project
@@ -138,7 +138,7 @@ CMD ["node", "dist/index.js"]
 Create `fly.toml` in the project root:
 
 ```toml
-app = "rajamma-bot"          # change to your chosen app name
+app = "godavari-ruchulu-bot"          # change to your chosen app name
 primary_region = "sin"       # Singapore — closest free region to Hyderabad
 
 [build]

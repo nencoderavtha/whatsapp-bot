@@ -15,7 +15,7 @@ import { loadActivity, prependActivity } from "./activity.js";
 import {
   loadMenu, addCategory, delCategory, addItem, toggleAvail, delItem,
   openEditModal, closeEditModal, saveEditItem,
-  addVariant, updateVariant, delVariant,
+  addVariant, updateVariant, delVariant, togglePublish,
 } from "./menu.js";
 import { loadPayments } from "./payments.js";
 import { loadCustomers } from "./customers.js";
@@ -35,7 +35,7 @@ Object.assign(window, {
   // menu
   addCategory, delCategory, addItem, toggleAvail, delItem,
   loadMenu, openEditModal, closeEditModal, saveEditItem,
-  addVariant, updateVariant, delVariant,
+  addVariant, updateVariant, delVariant, togglePublish,
   // payments (reuses same markPaid — both call same API)
   // settings
   saveRestaurantInfo, savePaymentConfig, saveRazorpay,

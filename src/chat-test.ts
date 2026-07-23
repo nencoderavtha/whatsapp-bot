@@ -33,7 +33,7 @@ async function main() {
         // Show each blank-line-separated part as its own bubble (like WhatsApp will).
         const bubbles = reply.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
         console.log();
-        for (const b of bubbles.length ? bubbles : [reply]) console.log(`Rajamma: ${b}`);
+        for (const b of bubbles.length ? bubbles : [reply]) console.log(`Bot: ${b}`);
         if (placedOrderId) console.log(`   [✅ order #${placedOrderId} placed]`);
         console.log();
       } catch (e: any) {

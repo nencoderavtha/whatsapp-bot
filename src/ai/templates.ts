@@ -1,10 +1,12 @@
 /**
  * Fixed WhatsApp message templates for predictable bot responses.
  * WhatsApp formatting: *bold*, _italic_, ~strikethrough~, ```mono```
- * No markdown headers (#). Use emojis + spacing as visual separators.
+ * No markdown headers (#). Voice: plain, brief, max ONE emoji per message
+ * (usually 🙏 on handoff/thanks, ✅ on a confirmed order) — no upsell language.
  *
- * Each template uses pick() to randomly rotate phrasing so customers
- * never feel like they're talking to a robot reading from a script.
+ * Each template uses pick() to rotate phrasing slightly so customers don't
+ * feel like they're reading from a fixed script, without adding any energy
+ * or emoji beyond what the brand voice allows.
  */
 
 /** Pick a random element from an array — for natural message variation. */
@@ -13,9 +15,9 @@ function pick<T>(arr: T[]): T {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  pickup:   "🏃 Pickup",
-  delivery: "🛵 Delivery",
-  "dine-in": "🍽️ Dine-in",
+  pickup: "Pickup",
+  delivery: "Delivery",
+  "dine-in": "Dine-in",
 };
 
 // ── Sent after propose_order stages the cart ────────────────────────────────
@@ -26,68 +28,35 @@ export function orderStagedTemplate(
   type: string,
   note?: string,
 ): string {
-  const typeLabel = TYPE_LABEL[type] ?? "🏃 Pickup";
-  const noteLine  = note ? `\n📝 _Note: ${note}_` : "";
-  const itemList  = items.map((i) => `  • ${i}`).join("\n");
-
-  const header = pick([
-    `🛒 *Here's your order:*`,
-    `📋 *Your order summary:*`,
-    `✏️ *Got it! Here's what I have:*`,
-    `🧾 *Order breakdown:*`,
-  ]);
-
-  const confirm = pick([
-    `Tap *Confirm Order* below to proceed, or message me to add more items! 🛒`,
-    `Tap *Confirm Order* to lock it in, or tell me what else to add! ✨`,
-    `Tap *Confirm Order* below, or send a message to add more items! 😊`,
-  ]);
+  const typeLabel = TYPE_LABEL[type] ?? "Pickup";
+  const noteLine = note ? `\nNote: ${note}` : "";
+  const itemList = items.map((i) => `• ${i}`).join("\n");
 
   return [
-    header,
+    `Order idi andi —`,
     itemList,
-    `━━━━━━━━━━━━━━━━━`,
-    `💰 *Total: ₹${total}*`,
-    `📦 *Type:* ${typeLabel}${noteLine}`,
-    `━━━━━━━━━━━━━━━━━`,
-    confirm,
+    `Total: ₹${total} · ${typeLabel}${noteLine}`,
+    `Confirm cheyyocha?`,
   ].join("\n");
 }
 
 // ── Sent after generate_payment_link creates a Razorpay link ────────────────
 
 export function paymentLinkTemplate(url: string, total: number): string {
-  const opener = pick([
-    `💳 *Time to pay!*`,
-    `💳 *Almost there — just the payment left!*`,
-    `🔒 *Secure payment*`,
-    `💳 *One last step!*`,
-  ]);
-
-  const closer = pick([
-    `✅ Your order *confirms automatically* once payment goes through!`,
-    `✅ Payment done = order confirmed. That's it! 🎉`,
-    `✅ We'll confirm your order the moment payment lands. 🙌`,
-  ]);
-
-  return (
-    `${opener}\n\n` +
-    `Please pay *₹${total}* using the link below:\n\n` +
-    `${url}\n\n` +
-    `${closer}\n` +
-    `_Powered by Razorpay — safe & secure_ 🔐`
-  );
+  return [
+    `₹${total} pay cheyyandi andi:`,
+    url,
+    `Pay ayyaka order confirm avutundi.`,
+  ].join("\n\n");
 }
 
-// ── Sent after confirm_order places the order (manual UPI / cash path) ──────
+// ── Sent after confirm_order places the order ────────────────────────────
 // Note: a full itemized receipt is also sent automatically by session-manager.
 
 export function orderConfirmedTemplate(): string {
   return pick([
-    `✅ *Order confirmed!* You'll get a full receipt in just a sec. 🧾`,
-    `✅ *Done! Order confirmed.* Hang tight — your receipt is on its way! 📋`,
-    `✅ *You're all set!* Receipt coming up in a moment. 🎉`,
-    `✅ *Order locked in!* We'll send your receipt right away. 🙏`,
+    `Confirm chesam ✅ Receipt ippude pampistham.`,
+    `Order confirm ayyindi ✅ Receipt vastundi konchem sepatlo.`,
   ]);
 }
 
@@ -95,9 +64,8 @@ export function orderConfirmedTemplate(): string {
 
 export function humanHandoffTemplate(): string {
   return pick([
-    `🙋 Got it! I'm connecting you with our team now — someone will reply here shortly. 🙏`,
-    `🙋 No problem! I've flagged this for our staff — a real person will jump in right here in a moment. 🙏`,
-    `🙋 Sure thing! Passing you to our team — they'll message you here very soon. 🙏`,
+    `Sorry andi 🙏 Manager ki cheppanu — working hours lo ikkade reply istharu.`,
+    `Ok andi 🙏 Team ki pass chesanu, working hours lo direct ga message chestaru.`,
   ]);
 }
 
@@ -105,30 +73,28 @@ export function humanHandoffTemplate(): string {
 
 export function fallbackTemplate(): string {
   return pick([
-    `Hmm, I didn't quite catch that 🤔 Could you say it once more?`,
-    `Sorry, I missed that! 🙏 Mind sending it again?`,
-    `Oops, that didn't come through clearly — could you repeat it? 😊`,
+    `Ardam kaledu andi, malli oka sari cheppagalara?`,
+    `Sorry andi, clear ga randledu — malli pampandi.`,
   ]);
+}
+
+// ── Shown when a voice note is received (no speech-to-text yet) ─────────────
+
+export function voiceNoteFallbackTemplate(): string {
+  return `Voice message vachindi andi. Text lo pampandi, leda call chestham.`;
 }
 
 // ── Shown when something breaks on our side (caught exception) ────────────────
 
 export function systemErrorTemplate(): string {
   return pick([
-    `😟 Something went wrong on our end. Please try again in a moment — sorry about that! 🙏`,
-    `⚠️ We hit a small glitch. Give it another try in a few seconds? 🙏`,
-    `😟 Apologies — a hiccup on our side. Please send that again shortly. 🙏`,
+    `Sorry andi, chinna issue vachindi. Konchem sepatlo malli try cheyandi.`,
+    `Andi, ee sari technical issue undi — please malli pampandi konchem sepu tarvata.`,
   ]);
 }
 
 // ── Sent when the customer asks to see the menu mid-conversation ─────────────
 
 export function menuTemplate(restaurantName: string, menuText: string): string {
-  const opener = pick([
-    `Here's our current menu at *${restaurantName}*:`,
-    `Here's what we've got today at *${restaurantName}*:`,
-    `Here's our menu:`,
-    `Here's our current menu`,
-  ]);
-  return `${opener}\n\n${menuText}`;
+  return `Ee roju menu — *${restaurantName}*:\n\n${menuText}\n\nEnti kavalo cheppandi.`;
 }

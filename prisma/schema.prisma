@@ -1,4 +1,4 @@
-// Prisma schema for Military Rajamma Hotel WhatsApp bot.
+// Prisma schema for Godavari Ruchulu WhatsApp bot.
 // Dev uses SQLite. For production, change `provider` to "postgresql"
 // and point DATABASE_URL at your Postgres instance.
 
@@ -34,6 +34,8 @@ model MenuItem {
   stockCount   Int?               // null = unlimited; 0 = sold out; >0 = units remaining
   isVeg        Boolean            @default(false)
   spiceLevel   String?
+  sortOrder    Int                @default(0) // customer-facing "#" for daily numbered menus
+  pieceInfo    String?            // e.g. "2 pieces" — only mention to customers if asked
   category     Category           @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   categoryId   Int
   restaurant   BotConfig          @relation(fields: [restaurantId], references: [id])
@@ -161,7 +163,7 @@ model OrderItem {
 
 model BotConfig {
   id                         Int              @id @default(autoincrement())
-  restaurantName             String           @default("Military Rajamma Hotel")
+  restaurantName             String           @default("Godavari Ruchulu")
   restaurantCity             String           @default("Hyderabad")
   // Persona the bot speaks as (e.g. "Rajamma"). Null → prompt falls back to
   // "the team at {restaurantName}" phrasing.
@@ -173,6 +175,10 @@ model BotConfig {
   // Bot on/off switch
   botPaused                  Boolean          @default(false)
   pauseMessage               String?
+  // Daily menu publish gate — staff enters today's numbered menu and flips this
+  // on each evening; the bot refuses to take orders while it's off.
+  dailyMenuPublished         Boolean          @default(false)
+  dailyMenuPublishedAt       DateTime?
   whatsappPhone              String?          // e.g. "919876543210" — if set, uses pairing code instead of QR
   // WhatsApp Cloud API (per-restaurant; token falls back to WHATSAPP_CLOUD_TOKEN env var)
   cloudPhoneNumberId         String?

@@ -87,7 +87,7 @@ export const config = {
   },
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${Number(process.env.PORT ?? process.env.ADMIN_PORT ?? 4000)}`,
 
-  restaurantName: process.env.RESTAURANT_NAME ?? "Military Rajamma Hotel",
+  restaurantName: process.env.RESTAURANT_NAME ?? "Godavari Ruchulu",
   restaurantCity: process.env.RESTAURANT_CITY ?? "Hyderabad",
   ownerNumbers: (process.env.OWNER_NUMBERS ?? "")
     .split(",")
