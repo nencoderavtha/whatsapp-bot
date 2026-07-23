@@ -51,6 +51,7 @@ export async function selectConversation(id) {
   document.getElementById("chat-title").textContent = c.name || "(Unknown)";
   document.getElementById("chat-subtitle").textContent = c.phone;
   document.getElementById("chat-avatar").textContent = c.name ? c.name[0].toUpperCase() : "?";
+  updateHandoffUI(c);
 
   const el = document.getElementById("chat-messages");
   el.innerHTML = '<div class="text-center text-xs text-slate-500 py-12">Loading...</div>';
@@ -62,6 +63,48 @@ export async function selectConversation(id) {
     scrollToBottom();
   } catch (e) {
     el.innerHTML = '<div class="text-center text-xs text-rose-400 py-12">Failed to load</div>';
+  }
+}
+
+// Show/hide the handoff banner + staff reply bar for the selected conversation.
+// The reply bar is always available (staff can message anytime); the banner and
+// "Resume AI" only appear while humanRequestedAt is set.
+function updateHandoffUI(c) {
+  const banner = document.getElementById("chat-handoff-banner");
+  const replyBar = document.getElementById("chat-reply-bar");
+  const paused = !!c?.humanRequestedAt;
+  if (banner) banner.classList.toggle("hidden", !paused);
+  if (replyBar) replyBar.classList.remove("hidden");
+}
+
+export async function sendStaffReply() {
+  if (!selectedCustomerId) return;
+  const input = document.getElementById("chat-reply-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  try {
+    await api(`/customers/${selectedCustomerId}/message`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    // The message is broadcast back over SSE (message_created) and appended there.
+  } catch (e) {
+    showToast("Error", "Could not send reply — is the bot session running?");
+    input.value = text;
+  }
+}
+
+export async function resumeAI() {
+  if (!selectedCustomerId) return;
+  try {
+    const updated = await api(`/customers/${selectedCustomerId}/resume-ai`, { method: "PUT" });
+    const idx = activeConversations.findIndex(x => x.id === selectedCustomerId);
+    if (idx >= 0) activeConversations[idx].humanRequestedAt = null;
+    updateHandoffUI(updated);
+    showToast("AI Resumed", "The bot will handle this customer again.");
+  } catch (e) {
+    showToast("Error", "Could not resume AI.");
   }
 }
 
@@ -98,6 +141,7 @@ export function loadCustomerProfile(c) {
   document.getElementById("cust-name").value = c.name || "";
   document.getElementById("cust-address").value = c.address || "";
   document.getElementById("cust-notes").value = c.notes || "";
+  updateHandoffUI(c);
 }
 
 export function showChatThreads() {

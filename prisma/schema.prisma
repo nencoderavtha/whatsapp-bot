@@ -66,17 +66,21 @@ model MenuItemVariant {
 // ---------------- Customers & conversation memory ----------------
 
 model Customer {
-  id           Int           @id @default(autoincrement())
-  phone        String
-  name         String?
-  address      String?
-  notes        String?
-  createdAt    DateTime      @default(now())
-  restaurant   BotConfig     @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  messages     Message[]
-  orders       Order[]
-  pendingOrder PendingOrder?
+  id               Int           @id @default(autoincrement())
+  phone            String
+  name             String?
+  address          String?
+  notes            String?
+  // Set when the customer (or a tool) requests a human. While non-null the AI is
+  // paused for this customer and staff reply from the dashboard until they Resume AI.
+  humanRequestedAt DateTime?
+  createdAt        DateTime      @default(now())
+  restaurant       BotConfig     @relation(fields: [restaurantId], references: [id])
+  restaurantId     Int
+  messages         Message[]
+  orders           Order[]
+  pendingOrder     PendingOrder?
+  activityLogs     ActivityLog[]
 
   @@unique([phone, restaurantId])
 }
@@ -159,6 +163,9 @@ model BotConfig {
   id                         Int              @id @default(autoincrement())
   restaurantName             String           @default("Military Rajamma Hotel")
   restaurantCity             String           @default("Hyderabad")
+  // Persona the bot speaks as (e.g. "Rajamma"). Null → prompt falls back to
+  // "the team at {restaurantName}" phrasing.
+  personaName                String?
   ownerNumbers               String           @default("")
   isActive                   Boolean          @default(true)
   dashboardPassword          String           @default("changeme")
@@ -191,6 +198,24 @@ model BotConfig {
   pendingOrders              PendingOrder[]
   promptTemplates            PromptTemplate[]
   toolDefinitions            ToolDefinition[]
+  activityLogs               ActivityLog[]
+}
+
+// ---------------- Bot health / activity log (dashboard observability) --------
+// Records tool errors, fallback triggers, response-time samples, and human
+// handoff events. Written fire-and-forget so it never blocks a customer reply.
+model ActivityLog {
+  id           Int       @id @default(autoincrement())
+  restaurant   BotConfig @relation(fields: [restaurantId], references: [id])
+  restaurantId Int
+  type         String    // "response_time" | "tool_error" | "fallback" | "human_handoff" | "handoff_resolved"
+  message      String
+  meta         String?   // optional JSON blob (e.g. {"elapsedMs":842})
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId   Int?
+  createdAt    DateTime  @default(now())
+
+  @@index([restaurantId, createdAt])
 }
 
 model PromptTemplate {

@@ -23,6 +23,8 @@ export function togglePaymentExpand(sectionId, show) {
 function populateConfig(cfg) {
   document.getElementById("cfg-name").value = cfg.restaurantName || "";
   document.getElementById("cfg-city").value = cfg.restaurantCity || "";
+  const personaEl = document.getElementById("cfg-persona");
+  if (personaEl) personaEl.value = cfg.personaName || "";
   document.getElementById("cfg-owners").value = cfg.ownerNumbers || "";
   document.getElementById("cfg-wa-phone").value = cfg.whatsappPhone || "";
   document.getElementById("cfg-requirePayment").checked = !!cfg.requiresPaymentBeforeOrder;
@@ -62,6 +64,7 @@ export async function saveRestaurantInfo() {
   const body = {
     restaurantName: document.getElementById("cfg-name").value.trim(),
     restaurantCity: document.getElementById("cfg-city").value.trim(),
+    personaName: document.getElementById("cfg-persona")?.value.trim() || null,
     ownerNumbers: document.getElementById("cfg-owners").value.trim(),
     whatsappPhone: document.getElementById("cfg-wa-phone").value.replace(/\D/g, "") || null,
     cloudPhoneNumberId: cloudPhoneId,

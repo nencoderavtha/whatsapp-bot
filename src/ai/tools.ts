@@ -2,7 +2,11 @@ import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
 import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate } from "./templates.js";
+import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate } from "./templates.js";
+import { orderStatusMsg } from "../services/notifications.js";
+import { logActivity } from "../services/activity.js";
+import { getCached } from "../services/cache.js";
+import { notifyAdminOfEvent } from "../services/events.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 export interface PendingCart {
@@ -23,18 +27,22 @@ const CART_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 // ---------------------------------------------------------------------------
 
 export async function getEnabledTools(restaurantId: number): Promise<ChatCompletionTool[]> {
-  const defs = await prisma.toolDefinition.findMany({
-    where: { isEnabled: true, restaurantId },
-    orderBy: { sortOrder: "asc" },
+  // Cached — the enabled tool set only changes when the owner toggles/edits a
+  // tool in the dashboard (which emits config_updated → cache invalidation).
+  return getCached(restaurantId, "enabledTools", async () => {
+    const defs = await prisma.toolDefinition.findMany({
+      where: { isEnabled: true, restaurantId },
+      orderBy: { sortOrder: "asc" },
+    });
+    return defs.map((def) => ({
+      type: "function" as const,
+      function: {
+        name: def.name,
+        description: def.description,
+        parameters: JSON.parse(def.parametersSchema),
+      },
+    }));
   });
-  return defs.map((def) => ({
-    type: "function" as const,
-    function: {
-      name: def.name,
-      description: def.description,
-      parameters: JSON.parse(def.parametersSchema),
-    },
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +177,7 @@ export async function runTool(
   restaurantId: number,
   name: string,
   args: Record<string, any>,
-): Promise<{ output: unknown; orderId?: number; templateReply?: string }> {
+): Promise<{ output: unknown; orderId?: number; templateReply?: string; humanHandoff?: boolean }> {
   try {
     switch (name) {
 
@@ -475,12 +483,66 @@ export async function runTool(
         return await handleGeneratePaymentLink(customerId, restaurantId);
       }
 
+      // ── Check the status of a customer's order ─────────────────────────────
+      case "check_order_status": {
+        const restaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
+        const restaurantName = restaurant?.restaurantName ?? "our restaurant";
+
+        const order = args.orderId
+          ? await prisma.order.findFirst({
+              where: { id: Number(args.orderId), customerId, restaurantId },
+              include: { items: true, customer: true, payment: true },
+            })
+          : await prisma.order.findFirst({
+              where: { customerId, restaurantId, status: { not: "cancelled" } },
+              orderBy: { createdAt: "desc" },
+              include: { items: true, customer: true, payment: true },
+            });
+
+        if (!order) {
+          return {
+            output: {
+              ok: false,
+              error: "No active order found for this customer. Tell them you don't see a recent order and offer to take a new one.",
+            },
+          };
+        }
+
+        return {
+          output: { ok: true, orderId: order.id, status: order.status, total: order.total },
+          templateReply: orderStatusMsg(order as any, order.status, restaurantName),
+        };
+      }
+
+      // ── Request a human staff member (pauses the AI for this customer) ──────
+      case "request_human_handoff": {
+        const updatedCustomer = await prisma.customer.update({
+          where: { id: customerId },
+          data: { humanRequestedAt: new Date() },
+        });
+        // Live-update the dashboard so the handoff banner appears immediately.
+        void notifyAdminOfEvent("customer_updated", updatedCustomer);
+        void logActivity(
+          restaurantId,
+          "human_handoff",
+          args.reason ? `Human requested: ${String(args.reason).slice(0, 120)}` : "Customer requested a human",
+          undefined,
+          customerId,
+        );
+        return {
+          output: { ok: true, note: "Human handoff requested. The customer will now be handled by staff." },
+          templateReply: humanHandoffTemplate(),
+          humanHandoff: true,
+        };
+      }
+
       default:
         return { output: { error: `Unknown tool: ${name}` } };
     }
   } catch (e: any) {
     const msg = e?.error?.description ?? e?.message ?? JSON.stringify(e) ?? "Unknown error";
     console.error(`[tool:${name}] error:`, msg);
+    void logActivity(restaurantId, "tool_error", `${name}: ${msg}`.slice(0, 300), { tool: name }, customerId);
     return { output: { error: msg } };
   }
 }

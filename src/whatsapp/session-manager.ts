@@ -12,7 +12,9 @@ import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter }
 import { getOrCreateCustomer } from "../services/customer.js";
 import { createOrder } from "../services/order.js";
 import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate } from "../ai/templates.js";
+import { orderStagedTemplate, paymentLinkTemplate, systemErrorTemplate } from "../ai/templates.js";
+import { ownerHandoffMsg } from "../services/notifications.js";
+import { logMessage } from "../services/customer.js";
 
 /** Both Cloud and Kapso adapters speak Meta's native interactive message types; only Baileys falls back to plain text. */
 function isRichAdapter(adapter: WhatsAppAdapter): adapter is KapsoAdapter | CloudAdapter {
@@ -310,6 +312,24 @@ async function notifyOwner(adapter: WhatsAppAdapter, restaurantId: number, order
   }
 }
 
+async function notifyOwnerOfHandoff(
+  adapter: WhatsAppAdapter,
+  restaurantId: number,
+  customer: { name?: string | null; phone: string },
+  lastMessage: string,
+) {
+  const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+  const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const text = ownerHandoffMsg(customer, lastMessage);
+  for (const num of ownerNumbers) {
+    try {
+      await adapter.sendText(num, text);
+    } catch (e) {
+      console.error(`[r${restaurantId}] Owner handoff notify failed:`, e);
+    }
+  }
+}
+
 async function sendOrderReceipt(adapter: WhatsAppAdapter, phone: string, restaurantId: number, orderId: number) {
   try {
     const [order, cfg] = await Promise.all([
@@ -402,6 +422,14 @@ export class BotSessionManager {
           where: { phone: msg.phone, restaurantId },
           include: { orders: true }
         });
+
+        // ── Human handoff active: AI is paused for this customer ────────────────
+        // Staff reply from the dashboard until they hit "Resume AI". We still log
+        // the inbound message so it shows live in the dashboard chat.
+        if (customer?.humanRequestedAt) {
+          await logMessage(customer.id, restaurantId, "user", msg.text);
+          return;
+        }
 
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
@@ -671,7 +699,7 @@ export class BotSessionManager {
           return;
         }
 
-        const { reply, placedOrderId } = await handleIncoming(msg.phone, msg.text, restaurantId);
+        const { reply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
         console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
         await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
         if (placedOrderId) {
@@ -681,9 +709,12 @@ export class BotSessionManager {
             notifyOwner(adapter, restaurantId, placedOrderId),
           ]);
         }
+        if (humanHandoffRequested) {
+          await notifyOwnerOfHandoff(adapter, restaurantId, { name: customer?.name ?? null, phone: msg.phone }, msg.text);
+        }
       } catch (e) {
         console.error(`[${restaurantName}] Handler error:`, e);
-        await adapter.sendText(msg.phone, "Sorry, please try again in a moment.");
+        await adapter.sendText(msg.phone, systemErrorTemplate());
       }
     });
 

@@ -20,6 +20,16 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 const STATUS_CONFIG: Record<string, { emoji: string; heading: string; body: string }> = {
+  pending: {
+    emoji: "🧾",
+    heading: "Order Received",
+    body: "We've got your order and it'll head to the kitchen shortly. We'll keep you posted! 🙏",
+  },
+  confirmed: {
+    emoji: "👍",
+    heading: "Order Confirmed",
+    body: "Your order is confirmed and lined up for the kitchen. We'll update you as it progresses! 🙏",
+  },
   preparing: {
     emoji: "🍳",
     heading: "Being Prepared",
@@ -131,6 +141,23 @@ export function ownerNewOrderMsg(order: NotifOrder): string {
     `💰 *Total: ₹${order.total.toFixed(0)}*`,
     `💵 *Payment:* ${paymentLabel(order)}${noteSection}`,
     `━━━━━━━━━━━━━━━━━━━━`,
+  ].join("\n");
+}
+
+// ─── Sent to owner(s) when a customer requests a human ──────────────────────
+
+export function ownerHandoffMsg(
+  customer: { name?: string | null; phone: string },
+  lastMessage?: string,
+): string {
+  const who = customer.name ? `${customer.name}  (${customer.phone})` : customer.phone;
+  const msgLine = lastMessage ? `\n💬 _"${lastMessage.slice(0, 160)}"_` : "";
+  return [
+    `🙋 *Human requested!*`,
+    "",
+    `👤 *Customer:* ${who}${msgLine}`,
+    "",
+    `The AI is now *paused* for this chat. Open the dashboard → Chats to reply, then tap *Resume AI* when done.`,
   ].join("\n");
 }
 

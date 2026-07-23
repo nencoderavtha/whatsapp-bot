@@ -1,5 +1,10 @@
 # Deployment & Scaling Architecture
 
+> **Note:** The current production deployment path is **Google Cloud Run** — see
+> [`CLOUD_RUN.md`](./CLOUD_RUN.md). The Fly.io content below is kept for historical
+> reference (it targets the Baileys persistent-socket setup; the app now runs the
+> stateless WhatsApp Cloud API, which is why Cloud Run needs no volume).
+
 ## Current Stack
 
 | Component | Platform | Notes |

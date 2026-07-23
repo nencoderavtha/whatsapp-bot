@@ -5,10 +5,13 @@ import { getOrCreateCustomer, logMessage, recentMessages } from "../services/cus
 import { getEnabledTools, runTool } from "./tools.js";
 import { completeChat } from "./llm.js";
 import { prisma } from "../db.js";
+import { fallbackTemplate } from "./templates.js";
+import { logActivity } from "../services/activity.js";
 
 export interface AgentResult {
   reply: string;
   placedOrderId?: number;
+  humanHandoffRequested?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,8 +141,11 @@ async function processIncoming(
   ];
 
   let placedOrderId: number | undefined;
+  let humanHandoffRequested = false;
   let templateReply: string | undefined;
   let finalText = "";
+
+  const startedAt = Date.now();
 
   for (let hop = 0; hop < 6; hop++) {
     const { content, toolCalls } = await completeChat({
@@ -171,9 +177,10 @@ async function processIncoming(
       }
 
       console.log(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
-      const { output, orderId, templateReply: tr } = await runTool(customer.id, restaurantId, tc.function.name, args);
+      const { output, orderId, templateReply: tr, humanHandoff } = await runTool(customer.id, restaurantId, tc.function.name, args);
       console.log(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
       if (orderId) placedOrderId = orderId;
+      if (humanHandoff) humanHandoffRequested = true;
       if (tr) templateReply = tr; // last tool with a template wins
 
       messages.push({
@@ -186,10 +193,19 @@ async function processIncoming(
     if (templateReply) break; // Instant exit! Tool produced template reply — zero 2nd LLM roundtrip delay!
   }
 
-  finalText = templateReply ?? (finalText || "Sorry, please try again in a moment.");
+  // Fallback path: no tool template and the model produced nothing usable.
+  const usedFallback = !templateReply && !finalText;
+  finalText = templateReply ?? (finalText || fallbackTemplate());
+
+  // Fire-and-forget observability — never blocks the reply.
+  const elapsedMs = Date.now() - startedAt;
+  void logActivity(restaurantId, "response_time", `Reply in ${elapsedMs}ms`, { elapsedMs }, customer.id);
+  if (usedFallback) {
+    void logActivity(restaurantId, "fallback", `Fell back to generic reply for: ${userText.slice(0, 80)}`, undefined, customer.id);
+  }
 
   await logMessage(customer.id, restaurantId, "assistant", finalText);
-  return { reply: finalText, placedOrderId };
+  return { reply: finalText, placedOrderId, humanHandoffRequested };
 }
 
 // Public entry point — serialises concurrent messages from the same customer.

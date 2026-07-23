@@ -9,7 +9,9 @@ import { loadOrders, setOrderStatus, markPaid as orderMarkPaid, setOrderFilter }
 import {
   loadChatThreads, selectConversation, appendChatMessage,
   loadCustomerProfile, saveCustProfile, getSelectedCustomerId, showChatThreads,
+  sendStaffReply, resumeAI,
 } from "./livechat.js";
+import { loadActivity, prependActivity } from "./activity.js";
 import {
   loadMenu, addCategory, delCategory, addItem, toggleAvail, delItem,
   openEditModal, closeEditModal, saveEditItem,
@@ -29,7 +31,7 @@ Object.assign(window, {
   // orders — markPaid works for both orders and payments tabs (same API call)
   setOrderStatus, markPaid: orderMarkPaid, loadOrders, loadPayments, setOrderFilter,
   // livechat
-  selectConversation, saveCustProfile, showChatThreads,
+  selectConversation, saveCustProfile, showChatThreads, sendStaffReply, resumeAI,
   // menu
   addCategory, delCategory, addItem, toggleAvail, delItem,
   loadMenu, openEditModal, closeEditModal, saveEditItem,
@@ -38,6 +40,8 @@ Object.assign(window, {
   // settings
   saveRestaurantInfo, savePaymentConfig, saveRazorpay,
   savePause, togglePause, togglePauseFromSettings, togglePaymentExpand,
+  // activity
+  loadActivity, jumpToChat,
   // header
   openQRModal, closeQRModal, login, logout, resetWASession,
 });
@@ -251,6 +255,9 @@ function handleSSE(type, data) {
     case "menu_updated":
       if (isTabActive("menu")) loadMenu();
       break;
+    case "activity_logged":
+      if (isTabActive("activity")) prependActivity(data);
+      break;
   }
 }
 
@@ -327,8 +334,15 @@ const TAB_LOADERS = {
   menu:      loadMenu,
   payments:  loadPayments,
   customers: loadCustomers,
+  activity:  loadActivity,
   settings:  loadSettings,
 };
+
+// Jump from an Activity row to the customer's chat thread.
+function jumpToChat(customerId) {
+  switchTab("livechat");
+  selectConversation(customerId);
+}
 
 function switchTab(name) {
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));

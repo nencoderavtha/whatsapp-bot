@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.env
+.env.*
+sessions
+auth_session*
+*.log
+dev.db
+npm-debug.log*

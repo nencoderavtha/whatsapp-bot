@@ -17,6 +17,7 @@ import { KapsoAdapter } from "../whatsapp/kapso.js";
 import { orderConfirmationMsg, ownerNewOrderMsg, orderStatusMsg } from "../services/notifications.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
 import { orderStagedTemplate } from "../ai/templates.js";
+import { logActivity } from "../services/activity.js";
 
 /** Wraps an async Express handler so DB errors call next(err) instead of becoming unhandled rejections. */
 function asyncRoute(fn: (req: Request, res: Response, next: NextFunction) => Promise<void>) {
@@ -570,6 +571,7 @@ export function buildAdminApp() {
       const result = existing
         ? await prisma.promptTemplate.update({ where: { id: existing.id }, data: { content } })
         : await prisma.promptTemplate.create({ data: { content, restaurantId: id } });
+      await notifyAdminOfEvent("config_updated", { restaurantId: id });
       res.json(result);
     } catch (e: any) {
       console.error(`[founder] prompt save failed for r${id}:`, e);
@@ -820,7 +822,7 @@ export function buildAdminApp() {
 
   api.put("/config", async (req, res) => {
     const {
-      restaurantName, restaurantCity, ownerNumbers,
+      restaurantName, restaurantCity, personaName, ownerNumbers,
       dashboardPassword, requiresPaymentBeforeOrder, upiId, paymentMethods,
       razorpayEnabled, razorpayKeyId, razorpayKeySecret, razorpayWebhookSecret,
       botPaused, pauseMessage, whatsappPhone,
@@ -834,6 +836,7 @@ export function buildAdminApp() {
     const data: Record<string, unknown> = {};
     if (restaurantName !== undefined) data.restaurantName = restaurantName;
     if (restaurantCity !== undefined) data.restaurantCity = restaurantCity;
+    if (personaName !== undefined) data.personaName = personaName || null;
     if (ownerNumbers !== undefined) data.ownerNumbers = ownerNumbers;
     if (dashboardPassword !== undefined) data.dashboardPassword = dashboardPassword;
     if (requiresPaymentBeforeOrder !== undefined) data.requiresPaymentBeforeOrder = !!requiresPaymentBeforeOrder;
@@ -850,6 +853,9 @@ export function buildAdminApp() {
     if (cloudToken !== undefined && cloudToken) data.cloudToken = cloudToken;
 
     const updated = await prisma.botConfig.update({ where: { id: req.restaurantId }, data });
+
+    // Invalidate the bot's in-memory config/menu/tools cache on the next message.
+    await notifyAdminOfEvent("config_updated", { restaurantId: req.restaurantId });
 
     // Phone number changed → reset session so new pairing code / QR is issued automatically
     if (phoneChanged && config.whatsappProvider === "baileys") {
@@ -873,6 +879,7 @@ export function buildAdminApp() {
     const result = existing
       ? await prisma.promptTemplate.update({ where: { id: existing.id }, data: { content } })
       : await prisma.promptTemplate.create({ data: { content, restaurantId: req.restaurantId } });
+    await notifyAdminOfEvent("config_updated", { restaurantId: req.restaurantId });
     res.json(result);
   });
 
@@ -891,7 +898,9 @@ export function buildAdminApp() {
     if (isEnabled !== undefined) data.isEnabled = !!isEnabled;
     if (description !== undefined) data.description = description;
     if (parametersSchema !== undefined) data.parametersSchema = parametersSchema;
-    res.json(await prisma.toolDefinition.update({ where: { id }, data }));
+    const result = await prisma.toolDefinition.update({ where: { id }, data });
+    await notifyAdminOfEvent("config_updated", { restaurantId: req.restaurantId });
+    res.json(result);
   });
 
   // --- Customers ---
@@ -922,6 +931,47 @@ export function buildAdminApp() {
     });
     await notifyAdminOfEvent("customer_updated", customer);
     res.json(customer);
+  });
+
+  // Staff reply to a customer (used during human handoff). Sends over WhatsApp
+  // and logs it as an assistant-role message so it shows in the chat thread.
+  api.post("/customers/:id/message", asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    const text = String(req.body?.text ?? "").trim();
+    if (!text) { res.status(400).json({ error: "text is required" }); return; }
+
+    const customer = await prisma.customer.findFirst({
+      where: { id, restaurantId: req.restaurantId },
+    });
+    if (!customer) { res.status(404).json({ error: "customer not found" }); return; }
+
+    const session = botSessionManager.getSession(req.restaurantId);
+    if (!session) { res.status(503).json({ error: "bot session not running" }); return; }
+
+    await session.sendText(customer.phone, text);
+    const msg = await logMessage(customer.id, req.restaurantId, "assistant", text);
+    res.json(msg);
+  }));
+
+  // Clear a human-handoff flag so the AI resumes handling this customer.
+  api.put("/customers/:id/resume-ai", asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    const customer = await prisma.customer.update({
+      where: { id },
+      data: { humanRequestedAt: null },
+    });
+    await notifyAdminOfEvent("customer_updated", customer);
+    await logActivity(req.restaurantId, "handoff_resolved", "Staff resumed the AI", undefined, id);
+    res.json(customer);
+  }));
+
+  // --- Activity log (bot health) ---
+  api.get("/activity", async (req, res) => {
+    res.json(await prisma.activityLog.findMany({
+      where: { restaurantId: req.restaurantId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    }));
   });
 
   // --- Real-time Events (SSE) ---

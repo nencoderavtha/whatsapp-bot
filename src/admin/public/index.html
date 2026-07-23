@@ -97,6 +97,7 @@
           <button data-tab="menu"      class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Menu</button>
           <button data-tab="payments"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Payments</button>
           <button data-tab="customers" class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Customers</button>
+          <button data-tab="activity"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Activity</button>
           <button data-tab="settings"  class="tab px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap text-slate-400">Settings</button>
         </nav>
 
@@ -173,8 +174,20 @@
                   <p id="chat-subtitle" class="text-xs text-slate-400 truncate">Choose from the list</p>
                 </div>
               </div>
+              <!-- Human-handoff banner (shown only while the AI is paused for this customer) -->
+              <div id="chat-handoff-banner" class="hidden flex-shrink-0 flex items-center justify-between gap-2 px-3 md:px-4 py-2 bg-amber-950/50 border-b border-amber-500/30">
+                <span class="text-[11px] font-bold text-amber-300">🙋 Human requested — AI is paused for this chat</span>
+                <button onclick="window.resumeAI()" class="text-[11px] px-3 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 font-bold transition-all">Resume AI</button>
+              </div>
               <div id="chat-messages" class="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 bg-slate-950/20">
                 <div class="h-full flex items-center justify-center text-slate-500 text-sm">Select a conversation</div>
+              </div>
+              <!-- Staff reply bar (used to reply to the customer, primarily during handoff) -->
+              <div id="chat-reply-bar" class="hidden flex-shrink-0 flex items-center gap-2 p-2.5 border-t border-slate-900 bg-slate-900/30">
+                <input id="chat-reply-input" type="text" placeholder="Type a reply to the customer…"
+                  onkeydown="if(event.key==='Enter')window.sendStaffReply()"
+                  class="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                <button onclick="window.sendStaffReply()" class="py-2.5 px-4 gradient-btn text-white rounded-xl text-xs font-bold flex-shrink-0">Send</button>
               </div>
             </div>
             <!-- Customer profile: desktop only -->
@@ -290,6 +303,18 @@
         </div>
       </section>
 
+      <!-- ── ACTIVITY (bot health) ──────────────────────────────────────────── -->
+      <section id="tab-activity" class="tab-panel h-full flex flex-col hidden animate-fade-in min-h-0">
+        <div class="flex items-center justify-between mb-3 flex-shrink-0">
+          <h2 class="text-lg md:text-xl font-bold">Bot Activity</h2>
+          <button onclick="window.loadActivity?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm hover:bg-slate-800 transition-colors flex items-center justify-center" title="Refresh">↻</button>
+        </div>
+        <div id="activity-stats"></div>
+        <div class="flex-1 overflow-y-auto glass rounded-2xl border border-slate-900 min-h-0">
+          <div id="activity-list"></div>
+        </div>
+      </section>
+
       <!-- ── SETTINGS ───────────────────────────────────────────────────────── -->
       <section id="tab-settings" class="tab-panel h-full flex flex-col hidden animate-fade-in min-h-0">
         <div class="flex items-center justify-between mb-4 flex-shrink-0">
@@ -333,6 +358,11 @@
               <div>
                 <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">City</label>
                 <input id="cfg-city" type="text" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Bot Persona Name <span class="text-slate-600 normal-case font-normal">(the name the bot speaks as, e.g. Rajamma — leave blank to speak as the team)</span></label>
+                <input id="cfg-persona" type="text" placeholder="Rajamma"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div class="md:col-span-2">
                 <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Owner Numbers (comma-separated, with country code)</label>

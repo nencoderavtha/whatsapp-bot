@@ -91,6 +91,36 @@ export function orderConfirmedTemplate(): string {
   ]);
 }
 
+// ── Sent when a customer (or the bot) requests a human staff member ──────────
+
+export function humanHandoffTemplate(): string {
+  return pick([
+    `🙋 Got it! I'm connecting you with our team now — someone will reply here shortly. 🙏`,
+    `🙋 No problem! I've flagged this for our staff — a real person will jump in right here in a moment. 🙏`,
+    `🙋 Sure thing! Passing you to our team — they'll message you here very soon. 🙏`,
+  ]);
+}
+
+// ── Fallback when the bot couldn't produce a proper reply ────────────────────
+
+export function fallbackTemplate(): string {
+  return pick([
+    `Hmm, I didn't quite catch that 🤔 Could you say it once more?`,
+    `Sorry, I missed that! 🙏 Mind sending it again?`,
+    `Oops, that didn't come through clearly — could you repeat it? 😊`,
+  ]);
+}
+
+// ── Shown when something breaks on our side (caught exception) ────────────────
+
+export function systemErrorTemplate(): string {
+  return pick([
+    `😟 Something went wrong on our end. Please try again in a moment — sorry about that! 🙏`,
+    `⚠️ We hit a small glitch. Give it another try in a few seconds? 🙏`,
+    `😟 Apologies — a hiccup on our side. Please send that again shortly. 🙏`,
+  ]);
+}
+
 // ── Sent when the customer asks to see the menu mid-conversation ─────────────
 
 export function menuTemplate(restaurantName: string, menuText: string): string {

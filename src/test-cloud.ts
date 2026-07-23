@@ -46,7 +46,7 @@ async function testSend() {
     }),
   });
 
-  const data = await resp.json();
+  const data: any = await resp.json();
 
   if (resp.ok) {
     console.log(`✅ Message sent successfully!`);
