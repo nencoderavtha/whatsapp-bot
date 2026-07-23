@@ -116,6 +116,44 @@ export async function findItems(restaurantId: number, query: string) {
 }
 
 /**
+ * Build WhatsApp interactive carousel cards (real photo per card) for items that
+ * have an imageUrl set. Tapping a card's button reuses the same menu_item_<id>
+ * add-to-cart flow as the plain list. Caller falls back to the text list for
+ * items with no photo on file (or when none exist yet).
+ */
+export async function menuAsInteractiveCarouselCards(restaurantId: number) {
+  const categories = await getMenu(restaurantId);
+  const cards: Array<{ title: string; desc: string; imageUrl: string; buttonId: string; buttonTitle: string }> = [];
+
+  for (const cat of categories) {
+    for (const item of cat.items) {
+      if (cards.length >= 10) break;
+      if (!item.imageUrl) continue;
+
+      let price = "";
+      if (item.variants.length > 0) {
+        const prices = item.variants.map((v) => v.price);
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        price = min === max ? `₹${min}` : `₹${min}–₹${max}`;
+      } else {
+        price = `₹${item.price}`;
+      }
+      const descParts = [price, item.description].filter(Boolean).join(" · ");
+
+      cards.push({
+        title: item.name.length > 60 ? item.name.slice(0, 57) + "…" : item.name,
+        desc: descParts.length > 72 ? descParts.slice(0, 69) + "…" : descParts,
+        imageUrl: item.imageUrl,
+        buttonId: `menu_item_${item.id}`,
+        buttonTitle: "Add",
+      });
+    }
+  }
+  return cards;
+}
+
+/**
  * Format the restaurant menu as WhatsApp interactive list sections.
  * WhatsApp limits: max 10 sections total, max 10 rows per section (100 rows overall).
  * Row title: max 24 chars. Description: max 72 chars.

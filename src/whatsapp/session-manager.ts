@@ -8,7 +8,7 @@ import { getOrder } from "../services/order.js";
 import { config } from "../config.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
-import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter } from "../services/menu.js";
+import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter, menuAsInteractiveCarouselCards } from "../services/menu.js";
 import { getOrCreateCustomer } from "../services/customer.js";
 import { createOrder } from "../services/order.js";
 import { createPaymentLink } from "../services/razorpay.js";
@@ -19,6 +19,28 @@ import { logMessage } from "../services/customer.js";
 /** Both Cloud and Kapso adapters speak Meta's native interactive message types; only Baileys falls back to plain text. */
 function isRichAdapter(adapter: WhatsAppAdapter): adapter is KapsoAdapter | CloudAdapter {
   return adapter instanceof KapsoAdapter || adapter instanceof CloudAdapter;
+}
+
+/**
+ * Show the menu visually — a real-photo carousel when today's items have photos
+ * on file (lets customers see the dish while picking), falling back to the
+ * plain text list for any day where photos aren't uploaded yet.
+ */
+async function sendMenuVisual(
+  adapter: KapsoAdapter | CloudAdapter,
+  phone: string,
+  restaurantId: number,
+  bodyText: string,
+): Promise<void> {
+  const cards = await menuAsInteractiveCarouselCards(restaurantId);
+  if (cards.length > 0) {
+    await adapter.sendInteractiveCarousel(phone, bodyText, cards);
+    return;
+  }
+  const sections = await menuAsInteractiveListSections(restaurantId);
+  if (sections.length > 0) {
+    await adapter.sendInteractiveList(phone, bodyText, "📋 Menu", sections);
+  }
 }
 
 function splitBubbles(text: string): string[] {
@@ -51,11 +73,9 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
             const capTag = filterTerm.charAt(0).toUpperCase() + filterTerm.slice(1);
             await adapter.sendInteractiveList(
               phone,
-              `Here are our fresh *${capTag}* selections! Tap below to open the menu & pick yours 👇`,
-              `📋 Select ${capTag}`,
+              `${capTag} idi andi 👇`,
+              `📋 ${capTag}`,
               filterSections,
-              `✨ ${capTag} Menu`,
-              "Tap any item to order • Authentic Pure Ghee"
             );
             continue;
           }
@@ -64,7 +84,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         }
       }
 
-      // 2. Intercept full menu requests/greetings → native WhatsApp interactive list
+      // 2. Intercept full menu requests/greetings → native WhatsApp menu carousel (real photos)
       const isGreetingOrMenu =
         bubble.includes("Here's our menu:") ||
         bubble.includes("Here's our current menu") ||
@@ -74,30 +94,15 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
 
       if (isGreetingOrMenu) {
         try {
-          const sections = await menuAsInteractiveListSections(restaurantId);
+          await sendMenuVisual(adapter, phone, restaurantId, "Ee roju menu idi andi 👇");
 
-          if (sections.length > 0) {
-            let intro = "Welcome! 🙏 Browse our full menu and tap any item to add it to your order.";
-            await adapter.sendInteractiveList(
-              phone,
-              intro,
-              "📋 View Menu Modal",
-              sections,
-              "📖 Restaurant Menu",
-              "Tap an item to order • Prices shown per item",
-            );
-
-            // Plain-text link (not a cta_url button) so WhatsApp opens it in its own in-app browser
-            // instead of handing off to the phone's external browser app.
-            const webMenuUrl = `${config.serverUrl}/menu.html?r=${restaurantId}&phone=${phone}`;
-            await adapter.sendText(
-              phone,
-              `Explore our interactive web menu with search, filters, and multi-select ordering: 🌐👇\n${webMenuUrl}`
-            );
-            continue;
-          }
+          // Plain-text link (not a cta_url button) so WhatsApp opens it in its own in-app browser
+          // instead of handing off to the phone's external browser app.
+          const webMenuUrl = `${config.serverUrl}/menu.html?r=${restaurantId}&phone=${phone}`;
+          await adapter.sendText(phone, `Full menu web lo: ${webMenuUrl}`);
+          continue;
         } catch (err) {
-          console.error("[Kapso] Failed to build interactive list for menu:", err);
+          console.error("[Kapso] Failed to build menu view:", err);
         }
       }
 
@@ -436,17 +441,11 @@ export class BotSessionManager {
           cleanText.includes("show menu") ||
           cleanText.includes("full menu")
         ) {
-          const listSections = await menuAsInteractiveListSections(restaurantId);
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
           const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
 
           if (isRichAdapter(adapter)) {
-            await adapter.sendInteractiveList(
-              msg.phone,
-              `Ee roju menu idi andi 📋`,
-              "📋 Menu",
-              listSections,
-            );
+            await sendMenuVisual(adapter, msg.phone, restaurantId, "Ee roju menu idi andi 👇");
             // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
             await adapter.sendText(msg.phone, `Full menu web lo: ${webMenuUrl}`);
           } else {
@@ -623,17 +622,11 @@ export class BotSessionManager {
 
         // ── Direct Action 6: Add More Items Button ──────────────────────────────
         if (rawText === "add_more_items_btn") {
-          const listSections = await menuAsInteractiveListSections(restaurantId);
           const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
           const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
 
           if (isRichAdapter(adapter)) {
-            await adapter.sendInteractiveList(
-              msg.phone,
-              `Inka em kavali andi?`,
-              "📋 Add More",
-              listSections,
-            );
+            await sendMenuVisual(adapter, msg.phone, restaurantId, "Inka em kavali andi?");
             // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
             await adapter.sendText(msg.phone, `Full menu web lo: ${webMenuUrl}`);
           } else {
