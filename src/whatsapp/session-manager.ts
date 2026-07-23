@@ -8,7 +8,7 @@ import { getOrder } from "../services/order.js";
 import { config } from "../config.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
-import { menuAsInteractiveListSections, menuAsInteractiveListSectionsForFilter, menuAsInteractiveCarouselCards } from "../services/menu.js";
+import { menuAsInteractiveListSections, menuAsInteractiveCarouselCards } from "../services/menu.js";
 import { getOrCreateCustomer } from "../services/customer.js";
 import { createOrder } from "../services/order.js";
 import { createPaymentLink } from "../services/razorpay.js";
@@ -72,34 +72,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
     if ((config.whatsappProvider === "kapso" || config.whatsappProvider === "cloud") && isRichAdapter(adapter)) {
       const lower = bubble.toLowerCase();
 
-      // 1. Intercept category/filter requests -> native WhatsApp interactive list select modal (NO plain text list dumps!)
-      const categoryMatch = lower.match(/\b(starter|starters|appetizer|appetizers|biryani|biryanis|dessert|desserts|drink|drinks|beverage|beverages|veg|vegetarian|non-veg|nonveg|curry|curries|bread|breads|tandoori|sweet|sweets)\b/i);
-      const isCategoryFilter = categoryMatch !== null && (
-        lower.includes("starters") || lower.includes("starter") || lower.includes("biryani") ||
-        lower.includes("dessert") || lower.includes("drinks") || lower.includes("beverage") ||
-        lower.includes("veg") || lower.includes("curry") || lower.includes("sweets")
-      ) && !bubble.includes("Order #") && !lower.includes("here's our menu") && !lower.includes("full menu") && !lower.includes("mood for");
-
-      if (isCategoryFilter) {
-        try {
-          const filterTerm = categoryMatch[1].toLowerCase();
-          const filterSections = await menuAsInteractiveListSectionsForFilter(restaurantId, filterTerm);
-          if (filterSections.length > 0) {
-            const capTag = filterTerm.charAt(0).toUpperCase() + filterTerm.slice(1);
-            await adapter.sendInteractiveList(
-              phone,
-              `${capTag} idi andi 👇`,
-              `📋 ${capTag}`,
-              filterSections,
-            );
-            continue;
-          }
-        } catch (err) {
-          console.error("[Kapso] Category filter list failed:", err);
-        }
-      }
-
-      // 2. Intercept full menu requests/greetings → native WhatsApp menu carousel (real photos)
+      // 1. Intercept full menu requests/greetings → native WhatsApp menu carousel (real photos)
       const isGreetingOrMenu =
         bubble.includes("Here's our menu:") ||
         bubble.includes("Here's our current menu") ||
