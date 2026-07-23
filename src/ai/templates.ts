@@ -60,6 +60,15 @@ export function orderConfirmedTemplate(): string {
   ]);
 }
 
+// ── Sent after cancel_order clears a staged (unconfirmed) cart ──────────────
+
+export function orderCancelledTemplate(): string {
+  return pick([
+    `Order cancel chesam andi.`,
+    `Sare andi, cancel chesam.`,
+  ]);
+}
+
 // ── Sent when a customer (or the bot) requests a human staff member ──────────
 
 export function humanHandoffTemplate(): string {

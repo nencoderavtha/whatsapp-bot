@@ -2,7 +2,7 @@ import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
 import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate } from "./templates.js";
+import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate } from "./templates.js";
 import { orderStatusMsg } from "../services/notifications.js";
 import { logActivity } from "../services/activity.js";
 import { getCached } from "../services/cache.js";
@@ -533,7 +533,10 @@ export async function runTool(
           };
         }
         await prisma.pendingOrder.delete({ where: { customerId } }).catch(() => {});
-        return { output: { ok: true, note: "Staged order cancelled. Confirm this to the customer in one short line." } };
+        return {
+          output: { ok: true, note: "Staged order cancelled." },
+          templateReply: orderCancelledTemplate(),
+        };
       }
 
       // ── Request a human staff member (pauses the AI for this customer) ──────
