@@ -354,8 +354,9 @@ export function buildAdminApp() {
                 if (addr.postal_code) parts.push(`PIN: ${addr.postal_code}`);
                 text = parts.join(", ");
               } else {
-                text = msg.interactive?.button_reply?.title
-                  ?? msg.interactive?.list_reply?.title
+                // Use .id (routing key), not .title (display text) — see note below.
+                text = msg.interactive?.button_reply?.id
+                  ?? msg.interactive?.list_reply?.id
                   ?? msg.interactive?.nfm_reply?.body
                   ?? "";
               }
@@ -409,8 +410,9 @@ export function buildAdminApp() {
                 if (addr.postal_code) parts.push(`PIN: ${addr.postal_code}`);
                 text = parts.join(", ");
               } else {
-                text = msg.interactive?.button_reply?.title
-                  ?? msg.interactive?.list_reply?.title
+                // Use .id (routing key), not .title (display text) — see note below.
+                text = msg.interactive?.button_reply?.id
+                  ?? msg.interactive?.list_reply?.id
                   ?? msg.interactive?.nfm_reply?.body
                   ?? "";
               }
@@ -446,11 +448,16 @@ export function buildAdminApp() {
       if (msg) {
         const phoneNumberId = entry?.metadata?.phone_number_id;
         if (phoneNumberId) {
+          // IMPORTANT: use the button/list reply .id (e.g. "menu_item_42"), not
+          // .title (e.g. "Add") — the id is what drives direct-action routing
+          // in session-manager.ts and agent.ts's natural-language transform.
+          // Every carousel card's "Add" button shares the same title, so using
+          // .title collapsed all of them into the same, unroutable text.
           let text =
             msg.text?.body
             ?? msg.button?.text
-            ?? msg.interactive?.button_reply?.title
-            ?? msg.interactive?.list_reply?.title
+            ?? msg.interactive?.button_reply?.id
+            ?? msg.interactive?.list_reply?.id
             ?? "";
 
           // Voice note — download + transcribe via Groq Whisper. Falls back to
