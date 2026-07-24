@@ -397,14 +397,6 @@ export class BotSessionManager {
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
         if (isGreeting && isRichAdapter(adapter)) {
-          if (!cfg?.dailyMenuPublished) {
-            await adapter.sendText(
-              msg.phone,
-              `Namaskaram andi 🙏 Ee roju menu inka ready kaledu andi. Konchem sepu tarvata malli try cheyandi.`,
-            );
-            return;
-          }
-
           const nameStr = customer?.name ? ` ${customer.name}` : "";
           const welcomeBody = `Namaskaram${nameStr} andi 🙏 Ee roju menu ready undi.`;
 

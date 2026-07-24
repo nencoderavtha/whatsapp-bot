@@ -850,20 +850,6 @@ export function buildAdminApp() {
     res.json({ botPaused: cfg.botPaused, pauseMessage: cfg.pauseMessage });
   });
 
-  // --- Daily menu publish toggle (gates ordering per prompt.ts's menu-state block) ---
-  api.put("/daily-menu/publish", async (req, res) => {
-    const { published } = req.body;
-    const cfg = await prisma.botConfig.update({
-      where: { id: req.restaurantId },
-      data: {
-        dailyMenuPublished: !!published,
-        dailyMenuPublishedAt: published ? new Date() : null,
-      },
-    });
-    await notifyAdminOfEvent("config_updated", { restaurantId: req.restaurantId });
-    res.json({ dailyMenuPublished: cfg.dailyMenuPublished, dailyMenuPublishedAt: cfg.dailyMenuPublishedAt });
-  });
-
   // --- Bot Config ---
   api.get("/config", async (req, res) => {
     res.json(await prisma.botConfig.findUnique({ where: { id: req.restaurantId } }) ?? {});

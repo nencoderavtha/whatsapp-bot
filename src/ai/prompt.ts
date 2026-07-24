@@ -143,21 +143,6 @@ export async function buildSystemPrompt(
     customerCtx = "";
   }
 
-  // ── Today's menu publish state — gates ordering into the states this brand
-  //    actually operates in: not published yet / live / no longer taking orders. ──
-  let menuStateBlock = "";
-  if (!botConfig.dailyMenuPublished) {
-    menuStateBlock =
-      `TODAY'S MENU STATE — HIGHEST PRIORITY, OVERRIDES EVERYTHING ELSE BELOW\n` +
-      `Today's menu is NOT published/live yet (or service has ended for today). The "TODAY'S ` +
-      `MENU" section further below is NOT valid right now — do not read it, name any dish from ` +
-      `it, quote a price from it, say an item is available/unavailable, or take/stage any ` +
-      `order. For ANY message about food, ordering, or the menu, just say plainly that the menu ` +
-      `isn't ready yet and to check back later — e.g. "Ee roju menu inka ready kaledu andi." If ` +
-      `they clearly mean tomorrow, you can say orders open again once tomorrow's menu is ` +
-      `published. Only greetings, thanks, and truly unrelated questions get their normal reply.\n\n`;
-  }
-
   let stagedOrderBlock = "";
   if (pendingRow && !pendingRow.confirmedOrderId && pendingRow.expiresAt > new Date()) {
     const lines: Array<{ menuItemId: number; qty: number }> = JSON.parse(pendingRow.lines);
@@ -204,7 +189,6 @@ export async function buildSystemPrompt(
     identityBlock +
     scopeBlock +
     voiceBlock +
-    menuStateBlock +
     stagedOrderBlock +
     formattingRules +
     basePrompt +

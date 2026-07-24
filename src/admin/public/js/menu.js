@@ -31,19 +31,7 @@ export async function loadMenu() {
 
 function renderPublishBar(cfg) {
   const el = document.getElementById("daily-publish-bar");
-  if (!el) return;
-  const published = !!cfg?.dailyMenuPublished;
-  el.innerHTML = `
-    <div>
-      <div class="text-sm font-bold ${published ? "text-emerald-400" : "text-amber-400"}">
-        ${published ? "Today's menu is published — bot is taking orders" : "Today's menu is NOT published — bot will not take orders"}
-      </div>
-      <p class="text-[10px] text-slate-500 mt-0.5">Set today's dishes/prices/quantities below, then publish when the kitchen opens.</p>
-    </div>
-    <button onclick="window.togglePublish(${!published})"
-      class="flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold ${published ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "gradient-btn text-white"}">
-      ${published ? "Unpublish" : "Publish Today's Menu"}
-    </button>`;
+  if (el) el.innerHTML = "";
 }
 
 export async function togglePublish(published) {

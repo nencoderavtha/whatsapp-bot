@@ -1,6 +1,4 @@
-// Prisma schema for Godavari Ruchulu WhatsApp bot.
-// Dev uses SQLite. For production, change `provider` to "postgresql"
-// and point DATABASE_URL at your Postgres instance.
+// Production Single-Restaurant Schema for Godavari Ruchulu WhatsApp Bot
 
 generator client {
   provider = "prisma-client-js"
@@ -8,265 +6,463 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")   // transaction pooler — used by the app
-  directUrl = env("DIRECT_URL")     // session pooler — used by prisma db push / seed
+  url       = env("DATABASE_URL")   // Transaction pooler (Port 6543)
+  directUrl = env("DIRECT_URL")     // Session pooler (Port 5432)
 }
 
-// ---------------- Menu (the "dynamic memory") ----------------
+// ============================================================================
+// 1. RESTAURANT CONFIGURATION & SETTINGS
+// ============================================================================
 
-model Category {
-  id           Int        @id @default(autoincrement())
-  name         String
-  sortOrder    Int        @default(0)
-  restaurant   BotConfig  @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  items        MenuItem[]
-
-  @@unique([name, restaurantId])
-}
-
-model MenuItem {
-  id           Int                @id @default(autoincrement())
-  name         String
-  description  String?
-  price        Float              // base price; ignored when item has variants
-  available    Boolean            @default(true)
-  stockCount   Int?               // null = unlimited; 0 = sold out; >0 = units remaining
-  isVeg        Boolean            @default(false)
-  spiceLevel   String?
-  sortOrder    Int                @default(0) // customer-facing "#" for daily numbered menus
-  pieceInfo    String?            // e.g. "2 pieces" — only mention to customers if asked
-  imageUrl     String?            // real dish photo — used on the web menu and WhatsApp
-  category     Category           @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  categoryId   Int
-  restaurant   BotConfig          @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  orderItems   OrderItem[]
-  variants     MenuItemVariant[]
-
-  @@index([categoryId])
-  @@index([restaurantId])
-}
-
-// e.g. Half / Full / Family Pack / Small / Large for a single MenuItem
-model MenuItemVariant {
-  id           Int       @id @default(autoincrement())
-  menuItem     MenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-  menuItemId   Int
-  restaurant   BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  name         String    // "Half", "Full", "Family Pack"
-  price        Float
-  available    Boolean   @default(true)
-  sortOrder    Int       @default(0)
-  orderItems   OrderItem[]
-
-  @@index([restaurantId])
-}
-
-// ---------------- Customers & conversation memory ----------------
-
-model Customer {
-  id               Int           @id @default(autoincrement())
-  phone            String
-  name             String?
-  address          String?
-  notes            String?
-  // Set when the customer (or a tool) requests a human. While non-null the AI is
-  // paused for this customer and staff reply from the dashboard until they Resume AI.
-  humanRequestedAt DateTime?
-  createdAt        DateTime      @default(now())
-  restaurant       BotConfig     @relation(fields: [restaurantId], references: [id])
-  restaurantId     Int
-  messages         Message[]
-  orders           Order[]
-  pendingOrder     PendingOrder?
-  activityLogs     ActivityLog[]
-
-  @@unique([phone, restaurantId])
-}
-
-// Full conversation log = the bot's per-customer long-term memory.
-model Message {
-  id           Int       @id @default(autoincrement())
-  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId   Int
-  restaurant   BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  role         String    // "user" | "assistant"
-  content      String
-  createdAt    DateTime  @default(now())
-
-  @@index([customerId, createdAt])
-  @@index([restaurantId, createdAt])
-}
-
-// ---------------- Orders ----------------
-
-model Order {
-  id           Int         @id @default(autoincrement())
-  customer     Customer    @relation(fields: [customerId], references: [id])
-  customerId   Int
-  restaurant   BotConfig   @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  status       String      @default("pending") // pending | confirmed | preparing | ready | delivered | cancelled
-  type         String      @default("pickup")  // pickup | delivery | dine-in
-  total        Float       @default(0)
-  note         String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  items        OrderItem[]
-  payment      Payment?
-
-  @@index([restaurantId, status, createdAt])
-}
-
-// Payment record — one per order, created when customer confirms payment
-model Payment {
-  id           Int       @id @default(autoincrement())
-  order        Order     @relation(fields: [orderId], references: [id])
-  orderId      Int       @unique
-  restaurant   BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  status       String    @default("pending")  // pending | paid | failed | refunded
-  method       String?                        // upi | cash | card | online
-  amount       Float
-  reference    String?                        // UPI txn ID or other reference
-  paidAt       DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  @@index([restaurantId, status])
-}
-
-model OrderItem {
-  id           Int              @id @default(autoincrement())
-  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  orderId      Int
-  restaurant   BotConfig        @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  menuItem     MenuItem?        @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
-  menuItemId   Int?
-  variant      MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-  variantId    Int?
-  nameSnap     String           // item name at order time
-  variantSnap  String?          // variant name at order time (e.g. "Half")
-  priceSnap    Float            // price at order time (variant price if applicable)
-  qty          Int              @default(1)
-  note         String?
-
-  @@index([restaurantId])
-}
-
-// ---------------- Bot configuration (editable from admin dashboard) ----------------
-
-model BotConfig {
-  id                         Int              @id @default(autoincrement())
-  restaurantName             String           @default("Godavari Ruchulu")
-  restaurantCity             String           @default("Hyderabad")
-  // Persona the bot speaks as (e.g. "Rajamma"). Null → prompt falls back to
-  // "the team at {restaurantName}" phrasing.
-  personaName                String?
-  ownerNumbers               String           @default("")
-  isActive                   Boolean          @default(true)
-  dashboardPassword          String           @default("changeme")
-  loginUsername              String?          @unique
-  // Bot on/off switch
-  botPaused                  Boolean          @default(false)
+model RestaurantConfig {
+  id                         Int       @id @default(1)
+  restaurantName             String    @default("Godavari Ruchulu")
+  restaurantCity             String    @default("Hyderabad")
+  restaurantAddress          String    @default("Plot 12, Main Road, Gachibowli, Hyderabad")
+  restaurantLat              Float?    // Coordinates for delivery distance calculation
+  restaurantLng              Float?
+  personaName                String?   // e.g. "Rajamma"
+  ownerNumbers               String    @default("") // Comma-separated WhatsApp numbers
+  isActive                   Boolean   @default(true)
+  dashboardPassword          String    @default("changeme")
+  loginUsername              String?   @unique
+  botPaused                  Boolean   @default(false)
   pauseMessage               String?
-  // Daily menu publish gate — staff enters today's numbered menu and flips this
-  // on each evening; the bot refuses to take orders while it's off.
-  dailyMenuPublished         Boolean          @default(false)
-  dailyMenuPublishedAt       DateTime?
-  whatsappPhone              String?          // e.g. "919876543210" — if set, uses pairing code instead of QR
-  // WhatsApp Cloud API (per-restaurant; token falls back to WHATSAPP_CLOUD_TOKEN env var)
+  whatsappPhone              String?   // e.g. "919876543210"
   cloudPhoneNumberId         String?
   cloudToken                 String?
-  // Payment settings
-  requiresPaymentBeforeOrder Boolean          @default(false)
+  
+  // Payment Config
+  requiresPaymentBeforeOrder Boolean   @default(false)
   upiId                      String?
-  paymentMethods             String           @default("cash,upi")
-  // Razorpay (per-restaurant — each restaurant has their own account)
-  razorpayEnabled            Boolean          @default(false)
+  paymentMethods             String    @default("cash,upi,online")
+  razorpayEnabled            Boolean   @default(false)
   razorpayKeyId              String?
   razorpayKeySecret          String?
   razorpayWebhookSecret      String?
-  updatedAt                  DateTime          @updatedAt
-  categories                 Category[]
-  menuItems                  MenuItem[]
-  menuItemVariants           MenuItemVariant[]
-  customers                  Customer[]
-  messages                   Message[]
-  orders                     Order[]
-  orderItems                 OrderItem[]
-  payments                   Payment[]
-  pendingOrders              PendingOrder[]
-  promptTemplates            PromptTemplate[]
-  toolDefinitions            ToolDefinition[]
-  activityLogs               ActivityLog[]
+
+  // Delivery Auto-Dispatch Rule
+  autoDispatchDelivery       Boolean   @default(true)  // Auto-select best delivery provider by lowest quote/ETA
+  defaultDeliveryStrategy    String    @default("CHEAPEST") // "CHEAPEST" | "FASTEST" | "BALANCED"
+
+  // Loyalty Program Rules
+  loyaltyEarnRateRupees      Float     @default(100.0) // Earn 1 point per ₹100 spent
+  loyaltyRedeemValueRupees   Float     @default(1.0)   // 1 point = ₹1 discount
+  minPointsToRedeem          Int       @default(50)    // Min 50 points to redeem
+
+  updatedAt                  DateTime  @updatedAt
 }
 
-// ---------------- Bot health / activity log (dashboard observability) --------
-// Records tool errors, fallback triggers, response-time samples, and human
-// handoff events. Written fire-and-forget so it never blocks a customer reply.
-model ActivityLog {
-  id           Int       @id @default(autoincrement())
-  restaurant   BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  type         String    // "response_time" | "tool_error" | "fallback" | "human_handoff" | "handoff_resolved"
-  message      String
-  meta         String?   // optional JSON blob (e.g. {"elapsedMs":842})
-  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  customerId   Int?
-  createdAt    DateTime  @default(now())
+// ============================================================================
+// 2. MENU CATALOG & RECOMMENDATIONS
+// ============================================================================
 
-  @@index([restaurantId, createdAt])
+model Category {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  sortOrder Int        @default(0)
+  items     MenuItem[]
+}
+
+model MenuItem {
+  id           Int                  @id @default(autoincrement())
+  name         String
+  description  String?
+  price        Float                // Base price (ignored if item has variants)
+  available    Boolean              @default(true)
+  stockCount   Int?                 // null = unlimited; 0 = sold out; >0 = units remaining
+  isVeg        Boolean              @default(false)
+  spiceLevel   String?              // "Mild" | "Medium" | "Spicy"
+  sortOrder    Int                  @default(0)
+  pieceInfo    String?              // e.g. "2 pieces"
+  imageUrl     String?              // Dish photo URL
+  categoryId   Int
+  category     Category             @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  
+  orderItems   OrderItem[]
+  variants     MenuItemVariant[]
+  
+  // Cross-selling pairing recommendations
+  primaryPairings   ItemRecommendation[] @relation("PrimaryItem")
+  secondaryPairings ItemRecommendation[] @relation("RecommendedItem")
+
+  @@index([categoryId])
+}
+
+// Item Variants (e.g. Half / Full / Family Pack)
+model MenuItemVariant {
+  id         Int         @id @default(autoincrement())
+  menuItemId Int
+  menuItem   MenuItem    @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  name       String      // e.g. "Half", "Full", "Family Pack"
+  price      Float
+  available  Boolean     @default(true)
+  sortOrder  Int         @default(0)
+  orderItems OrderItem[]
+
+  @@index([menuItemId])
+}
+
+// Smart Upsell Pairings (e.g. Biryani recommends Mirchi Ka Salan or Thumbs Up)
+model ItemRecommendation {
+  id                Int      @id @default(autoincrement())
+  menuItemId        Int
+  menuItem          MenuItem @relation("PrimaryItem", fields: [menuItemId], references: [id], onDelete: Cascade)
+  recommendedItemId Int
+  recommendedItem  MenuItem @relation("RecommendedItem", fields: [recommendedItemId], references: [id], onDelete: Cascade)
+  pitchMessage      String?  // e.g. "Pairs best with chilled Thumbs Up!"
+
+  @@unique([menuItemId, recommendedItemId])
+}
+
+// ============================================================================
+// 3. CUSTOMER PROFILES & CHAT MEMORY
+// ============================================================================
+
+model Customer {
+  id                 Int                  @id @default(autoincrement())
+  phone              String               @unique
+  name               String?
+  address            String?
+  deliveryLat        Float?
+  deliveryLng        Float?
+  favoriteDish       String?
+  dietaryPreference  String?              // "veg" | "non_veg"
+  notes              String?
+  humanRequestedAt   DateTime?            // Live human handoff timestamp
+  
+  // Analytics Counters
+  totalOrdersCount   Int                  @default(0)
+  totalSpentRupees   Float                @default(0.0)
+  lastOrderedAt      DateTime?
+
+  createdAt          DateTime             @default(now())
+  
+  messages           Message[]
+  orders             Order[]
+  pendingOrder       PendingOrder?
+  activityLogs       ActivityLog[]
+  loyaltyAccount     LoyaltyAccount?
+  couponRedemptions  CouponRedemption[]
+  campaignRecipients CampaignRecipient[]
+  followupTasks      FollowupTask[]
+}
+
+// Conversation History Log (30-day rolling window)
+model Message {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  role       String   // "user" | "assistant"
+  content    String
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+// ============================================================================
+// 4. ORDERS & DRAFT CARTS
+// ============================================================================
+
+model Order {
+  id                   Int               @id @default(autoincrement())
+  customerId           Int
+  customer             Customer          @relation(fields: [customerId], references: [id])
+  status               String            @default("pending") // pending | confirmed | preparing | ready | out_for_delivery | delivered | cancelled
+  type                 String            @default("pickup")  // pickup | delivery | dine-in
+  
+  subtotal             Float             @default(0)
+  discountTotal        Float             @default(0)
+  deliveryFee          Float             @default(0)
+  loyaltyPointsApplied Int               @default(0)
+  loyaltyDiscount      Float             @default(0)
+  couponCode           String?
+  total                Float             @default(0)
+  
+  deliveryAddress      String?
+  deliveryLat          Float?
+  deliveryLng          Float?
+  note                 String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  
+  items                OrderItem[]
+  payment              Payment?
+  couponRedemption     CouponRedemption?
+  deliveryDispatch     DeliveryDispatch?
+  deliveryQuotes       DeliveryQuote[]
+
+  @@index([status, createdAt])
+  @@index([customerId])
+}
+
+model OrderItem {
+  id          Int              @id @default(autoincrement())
+  orderId     Int
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId  Int?
+  menuItem    MenuItem?        @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  variantId   Int?
+  variant     MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  nameSnap    String           // Price & Name snapshot at time of order
+  variantSnap String?
+  priceSnap   Float
+  qty         Int              @default(1)
+  note        String?
+
+  @@index([orderId])
+}
+
+// Persistent Draft Cart (Survives app restarts)
+model PendingOrder {
+  id               Int      @id @default(autoincrement())
+  customerId       Int      @unique
+  customer         Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lines            String   // JSON cart lines [{menuItemId, variantId, qty, note}]
+  type             String   @default("pickup")
+  note             String?
+  appliedCoupon    String?
+  redeemedPoints   Int      @default(0)
+  confirmedOrderId Int?
+  paymentMethod    String?
+  paymentReference String?
+  razorpayLinkId   String?
+  razorpayLinkUrl  String?
+  expiresAt        DateTime
+  updatedAt        DateTime @updatedAt
+}
+
+// ============================================================================
+// 5. PAYMENTS
+// ============================================================================
+
+model Payment {
+  id        Int       @id @default(autoincrement())
+  orderId   Int       @unique
+  order     Order     @relation(fields: [orderId], references: [id])
+  status    String    @default("pending") // pending | paid | failed | refunded
+  method    String?                       // upi | cash | razorpay
+  amount    Float
+  reference String?                       // UPI Ref / Razorpay Payment ID
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status])
+}
+
+// ============================================================================
+// 6. MULTI-PROVIDER DELIVERY INTEGRATION (Rapido, Dunzo, Shadowfax, Uber, Porter)
+// ============================================================================
+
+// Provider Credentials & Configuration
+model DeliveryProviderConfig {
+  id             Int      @id @default(autoincrement())
+  providerCode   String   @unique // "rapido" | "dunzo" | "shadowfax" | "uber" | "porter"
+  providerName   String   // Display Name (e.g. "Rapido Parcel")
+  isEnabled      Boolean  @default(true)
+  apiKey         String?
+  apiSecret      String?
+  merchantId     String?
+  webhookSecret  String?
+  priorityWeight Int      @default(1) // Priority multiplier for quote comparison
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// Comparative Quotes fetched from providers prior to dispatch
+model DeliveryQuote {
+  id                 Int      @id @default(autoincrement())
+  orderId            Int
+  order              Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  providerCode       String   // "rapido" | "dunzo" | "shadowfax" | "uber" | "porter"
+  providerQuoteId    String?  // Quote ID returned by provider API
+  quotedFee          Float    // Delivery charge in ₹
+  estimatedMinutes   Int      // Estimated delivery time in minutes
+  distanceKm         Float?   // Delivery distance in KM
+  isAvailable        Boolean  @default(true) // Rider availability status
+  expiresAt          DateTime // Quote validity expiration
+  isSelected         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// Active Delivery Booking & Real-Time Tracking
+model DeliveryDispatch {
+  id                 Int       @id @default(autoincrement())
+  orderId            Int       @unique
+  order              Order     @relation(fields: [orderId], references: [id])
+  providerCode       String    // Selected provider ("rapido", "dunzo", "shadowfax", "uber", "porter")
+  externalDeliveryId String?   // Waybill / Provider Booking ID
+  status             String    @default("SEARCHING_RIDER") // SEARCHING_RIDER | RIDER_ASSIGNED | PICKED_UP | IN_TRANSIT | DELIVERED | CANCELLED | FAILED
+  
+  deliveryFee        Float     // Final delivery fee charged by provider
+  distanceKm         Float?    // Delivery distance
+  estimatedMinutes   Int?      // ETA in minutes
+  
+  // Rider & Vehicle Information
+  riderName          String?   // Delivery agent name
+  riderPhone         String?   // Delivery agent phone number
+  riderVehicleNumber String?   // Bike / Scooter registration number
+  riderLat           Float?    // Live GPS latitude
+  riderLng           Float?    // Live GPS longitude
+  trackingUrl        String?   // Live tracking web URL for customer
+  waybillNumber      String?
+  
+  dispatchedAt       DateTime  @default(now())
+  pickedUpAt         DateTime?
+  deliveredAt        DateTime?
+  cancelledAt        DateTime?
+  updatedAt          DateTime  @updatedAt
+
+  @@index([providerCode, status])
+}
+
+// ============================================================================
+// 7. COUPONS & DISCOUNTS
+// ============================================================================
+
+model Coupon {
+  id             Int                @id @default(autoincrement())
+  code           String             @unique // e.g. "UGADI20", "WELCOME100"
+  description    String?
+  discountType   String             // "percentage" | "fixed"
+  discountValue  Float              // 20 (% off) or 100 (₹ off)
+  minOrderAmount Float              @default(0)
+  maxDiscount    Float?             // Cap for percentage discounts (e.g. max ₹150)
+  usageLimit     Int?               // Total redemptions allowed
+  usedCount      Int                @default(0)
+  perUserLimit   Int                @default(1)
+  isActive       Boolean            @default(true)
+  startsAt       DateTime           @default(now())
+  expiresAt      DateTime?
+  createdAt      DateTime           @default(now())
+  
+  redemptions    CouponRedemption[]
+}
+
+model CouponRedemption {
+  id         Int      @id @default(autoincrement())
+  couponId   Int
+  coupon     Coupon   @relation(fields: [couponId], references: [id])
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+  orderId    Int      @unique
+  order      Order    @relation(fields: [orderId], references: [id])
+  discount   Float
+  redeemedAt DateTime @default(now())
+
+  @@index([customerId])
+}
+
+// ============================================================================
+// 8. LOYALTY POINTS PROGRAM
+// ============================================================================
+
+model LoyaltyAccount {
+  id           Int                  @id @default(autoincrement())
+  customerId   Int                  @unique
+  customer     Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  pointBalance Int                  @default(0)
+  totalEarned  Int                  @default(0)
+  tier         String               @default("Silver") // Silver | Gold | Platinum
+  updatedAt    DateTime             @updatedAt
+  
+  transactions LoyaltyTransaction[]
+}
+
+model LoyaltyTransaction {
+  id               Int            @id @default(autoincrement())
+  loyaltyAccountId Int
+  loyaltyAccount   LoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id], onDelete: Cascade)
+  type             String         // "EARNED" | "REDEEMED" | "EXPIRED" | "BONUS"
+  points           Int            // Positive for earned, negative for redeemed
+  description      String
+  orderId          Int?
+  createdAt        DateTime       @default(now())
+
+  @@index([loyaltyAccountId])
+}
+
+// ============================================================================
+// 9. FESTIVAL CAMPAIGNS & BROADCAST MARKETING
+// ============================================================================
+
+model Campaign {
+  id           Int                 @id @default(autoincrement())
+  title        String              // e.g. "Ugadi Festival Special 20% Off"
+  messageText  String              // WhatsApp broadcast text template
+  imageUrl     String?             // Festival promo image banner
+  couponCode   String?             // Attached coupon code
+  status       String              @default("draft") // draft | scheduled | sending | completed
+  targetFilter String              @default("all")   // "all" | "top_spenders" | "inactive_30d"
+  scheduledAt  DateTime?
+  sentCount    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  
+  recipients   CampaignRecipient[]
+}
+
+model CampaignRecipient {
+  id         Int       @id @default(autoincrement())
+  campaignId Int
+  campaign   Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customerId Int
+  customer   Customer  @relation(fields: [customerId], references: [id])
+  status     String    @default("pending") // pending | sent | failed
+  sentAt     DateTime?
+
+  @@index([campaignId, status])
+}
+
+// ============================================================================
+// 10. AUTOMATED FOLLOW-UP TASKS (Cart Recovery, Review Requests)
+// ============================================================================
+
+model FollowupTask {
+  id         Int      @id @default(autoincrement())
+  type       String   // "ABANDONED_CART" | "FEEDBACK_REQUEST" | "REORDER_NUDGE"
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  meta       String?  // JSON payload e.g. {"cartItems": [...], "orderId": 42}
+  status     String   @default("pending") // pending | executed | cancelled | failed
+  executeAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([status, executeAt])
+}
+
+// ============================================================================
+// 11. OBSERVABILITY & AGENT TOOLS
+// ============================================================================
+
+model ActivityLog {
+  id         Int       @id @default(autoincrement())
+  type       String    // "response_time" | "tool_error" | "fallback" | "human_handoff"
+  message    String
+  meta       String?   // JSON metadata
+  customerId Int?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
 }
 
 model PromptTemplate {
-  id           Int       @id @default(autoincrement())
-  content      String
-  restaurant   BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId Int
-  updatedAt    DateTime  @updatedAt
+  id        Int      @id @default(autoincrement())
+  content   String
+  updatedAt DateTime @updatedAt
 }
 
 model ToolDefinition {
-  id               Int       @id @default(autoincrement())
-  name             String
+  id               Int      @id @default(autoincrement())
+  name             String   @unique
   description      String
-  parametersSchema String    // JSON Schema string
-  isEnabled        Boolean   @default(true)
-  sortOrder        Int       @default(0)
-  restaurant       BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId     Int
-  updatedAt        DateTime  @updatedAt
-
-  @@unique([name, restaurantId])
+  parametersSchema String   // JSON Schema
+  isEnabled        Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  updatedAt        DateTime @updatedAt
 }
-
-// Replaces the in-memory pendingCarts Map — survives restarts and deploys.
-model PendingOrder {
-  id               Int       @id @default(autoincrement())
-  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId       Int       @unique
-  restaurant       BotConfig @relation(fields: [restaurantId], references: [id])
-  restaurantId     Int
-  lines            String    // JSON: {menuItemId, variantId?, qty, note?}[]
-  type             String    @default("pickup")
-  note             String?
-  confirmedOrderId  Int?
-  // Staged payment (set by record_payment, consumed by confirm_order)
-  paymentMethod     String?
-  paymentReference  String?
-  // Razorpay payment link (set by generate_payment_link tool)
-  razorpayLinkId    String?
-  razorpayLinkUrl   String?
-  expiresAt         DateTime
-  updatedAt         DateTime  @updatedAt
-
-  @@index([restaurantId])
-}
-
