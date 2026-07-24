@@ -34,12 +34,10 @@ function webMenuUrlFor(restaurantId: number, phone: string): string {
 
 /**
  * Show the menu (carousel or list), then — after a short pause — the web
- * menu link. The link is sent as a PLAIN-TEXT link (not a cta_url button)
- * on purpose: WhatsApp opens plain links in its own in-app browser, whereas
- * cta_url buttons hand off to the phone's external browser. Sending the link
- * immediately after the carousel can still let it arrive first in the chat,
- * since Meta takes a moment to process the carousel's images; the delay keeps
- * the visible order carousel-then-link.
+ * menu link as a tappable "Full Menu" CTA button. Sending the link immediately
+ * after the carousel can still let it arrive first in the chat, since Meta
+ * takes a moment to process the carousel's images; the delay keeps the visible
+ * order carousel-then-link.
  */
 async function sendMenuVisual(
   adapter: KapsoAdapter | CloudAdapter,
@@ -63,7 +61,7 @@ async function sendMenuVisual(
   }
   if (webMenuUrl) {
     if (sentCarousel) await new Promise((r) => setTimeout(r, 1500));
-    await adapter.sendText(phone, `Full menu photos tho web lo chudandi 👇\n${webMenuUrl}`);
+    await adapter.sendInteractiveCtaUrl(phone, "Full menu photos tho web lo chudandi 👇", "📋 Full Menu", webMenuUrl);
   }
 }
 
@@ -183,13 +181,21 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         }
       }
 
-      // 5. Razorpay links → plain-text link so WhatsApp opens it in its own
-      //    in-app browser (a cta_url button would hand off to the external
-      //    browser, which breaks the in-app payment experience the owner wants).
-      //    The paymentLinkTemplate already formats amount + link + note.
+      // 5. Intercept Razorpay links → interactive button (open in browser via CTA URL)
       if (bubble.includes("https://") && (bubble.includes("rzp.io") || bubble.includes("razorpay"))) {
-        await adapter.sendText(phone, bubble);
-        continue;
+        const rzpMatch = bubble.match(/(https:\/\/[^\s\n]+)/);
+        if (rzpMatch) {
+          const rzpUrl = rzpMatch[0];
+          const amountMatch = bubble.match(/₹\d+/);
+          const amountText = amountMatch ? ` ${amountMatch[0]}` : "";
+          await adapter.sendInteractiveCtaUrl(
+            phone,
+            `Payment${amountText} — kinda button tap chesi pay cheyandi andi. Pay ayyaka order confirm avutundi.`,
+            "💳 Pay",
+            rzpUrl
+          );
+          continue;
+        }
       }
 
       // 6. Intercept delivery address requests → native WhatsApp address collection sheet or saved address buttons
