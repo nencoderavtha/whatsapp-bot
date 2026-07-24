@@ -469,79 +469,102 @@ export class BotSessionManager {
           // No confident dish match or no photo on file — fall through to the normal reply.
         }
 
-        // ── Direct Action 4: Item Selection from WhatsApp List Modal ─────────────
-        if (rawText.startsWith("menu_item_")) {
-          const itemId = parseInt(rawText.replace("menu_item_", ""), 10);
-          if (!isNaN(itemId)) {
-            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-            const pending = await prisma.pendingOrder.findFirst({
-              where: { customerId: cust.id, restaurantId, expiresAt: { gt: new Date() } }
-            });
-            let currentLines: any[] = [];
-            if (pending?.lines) {
-              try { currentLines = JSON.parse(pending.lines); } catch {}
-            }
+        // ── Direct Action 4: Item Selection (carousel/list "Add" or variant pick) ──
+        // Formats: menu_item_<id>  OR  menu_item_<id>_v_<variantId>
+        const itemMatch = rawText.match(/^menu_item_(\d+)(?:_v_(\d+))?$/);
+        if (itemMatch) {
+          const itemId = parseInt(itemMatch[1], 10);
+          const pickedVariantId = itemMatch[2] ? parseInt(itemMatch[2], 10) : undefined;
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
 
-            const existingIdx = currentLines.findIndex((l) => l.menuItemId === itemId && !l.variantId);
-            if (existingIdx >= 0) {
-              currentLines[existingIdx].qty += 1;
-            } else {
-              currentLines.push({ menuItemId: itemId, qty: 1 });
-            }
+          const item = await prisma.menuItem.findUnique({
+            where: { id: itemId },
+            include: { variants: { where: { available: true }, orderBy: { sortOrder: "asc" } } },
+          });
+          if (!item || !item.available) {
+            await adapter.sendText(msg.phone, "Aa item ee roju ledu andi.");
+            return;
+          }
 
-            const menuItems = await prisma.menuItem.findMany({
-              where: { id: { in: currentLines.map((l) => l.menuItemId) } },
-              include: { variants: true }
-            });
-            const byId = new Map(menuItems.map((m) => [m.id, m]));
-
-            let total = 0;
-            const labels: string[] = [];
-            const validLines: any[] = [];
-            for (const l of currentLines) {
-              const mi = byId.get(l.menuItemId);
-              if (!mi || !mi.available) continue;
-              let price = mi.price;
-              let variantName: string | undefined;
-              if (l.variantId) {
-                const v = mi.variants.find((v) => v.id === l.variantId);
-                if (v) { price = v.price; variantName = v.name; }
-              }
-              validLines.push(l);
-              const label = variantName ? `${l.qty}x ${mi.name} (${variantName})` : `${l.qty}x ${mi.name}`;
-              labels.push(`${label} ₹${price * l.qty}`);
-              total += price * l.qty;
-            }
-
-            const CART_TTL_MS = 2 * 60 * 60 * 1000;
-            if (pending) {
-              await prisma.pendingOrder.update({
-                where: { id: pending.id },
-                data: { lines: JSON.stringify(validLines), expiresAt: new Date(Date.now() + CART_TTL_MS) }
-              });
-            } else {
-              await prisma.pendingOrder.create({
-                data: { customerId: cust.id, restaurantId, lines: JSON.stringify(validLines), type: "pickup", expiresAt: new Date(Date.now() + CART_TTL_MS) }
-              });
-            }
-
-            const stagedMsg = orderStagedTemplate(labels, total, pending?.type ?? "pickup");
+          // Item has an Annam/Bagara (or other) variant choice but none picked → ask which one.
+          if (item.variants.length > 0 && !pickedVariantId) {
             if (isRichAdapter(adapter)) {
               await adapter.sendInteractiveButtons(
                 msg.phone,
-                stagedMsg,
-                [
-                  { id: "confirm_order_btn", title: "✅ Confirm Order" },
-                  { id: "add_more_items_btn", title: "➕ Add More Items" }
-                ],
-                "🛒 Order Summary",
-                "Tap button to confirm or message to add items"
+                `*${item.name}* — bagara tho aa, annam tho aa andi?`,
+                item.variants.slice(0, 3).map((v) => ({
+                  id: `menu_item_${item.id}_v_${v.id}`,
+                  title: `${v.name} ₹${v.price}`.slice(0, 20),
+                })),
               );
             } else {
-              await adapter.sendText(msg.phone, stagedMsg);
+              await adapter.sendText(msg.phone, `${item.name}: ` + item.variants.map((v) => `${v.name} ₹${v.price}`).join(", "));
             }
             return;
           }
+
+          // Load the current cart by the unique customerId (NOT filtered by expiry —
+          // a stale/expired row still occupies the unique slot, so we must upsert it).
+          const existing = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
+          let currentLines: any[] = [];
+          if (existing && existing.expiresAt > new Date() && existing.lines) {
+            try { currentLines = JSON.parse(existing.lines); } catch {}
+          }
+
+          const idx = currentLines.findIndex(
+            (l) => l.menuItemId === itemId && (l.variantId ?? null) === (pickedVariantId ?? null),
+          );
+          if (idx >= 0) currentLines[idx].qty += 1;
+          else currentLines.push({ menuItemId: itemId, qty: 1, ...(pickedVariantId ? { variantId: pickedVariantId } : {}) });
+
+          const menuItems = await prisma.menuItem.findMany({
+            where: { id: { in: currentLines.map((l) => l.menuItemId) } },
+            include: { variants: true },
+          });
+          const byId = new Map(menuItems.map((m) => [m.id, m]));
+
+          let total = 0;
+          const labels: string[] = [];
+          const validLines: any[] = [];
+          for (const l of currentLines) {
+            const mi = byId.get(l.menuItemId);
+            if (!mi || !mi.available) continue;
+            let price = mi.price;
+            let variantName: string | undefined;
+            if (l.variantId) {
+              const v = mi.variants.find((v) => v.id === l.variantId);
+              if (v) { price = v.price; variantName = v.name; }
+            }
+            validLines.push(l);
+            const label = variantName ? `${l.qty}x ${mi.name} (${variantName})` : `${l.qty}x ${mi.name}`;
+            labels.push(`${label} ₹${price * l.qty}`);
+            total += price * l.qty;
+          }
+
+          const CART_TTL_MS = 2 * 60 * 60 * 1000;
+          const expiresAt = new Date(Date.now() + CART_TTL_MS);
+          await prisma.pendingOrder.upsert({
+            where: { customerId: cust.id },
+            create: { customerId: cust.id, restaurantId, lines: JSON.stringify(validLines), type: "pickup", expiresAt },
+            update: { lines: JSON.stringify(validLines), expiresAt },
+          });
+
+          const stagedMsg = orderStagedTemplate(labels, total, existing?.type ?? "pickup");
+          if (isRichAdapter(adapter)) {
+            await adapter.sendInteractiveButtons(
+              msg.phone,
+              stagedMsg,
+              [
+                { id: "confirm_order_btn", title: "✅ Confirm Order" },
+                { id: "add_more_items_btn", title: "➕ Add More Items" }
+              ],
+              "🛒 Order Summary",
+              "Tap button to confirm or message to add items"
+            );
+          } else {
+            await adapter.sendText(msg.phone, stagedMsg);
+          }
+          return;
         }
 
         // ── Direct Action 5: Confirm Order Button ──────────────────────────────

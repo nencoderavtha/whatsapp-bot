@@ -49,6 +49,25 @@ function looksLikeToolGarbage(s: string): boolean {
   );
 }
 
+/**
+ * "Andi" is a trailing Telugu honorific — it must never open a sentence.
+ * The model occasionally starts a reply/line with "Andi, ..." despite the
+ * prompt rule, so strip a leading "Andi" (per line) and re-capitalize the
+ * next word deterministically.
+ */
+function fixLeadingAndi(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const m = line.match(/^(\s*)andi[,\s]+(.*)$/i);
+      if (!m) return line;
+      const [, lead, rest] = m;
+      if (!rest) return line;
+      return lead + rest.charAt(0).toUpperCase() + rest.slice(1);
+    })
+    .join("\n");
+}
+
 async function processIncoming(
   phone: string,
   userText: string,
@@ -195,6 +214,8 @@ async function processIncoming(
 
   // Fallback path: no tool template and the model produced nothing usable.
   const usedFallback = !templateReply && !finalText;
+  // Clean up the model's own text (templates are already brand-correct).
+  if (finalText) finalText = fixLeadingAndi(finalText);
   finalText = templateReply ?? (finalText || fallbackTemplate());
 
   // Fire-and-forget observability — never blocks the reply.
