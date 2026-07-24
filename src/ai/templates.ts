@@ -50,6 +50,15 @@ export function paymentLinkTemplate(url: string, total: number): string {
   ].join("\n\n");
 }
 
+// ── Sent when a customer claims they paid but Razorpay hasn't confirmed yet ──
+
+export function paymentPendingTemplate(): string {
+  return pick([
+    `Payment inka raledu andi 🙏 Link lo pay chesthe, order automatic ga confirm avutundi.`,
+    `Payment inka kanipinchaledu andi 🙏 Link lo complete chesthe, order confirm avutundi.`,
+  ]);
+}
+
 // ── Sent after confirm_order places the order ────────────────────────────
 // Note: a full itemized receipt is also sent automatically by session-manager.
 

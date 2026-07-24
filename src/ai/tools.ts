@@ -2,7 +2,7 @@ import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
 import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate } from "./templates.js";
+import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate, paymentPendingTemplate } from "./templates.js";
 import { orderStatusMsg } from "../services/notifications.js";
 import { logActivity } from "../services/activity.js";
 import { getCached } from "../services/cache.js";
@@ -364,6 +364,36 @@ export async function runTool(
           };
         }
 
+        // With Razorpay, payment is verified ONLY by the Razorpay webhook — never
+        // by the customer's word. If they claim "I paid", check the actual state.
+        const rpRestaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
+        const razorpayConfigured = !!(rpRestaurant?.razorpayKeyId && rpRestaurant.razorpayKeySecret);
+        if (razorpayConfigured) {
+          if (cart.confirmedOrderId) {
+            // Webhook already confirmed — payment really happened.
+            const existing = await getOrder(cart.confirmedOrderId);
+            return {
+              output: {
+                ok: true,
+                alreadyPaid: true,
+                orderId: cart.confirmedOrderId,
+                total: existing?.total,
+                note: "Payment already received via Razorpay and the order is confirmed. Tell the customer their order number and that it's confirmed. Do NOT ask them to pay again.",
+              },
+            };
+          }
+          // No webhook confirmation yet — do NOT trust the claim, do NOT record anything.
+          return {
+            output: {
+              ok: false,
+              paymentPending: true,
+              note: "Razorpay online payment is in use. Payment is NOT received yet — it confirms automatically only when the customer completes the online payment link. Do NOT tell the customer payment is received or the order is confirmed. Say you don't see the payment yet and ask them to finish paying on the link; the order confirms on its own once done.",
+            },
+            templateReply: paymentPendingTemplate(),
+          };
+        }
+
+        // Manual/UPI path (no Razorpay gateway) — accept the recorded method.
         await setPendingCart(customerId, restaurantId, {
           ...cart,
           paymentMethod: args.method,

@@ -89,7 +89,14 @@ export async function buildSystemPrompt(
     `further even if asked again.\n\n` +
     `CUSTOMIZATION REQUESTS (less spice, no onion, etc.):\n` +
     `The kitchen honors these — accept them confidently and record them as the item's note when ` +
-    `calling propose_order. Don't hedge or say you're "not sure the kitchen will do it."\n\n`;
+    `calling propose_order. Don't hedge or say you're "not sure the kitchen will do it."\n\n` +
+    `PAYMENT INTEGRITY — CRITICAL:\n` +
+    `Payment is online (a payment link). NEVER tell the customer "payment received", ` +
+    `"payment successful", or "order confirmed" just because they SAY they paid — payment is ` +
+    `verified automatically by the payment system, not by their word. If they say they've paid, ` +
+    `call the payment/confirm tool and rely ONLY on what it returns. If it says payment isn't ` +
+    `received yet, tell them plainly to finish paying on the link — the order confirms on its ` +
+    `own once payment actually goes through. Never confirm an order without real payment.\n\n`;
 
   // ── Voice — plain, brief, minimal. The deliberate opposite of a hyped-up
   //    delivery-app bot. Language is mirrored; ENERGY is not — this brand
