@@ -368,7 +368,7 @@ export function buildAdminApp() {
               text = msg.kapso?.transcript?.text ?? "";
               break;
             case "button":
-              text = msg.button?.text ?? "";
+              text = msg.button?.payload ?? msg.button?.text ?? "";
               break;
             default:
               text = msg.kapso?.content ?? "";
@@ -424,7 +424,7 @@ export function buildAdminApp() {
               text = msg.kapso?.transcript?.text ?? "";
               break;
             case "button":
-              text = msg.button?.text ?? "";
+              text = msg.button?.payload ?? msg.button?.text ?? "";
               break;
             default:
               text = msg.kapso?.content ?? "";
@@ -453,8 +453,11 @@ export function buildAdminApp() {
           // in session-manager.ts and agent.ts's natural-language transform.
           // Every carousel card's "Add" button shares the same title, so using
           // .title collapsed all of them into the same, unroutable text.
+          // Carousel quick-reply buttons arrive as type "button" with the routing
+          // id in button.payload (button.text is just the visible "Add" label).
           let text =
             msg.text?.body
+            ?? msg.button?.payload
             ?? msg.button?.text
             ?? msg.interactive?.button_reply?.id
             ?? msg.interactive?.list_reply?.id

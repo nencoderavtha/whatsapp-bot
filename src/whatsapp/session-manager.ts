@@ -26,11 +26,18 @@ function isRichAdapter(adapter: WhatsAppAdapter): adapter is KapsoAdapter | Clou
  * on file (lets customers see the dish while picking), falling back to the
  * plain text list for any day where photos aren't uploaded yet.
  */
+/** Build the public web-menu URL from the configured public server URL. */
+function webMenuUrlFor(restaurantId: number, phone: string): string {
+  const base = config.serverUrl.replace(/\/+$/, "");
+  return `${base}/menu?r=${restaurantId}&phone=${encodeURIComponent(phone)}`;
+}
+
 /**
  * Show the menu (carousel or list), then — after a short pause — the web
- * menu link. Sending the link immediately after the carousel can still let it
- * arrive first in the chat, since Meta takes a moment to process the
- * carousel's images; the delay keeps the visible order carousel-then-link.
+ * menu link as a tappable "Full Menu" CTA button. Sending the link immediately
+ * after the carousel can still let it arrive first in the chat, since Meta
+ * takes a moment to process the carousel's images; the delay keeps the visible
+ * order carousel-then-link.
  */
 async function sendMenuVisual(
   adapter: KapsoAdapter | CloudAdapter,
@@ -54,7 +61,7 @@ async function sendMenuVisual(
   }
   if (webMenuUrl) {
     if (sentCarousel) await new Promise((r) => setTimeout(r, 1500));
-    await adapter.sendText(phone, `Full menu web lo: ${webMenuUrl}`);
+    await adapter.sendInteractiveCtaUrl(phone, "Full menu photos tho web lo chudandi 👇", "📋 Full Menu", webMenuUrl);
   }
 }
 
@@ -82,9 +89,7 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
 
       if (isGreetingOrMenu) {
         try {
-          // Plain-text link (not a cta_url button) so WhatsApp opens it in its own in-app browser
-          // instead of handing off to the phone's external browser app.
-          const webMenuUrl = `${config.serverUrl}/menu.html?r=${restaurantId}&phone=${phone}`;
+          const webMenuUrl = webMenuUrlFor(restaurantId, phone);
           await sendMenuVisual(adapter, phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
           continue;
         } catch (err) {
@@ -182,11 +187,11 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         if (rzpMatch) {
           const rzpUrl = rzpMatch[0];
           const amountMatch = bubble.match(/₹\d+/);
-          const amountText = amountMatch ? ` of ${amountMatch[0]}` : "";
+          const amountText = amountMatch ? ` ${amountMatch[0]}` : "";
           await adapter.sendInteractiveCtaUrl(
             phone,
-            `Tap the button below to pay${amountText} online (UPI, Card, Netbanking) via Razorpay. 💳✨`,
-            "Pay Online 💳",
+            `Payment${amountText} — kinda button tap chesi pay cheyandi andi. Pay ayyaka order confirm avutundi.`,
+            "💳 Pay",
             rzpUrl
           );
           continue;
@@ -427,11 +432,9 @@ export class BotSessionManager {
           cleanText.includes("show menu") ||
           cleanText.includes("full menu")
         ) {
-          const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
-          const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
+          const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
 
           if (isRichAdapter(adapter)) {
-            // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
             await sendMenuVisual(adapter, msg.phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
           } else {
             await adapter.sendText(msg.phone, `Ee roju menu: ${webMenuUrl}`);
@@ -607,11 +610,9 @@ export class BotSessionManager {
 
         // ── Direct Action 6: Add More Items Button ──────────────────────────────
         if (rawText === "add_more_items_btn") {
-          const domain = process.env.PUBLIC_DOMAIN || "robe-sagging-envoy.ngrok-free.dev";
-          const webMenuUrl = `https://${domain}/menu?r=${restaurantId}&phone=${encodeURIComponent(msg.phone)}`;
+          const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
 
           if (isRichAdapter(adapter)) {
-            // Plain-text link opens in WhatsApp's in-app browser instead of escaping to an external one.
             await sendMenuVisual(adapter, msg.phone, restaurantId, "Inka em kavali andi?", webMenuUrl);
           } else {
             await adapter.sendText(msg.phone, `Ee roju menu: ${webMenuUrl}`);
