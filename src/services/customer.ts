@@ -1,11 +1,11 @@
 import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
 
-export async function getOrCreateCustomer(phone: string, restaurantId: number) {
+export async function getOrCreateCustomer(phone: string, _restaurantId?: number) {
   return prisma.customer.upsert({
-    where: { phone_restaurantId: { phone, restaurantId } },
+    where: { phone },
     update: {},
-    create: { phone, restaurantId },
+    create: { phone },
   });
 }
 
@@ -20,12 +20,13 @@ export async function updateCustomer(
 
 export async function logMessage(
   customerId: number,
-  restaurantId: number,
   role: "user" | "assistant",
   content: string,
+  mediaType: "text" | "audio" | "image" = "text",
+  mediaUrl?: string,
 ) {
   const message = await prisma.message.create({
-    data: { customerId, restaurantId, role, content },
+    data: { customerId, role, content, mediaType, mediaUrl },
     include: { customer: true },
   });
   await notifyAdminOfEvent("message_created", message);

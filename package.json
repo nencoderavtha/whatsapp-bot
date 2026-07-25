@@ -12,7 +12,6 @@
     "start": "prisma db push && tsx prisma/seed.ts && tsx src/index.ts",
     "admin": "tsx src/admin/server.ts",
     "bot": "tsx src/whatsapp/run.ts",
-    "chat": "tsx src/chat-test.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",

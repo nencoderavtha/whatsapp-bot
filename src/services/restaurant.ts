@@ -9,7 +9,7 @@ export type Restaurant = {
 };
 
 export async function getActiveRestaurant(): Promise<Restaurant> {
-  const r = await prisma.botConfig.findFirst({ where: { isActive: true } });
-  if (!r) throw new Error("No active restaurant found in BotConfig — run: npm run db:seed");
+  const r = await prisma.restaurantConfig.findFirst({ where: { isActive: true } });
+  if (!r) throw new Error("No active restaurant found in RestaurantConfig — run: npm run db:seed");
   return r;
 }

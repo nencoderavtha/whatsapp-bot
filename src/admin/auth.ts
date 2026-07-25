@@ -3,7 +3,6 @@ import type { Request, Response, NextFunction } from "express";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 
-// Augment Express Request so TypeScript knows req.restaurantId / req.isFounder exist.
 declare global {
   namespace Express {
     interface Request {
@@ -53,8 +52,6 @@ function setFounderCookie(res: Response, token: string) {
   });
 }
 
-// ── Founder auth ──────────────────────────────────────────────────────────
-
 export async function founderLoginHandler(req: Request, res: Response): Promise<void> {
   const { password } = req.body as { password?: string };
   const founderPw = process.env.FOUNDER_PASSWORD ?? config.adminPassword;
@@ -89,7 +86,6 @@ export function founderMiddleware(req: Request, res: Response, next: NextFunctio
   }
 }
 
-// POST /api/auth/login
 export async function loginHandler(req: Request, res: Response): Promise<void> {
   const { username, password, restaurantId: bodyRestaurantId } = req.body as {
     username?: string;
@@ -102,30 +98,19 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  let restaurantId: number;
+  let restaurantId = 1;
   let isMaster = false;
 
   try {
-    // Master env password bypass — no username required.
     if (config.adminPassword && password === config.adminPassword) {
       isMaster = true;
-      if (bodyRestaurantId) {
-        restaurantId = Number(bodyRestaurantId);
-      } else {
-        const r = await prisma.botConfig.findFirst({ where: { isActive: true } });
-        if (!r) {
-          res.status(500).json({ error: "no active restaurant found" });
-          return;
-        }
-        restaurantId = r.id;
-      }
+      restaurantId = bodyRestaurantId ? Number(bodyRestaurantId) : 1;
     } else {
-      // Per-restaurant: require username + password.
       if (!username) {
         res.status(401).json({ error: "username required" });
         return;
       }
-      const r = await prisma.botConfig.findFirst({
+      const r = await prisma.restaurantConfig.findFirst({
         where: { loginUsername: username, dashboardPassword: password, isActive: true },
       });
       if (!r) {
@@ -138,7 +123,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     const token = signToken({ restaurantId, isMaster });
     setCookie(res, token);
 
-    const restaurant = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: restaurantId } });
     res.json({ ok: true, restaurantId, restaurantName: restaurant?.restaurantName });
   } catch (e) {
     console.error("[auth] login DB error:", e);
@@ -146,24 +131,21 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   }
 }
 
-// POST /api/auth/logout
 export function logoutHandler(_req: Request, res: Response): void {
   res.clearCookie(COOKIE);
   res.json({ ok: true });
 }
 
-// GET /api/auth/me
 export async function meHandler(req: Request, res: Response): Promise<void> {
   try {
-    const restaurant = await prisma.botConfig.findUnique({ where: { id: req.restaurantId } });
-    res.json({ restaurantId: req.restaurantId, restaurantName: restaurant?.restaurantName });
+    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+    res.json({ restaurantId: 1, restaurantName: restaurant?.restaurantName });
   } catch (e) {
     console.error("[auth] me DB error:", e);
     res.status(503).json({ error: "Service temporarily unavailable" });
   }
 }
 
-// Middleware — validates session cookie or x-session-token header.
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const token = req.cookies?.[COOKIE] ?? req.header("x-session-token");
   if (!token) {
@@ -172,7 +154,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   }
   try {
     const payload = verifyToken(token);
-    req.restaurantId = payload.restaurantId;
+    req.restaurantId = payload.restaurantId ?? 1;
     next();
   } catch {
     res.clearCookie(COOKIE);

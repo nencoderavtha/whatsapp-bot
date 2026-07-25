@@ -1,7 +1,5 @@
 import { prisma } from "../db.js";
-import { BaileysAdapter } from "./baileys.js";
 import { CloudAdapter } from "./cloud.js";
-import { KapsoAdapter } from "./kapso.js";
 import { VOICE_NOTE_SENTINEL, type WhatsAppAdapter, type InboundMessage } from "./adapter.js";
 import { handleIncoming } from "../ai/agent.js";
 import { getOrder } from "../services/order.js";
@@ -16,19 +14,16 @@ import { orderStagedTemplate, paymentLinkTemplate, systemErrorTemplate, voiceNot
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 
-/** Both Cloud and Kapso adapters speak Meta's native interactive message types; only Baileys falls back to plain text. */
-function isRichAdapter(adapter: WhatsAppAdapter): adapter is KapsoAdapter | CloudAdapter {
-  return adapter instanceof KapsoAdapter || adapter instanceof CloudAdapter;
-}
+
 
 /**
  * Show the menu visually — a real-photo carousel when today's items have photos
  * on file (lets customers see the dish while picking), falling back to the
  * plain text list for any day where photos aren't uploaded yet.
  */
-/** Build the public web-menu URL from the configured public server URL. */
+/** Build the public web-menu URL from the auto-detected runtime server URL or fallback config. */
 function webMenuUrlFor(restaurantId: number, phone: string): string {
-  const base = config.serverUrl.replace(/\/+$/, "");
+  const base = botSessionManager.getPublicServerUrl().replace(/\/+$/, "");
   return `${base}/menu?r=${restaurantId}&phone=${encodeURIComponent(phone)}`;
 }
 
@@ -40,7 +35,7 @@ function webMenuUrlFor(restaurantId: number, phone: string): string {
  * order carousel-then-link.
  */
 async function sendMenuVisual(
-  adapter: KapsoAdapter | CloudAdapter,
+  adapter: CloudAdapter,
   phone: string,
   restaurantId: number,
   bodyText: string,
@@ -74,63 +69,62 @@ function splitBubbles(text: string): string[] {
   return parts.length ? parts.slice(0, 8) : [text];
 }
 
-async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: string[], restaurantId: number) {
+async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string[], restaurantId: number) {
   for (const bubble of bubbles) {
-    if ((config.whatsappProvider === "kapso" || config.whatsappProvider === "cloud") && isRichAdapter(adapter)) {
-      const lower = bubble.toLowerCase();
+    const lower = bubble.toLowerCase();
 
-      // 1. Intercept full menu requests/greetings → native WhatsApp menu carousel (real photos)
-      const isGreetingOrMenu =
-        bubble.includes("Here's our menu:") ||
-        bubble.includes("Here's our current menu") ||
-        bubble.includes("I can help you order anything from") ||
-        bubble.match(/here'?s?\s+(the|our)\s+(full\s+)?menu/i) !== null ||
-        bubble.match(/take\s+a\s+look\s+at\s+(our|the)\s+menu/i) !== null;
+    // 1. Intercept full menu requests/greetings → native WhatsApp menu carousel (real photos)
+    const isGreetingOrMenu =
+      bubble.includes("Here's our menu:") ||
+      bubble.includes("Here's our current menu") ||
+      bubble.includes("I can help you order anything from") ||
+      bubble.match(/here'?s?\s+(the|our)\s+(full\s+)?menu/i) !== null ||
+      bubble.match(/take\s+a\s+look\s+at\s+(our|the)\s+menu/i) !== null;
 
-      if (isGreetingOrMenu) {
-        try {
-          const webMenuUrl = webMenuUrlFor(restaurantId, phone);
-          await sendMenuVisual(adapter, phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
-          continue;
-        } catch (err) {
-          console.error("[Kapso] Failed to build menu view:", err);
-        }
+    if (isGreetingOrMenu) {
+      try {
+        const webMenuUrl = webMenuUrlFor(restaurantId, phone);
+        await sendMenuVisual(adapter, phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
+        continue;
+      } catch (err) {
+        console.error("[Cloud] Failed to build menu view:", err);
       }
+    }
 
-      // 2.5 Intercept cart staged summary → native WhatsApp interactive buttons (Confirm Order / Add More)
-      const isCartSummary =
-        (lower.includes("total: ₹") || lower.includes("here's your order") || lower.includes("order summary") || lower.includes("order breakdown")) &&
-        !lower.includes("payment details") &&
-        !lower.includes("order #");
+    // 2. Intercept cart staged summary → native WhatsApp interactive buttons (Confirm Order / Add More)
+    const isCartSummary =
+      (lower.includes("total: ₹") || lower.includes("here's your order") || lower.includes("order summary") || lower.includes("order breakdown")) &&
+      !lower.includes("payment details") &&
+      !lower.includes("order #");
 
-      if (isCartSummary && isRichAdapter(adapter)) {
-        try {
-          await adapter.sendInteractiveButtons(
-            phone,
-            bubble,
-            [
-              { id: "confirm_order_btn", title: "✅ Confirm Order" },
-              { id: "add_more_items_btn", title: "➕ Add More Items" }
-            ],
-            "🛒 Order Summary",
-            "Tap button to confirm or message to add items"
-          );
-          continue;
-        } catch (err) {
-          console.error("[Kapso] Cart summary buttons failed:", err);
-        }
+    if (isCartSummary) {
+      try {
+        await adapter.sendInteractiveButtons(
+          phone,
+          bubble,
+          [
+            { id: "confirm_order_btn", title: "✅ Confirm Order" },
+            { id: "add_more_items_btn", title: "➕ Add More Items" }
+          ],
+          "🛒 Order Summary",
+          "Tap button to confirm or message to add items"
+        );
+        continue;
+      } catch (err) {
+        console.error("[Cloud] Cart summary buttons failed:", err);
       }
+    }
 
-      // 3. Intercept payment option requests -> multiple payment method buttons
-      const isPaymentPrompt =
-        lower.includes("how would you like to pay") ||
-        lower.includes("choose your payment method") ||
-        lower.includes("select a payment option");
+    // 3. Intercept payment option requests -> multiple payment method buttons
+    const isPaymentPrompt =
+      lower.includes("how would you like to pay") ||
+      lower.includes("choose your payment method") ||
+      lower.includes("select a payment option");
 
-      if (isPaymentPrompt) {
-        try {
-          const botCfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-          const methods = (botCfg?.paymentMethods ?? "cash,upi").split(",").map(s => s.trim().toLowerCase());
+    if (isPaymentPrompt) {
+      try {
+        const botCfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+        const methods = (botCfg?.paymentMethods ?? "cash,upi").split(",").map(s => s.trim().toLowerCase());
 
           const buttons: { id: string; title: string }[] = [];
           if (methods.includes("upi") && botCfg?.upiId) {
@@ -206,10 +200,10 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
         bubble.toLowerCase().includes("address details") ||
         bubble.toLowerCase().includes("where should we deliver");
 
-      if (isAddressRequest && isRichAdapter(adapter)) {
+      if (isAddressRequest) {
         try {
           const customer = await prisma.customer.findFirst({
-            where: { phone, restaurantId },
+            where: { phone },
             select: { name: true, address: true }
           });
 
@@ -234,19 +228,17 @@ async function sendHumanly(adapter: WhatsAppAdapter, phone: string, bubbles: str
             continue;
           }
         } catch (err) {
-          console.error("[Kapso] Failed to send address collection card:", err);
+          console.error("[Cloud] Failed to send address collection card:", err);
         }
       }
-
-    }
 
     await adapter.sendText(phone, bubble);
   }
 }
 
-async function notifyOwner(adapter: WhatsAppAdapter, restaurantId: number, orderId: number) {
+async function notifyOwner(adapter: CloudAdapter, _restaurantId: number, orderId: number) {
   const [cfg, order] = await Promise.all([
-    prisma.botConfig.findUnique({ where: { id: restaurantId } }),
+    prisma.restaurantConfig.findUnique({ where: { id: 1 } }),
     getOrder(orderId),
   ]);
   if (!order) return;
@@ -258,51 +250,68 @@ async function notifyOwner(adapter: WhatsAppAdapter, restaurantId: number, order
     try {
       await adapter.sendText(num, text);
     } catch (e) {
-      console.error(`[r${restaurantId}] Owner notify failed:`, e);
+      console.error("[Owner Notify] Send failed:", e);
     }
   }
 }
 
 async function notifyOwnerOfHandoff(
-  adapter: WhatsAppAdapter,
-  restaurantId: number,
+  adapter: CloudAdapter,
+  _restaurantId: number,
   customer: { name?: string | null; phone: string },
   lastMessage: string,
 ) {
-  const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
   const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const text = ownerHandoffMsg(customer, lastMessage);
   for (const num of ownerNumbers) {
     try {
       await adapter.sendText(num, text);
     } catch (e) {
-      console.error(`[r${restaurantId}] Owner handoff notify failed:`, e);
+      console.error("[Owner Handoff] Send failed:", e);
     }
   }
 }
 
-async function sendOrderReceipt(adapter: WhatsAppAdapter, phone: string, restaurantId: number, orderId: number) {
+async function sendOrderReceipt(adapter: CloudAdapter, phone: string, _restaurantId: number, orderId: number) {
   try {
     const [order, cfg] = await Promise.all([
       getOrder(orderId),
-      prisma.botConfig.findUnique({ where: { id: restaurantId } }),
+      prisma.restaurantConfig.findUnique({ where: { id: 1 } }),
     ]);
     if (!order || !cfg) return;
     await adapter.sendText(phone, orderConfirmationMsg(order, cfg.restaurantName));
   } catch (e) {
-    console.error(`[r${restaurantId}] Receipt send failed:`, e);
+    console.error("[Receipt Send] Failed:", e);
   }
 }
 
 export class BotSessionManager {
-  private sessions = new Map<number, WhatsAppAdapter>();
+  private sessions = new Map<number, CloudAdapter>();
   // Cloud API only: phoneNumberId → restaurantId for fast webhook routing
   private phoneIdMap = new Map<string, number>();
+  private runtimeServerUrl?: string;
+
+  /** Update runtime server URL dynamically from incoming webhook request headers */
+  setRuntimeHost(protocol: string, host: string) {
+    if (host && !host.includes("localhost")) {
+      const proto = protocol.split(",")[0].trim();
+      this.runtimeServerUrl = `${proto}://${host}`;
+    }
+  }
+
+  getPublicServerUrl(): string {
+    return (
+      this.runtimeServerUrl ||
+      config.serverUrl ||
+      `http://localhost:${config.adminPort}`
+    );
+  }
 
   /** Start sessions for all active restaurants. */
   async startAll() {
-    const restaurants = await prisma.botConfig.findMany({ where: { isActive: true } });
-    console.log(`🚀 Starting ${restaurants.length} bot session(s) [provider: ${config.whatsappProvider}]...`);
+    const restaurants = await prisma.restaurantConfig.findMany({ where: { isActive: true } });
+    console.log(`🚀 Starting ${restaurants.length} bot session(s) [provider: Meta Cloud API]...`);
     for (const r of restaurants) {
       await this.startSession(r.id, r.restaurantName).catch((e) =>
         console.error(`Failed to start session for restaurant ${r.id}:`, e),
@@ -317,54 +326,30 @@ export class BotSessionManager {
       return;
     }
 
-    const botCfg = await prisma.botConfig.findUnique({
+    const botCfg = await prisma.restaurantConfig.findUnique({
       where: { id: restaurantId },
       select: { whatsappPhone: true, cloudPhoneNumberId: true, cloudToken: true },
     });
 
-    let adapter: WhatsAppAdapter;
-
-    if (config.whatsappProvider === "kapso") {
-      const phoneNumberId = botCfg?.cloudPhoneNumberId ?? config.kapso.phoneNumberId;
-      const apiKey = botCfg?.cloudToken ?? config.kapso.apiKey;
-      if (!phoneNumberId || !apiKey) {
-        console.warn(`[r${restaurantId}] Kapso not configured (missing phoneNumberId or apiKey) — skipping.`);
-        return;
-      }
-      adapter = new KapsoAdapter(phoneNumberId, apiKey);
-      this.phoneIdMap.set(phoneNumberId, restaurantId);
-    } else if (config.whatsappProvider === "cloud") {
-      const phoneNumberId = botCfg?.cloudPhoneNumberId ?? config.cloud.phoneNumberId;
-      const token = botCfg?.cloudToken ?? config.cloud.token;
-      if (!phoneNumberId || !token) {
-        console.warn(`[r${restaurantId}] Cloud API not configured (missing phoneNumberId or token) — skipping.`);
-        return;
-      }
-      adapter = new CloudAdapter(phoneNumberId, token);
-      this.phoneIdMap.set(phoneNumberId, restaurantId);
-    } else {
-      const authDir = `sessions/restaurant-${restaurantId}`;
-      const onLoggedOut = async () => {
-        this.stopSession(restaurantId);
-        const { rm } = await import("node:fs/promises");
-        await rm(authDir, { recursive: true, force: true }).catch(() => {});
-        const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-        if (cfg) await this.startSession(restaurantId, cfg.restaurantName).catch(console.error);
-      };
-      adapter = new BaileysAdapter(authDir, restaurantId, botCfg?.whatsappPhone ?? undefined, onLoggedOut);
+    const phoneNumberId = botCfg?.cloudPhoneNumberId || config.cloud.phoneNumberId;
+    const token = botCfg?.cloudToken || config.cloud.token;
+    if (!phoneNumberId || !token) {
+      console.warn(`[r${restaurantId}] Cloud API not configured (missing phoneNumberId or token) — skipping.`);
+      return;
     }
+    const adapter = new CloudAdapter(phoneNumberId, token);
+    this.phoneIdMap.set(phoneNumberId, restaurantId);
 
     adapter.onMessage(async (msg) => {
       console.log(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
       try {
-        const cfg = await prisma.botConfig.findUnique({
+        const cfg = await prisma.restaurantConfig.findUnique({
           where: { id: restaurantId },
           select: {
             restaurantName: true,
             restaurantCity: true,
             botPaused: true,
             pauseMessage: true,
-            dailyMenuPublished: true,
           },
         });
         if (cfg?.botPaused) {
@@ -376,7 +361,7 @@ export class BotSessionManager {
         const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
 
         const customer = await prisma.customer.findFirst({
-          where: { phone: msg.phone, restaurantId },
+          where: { phone: msg.phone },
           include: { orders: true }
         });
 
@@ -384,7 +369,7 @@ export class BotSessionManager {
         // Staff reply from the dashboard until they hit "Resume AI". We still log
         // the inbound message so it shows live in the dashboard chat.
         if (customer?.humanRequestedAt) {
-          await logMessage(customer.id, restaurantId, "user", msg.text);
+          await logMessage(customer.id, "user", msg.text);
           return;
         }
 
@@ -396,7 +381,7 @@ export class BotSessionManager {
 
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
-        if (isGreeting && isRichAdapter(adapter)) {
+        if (isGreeting) {
           const nameStr = customer?.name ? ` ${customer.name}` : "";
           const welcomeBody = `Namaskaram${nameStr} andi 🙏 Ee roju menu ready undi.`;
 
@@ -426,11 +411,7 @@ export class BotSessionManager {
         ) {
           const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
 
-          if (isRichAdapter(adapter)) {
-            await sendMenuVisual(adapter, msg.phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
-          } else {
-            await adapter.sendText(msg.phone, `Ee roju menu: ${webMenuUrl}`);
-          }
+          await sendMenuVisual(adapter, msg.phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
           return;
         }
 
@@ -444,9 +425,9 @@ export class BotSessionManager {
 
         // ── Direct Action 3: Dish photo request (e.g. "chepala pulusu photo pampandi") ──
         const photoKeywords = ["photo", "pic ", "pics", "picture", "image", "chupinchu", "chupincharu", "choodali", "chudali"];
-        if (photoKeywords.some((k) => lowerText.includes(k)) && isRichAdapter(adapter)) {
+        if (photoKeywords.some((k) => lowerText.includes(k))) {
           const items = await prisma.menuItem.findMany({
-            where: { restaurantId, available: true, imageUrl: { not: null } },
+            where: { available: true, imageUrl: { not: null } },
             select: { name: true, imageUrl: true },
           });
           const matched = items.find((item) => {
@@ -480,18 +461,14 @@ export class BotSessionManager {
 
           // Item has an Annam/Bagara (or other) variant choice but none picked → ask which one.
           if (item.variants.length > 0 && !pickedVariantId) {
-            if (isRichAdapter(adapter)) {
-              await adapter.sendInteractiveButtons(
-                msg.phone,
-                `*${item.name}* — bagara tho aa, annam tho aa andi?`,
-                item.variants.slice(0, 3).map((v) => ({
-                  id: `menu_item_${item.id}_v_${v.id}`,
-                  title: `${v.name} ₹${v.price}`.slice(0, 20),
-                })),
-              );
-            } else {
-              await adapter.sendText(msg.phone, `${item.name}: ` + item.variants.map((v) => `${v.name} ₹${v.price}`).join(", "));
-            }
+            await adapter.sendInteractiveButtons(
+              msg.phone,
+              `*${item.name}* — bagara tho aa, annam tho aa andi?`,
+              item.variants.slice(0, 3).map((v) => ({
+                id: `menu_item_${item.id}_v_${v.id}`,
+                title: `${v.name} ₹${v.price}`.slice(0, 20),
+              })),
+            );
             return;
           }
 
@@ -537,25 +514,21 @@ export class BotSessionManager {
           const expiresAt = new Date(Date.now() + CART_TTL_MS);
           await prisma.pendingOrder.upsert({
             where: { customerId: cust.id },
-            create: { customerId: cust.id, restaurantId, lines: JSON.stringify(validLines), type: "pickup", expiresAt },
+            create: { customerId: cust.id, lines: JSON.stringify(validLines), type: "pickup", expiresAt },
             update: { lines: JSON.stringify(validLines), expiresAt },
           });
 
           const stagedMsg = orderStagedTemplate(labels, total, existing?.type ?? "pickup");
-          if (isRichAdapter(adapter)) {
-            await adapter.sendInteractiveButtons(
-              msg.phone,
-              stagedMsg,
-              [
-                { id: "confirm_order_btn", title: "✅ Confirm Order" },
-                { id: "add_more_items_btn", title: "➕ Add More Items" }
-              ],
-              "🛒 Order Summary",
-              "Tap button to confirm or message to add items"
-            );
-          } else {
-            await adapter.sendText(msg.phone, stagedMsg);
-          }
+          await adapter.sendInteractiveButtons(
+            msg.phone,
+            stagedMsg,
+            [
+              { id: "confirm_order_btn", title: "✅ Confirm Order" },
+              { id: "add_more_items_btn", title: "➕ Add More Items" }
+            ],
+            "🛒 Order Summary",
+            "Tap button to confirm or message to add items"
+          );
           return;
         }
 
@@ -563,7 +536,7 @@ export class BotSessionManager {
         if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, restaurantId, expiresAt: { gt: new Date() } }
+            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
           });
 
           if (!pending || !pending.lines || pending.lines === "[]") {
@@ -590,7 +563,7 @@ export class BotSessionManager {
             total += p * l.qty;
           }
 
-          const botConfig = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+          const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
 
           if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
             const payRes = await createPaymentLink({
@@ -608,30 +581,21 @@ export class BotSessionManager {
             }
           }
 
-          if (isRichAdapter(adapter)) {
-            await adapter.sendInteractiveButtons(
-              msg.phone,
-              `₹${total} ela pay chestharu andi?`,
-              [
-                { id: "pay_method_upi", title: "📱 UPI" },
-                { id: "pay_method_cash", title: "💵 Cash on Pickup" }
-              ],
-            );
-          } else {
-            await adapter.sendText(msg.phone, `₹${total} — UPI or Cash on Pickup?`);
-          }
+          await adapter.sendInteractiveButtons(
+            msg.phone,
+            `₹${total} ela pay chestharu andi?`,
+            [
+              { id: "pay_method_upi", title: "📱 UPI" },
+              { id: "pay_method_cash", title: "💵 Cash on Pickup" }
+            ],
+          );
           return;
         }
 
         // ── Direct Action 6: Add More Items Button ──────────────────────────────
         if (rawText === "add_more_items_btn") {
           const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
-
-          if (isRichAdapter(adapter)) {
-            await sendMenuVisual(adapter, msg.phone, restaurantId, "Inka em kavali andi?", webMenuUrl);
-          } else {
-            await adapter.sendText(msg.phone, `Ee roju menu: ${webMenuUrl}`);
-          }
+          await sendMenuVisual(adapter, msg.phone, restaurantId, "Inka em kavali andi?", webMenuUrl);
           return;
         }
 
@@ -639,13 +603,12 @@ export class BotSessionManager {
         if (rawText === "pay_method_cash" || cleanText === "cash on pickup" || cleanText === "pay cash") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, restaurantId, expiresAt: { gt: new Date() } }
+            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
           });
           if (pending) {
             let lines: any[] = [];
             try { lines = JSON.parse(pending.lines); } catch {}
             const newOrder = await createOrder({
-              restaurantId,
               customerId: cust.id,
               type: (pending.type as any) ?? "pickup",
               lines: lines,
@@ -722,23 +685,7 @@ export class BotSessionManager {
     }
   }
 
-  /**
-   * Clear the Baileys session files and restart — forces a fresh QR code.
-   * Use when session keys are corrupted (Bad MAC / key counter errors).
-   */
-  async resetSession(restaurantId: number): Promise<void> {
-    const existing = this.sessions.get(restaurantId);
-    if (existing instanceof BaileysAdapter) {
-      await existing.stop(true); // stop + delete session files
-    }
-    this.stopSession(restaurantId);
-
-    const cfg = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
-    if (!cfg) throw new Error(`Restaurant ${restaurantId} not found`);
-    await this.startSession(restaurantId, cfg.restaurantName);
-  }
-
-  getSession(restaurantId: number): WhatsAppAdapter | undefined {
+  getSession(restaurantId: number): CloudAdapter | undefined {
     return this.sessions.get(restaurantId);
   }
 

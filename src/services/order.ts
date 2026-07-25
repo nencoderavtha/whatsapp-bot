@@ -10,7 +10,7 @@ export interface OrderLineInput {
 
 export async function createOrder(params: {
   customerId: number;
-  restaurantId: number;
+  _restaurantId?: number;
   lines: OrderLineInput[];
   type?: string;
   note?: string;
@@ -49,14 +49,12 @@ export async function createOrder(params: {
       priceSnap: price,
       qty,
       note: l.note,
-      restaurantId: params.restaurantId,
     };
   });
 
   const order = await prisma.order.create({
     data: {
       customerId: params.customerId,
-      restaurantId: params.restaurantId,
       type: params.type ?? "pickup",
       note: params.note,
       total,
@@ -65,7 +63,6 @@ export async function createOrder(params: {
         ? {
             payment: {
               create: {
-                restaurantId: params.restaurantId,
                 status: params.payment.status ?? "pending",
                 method: params.payment.method,
                 reference: params.payment.reference ?? null,
@@ -115,9 +112,9 @@ export async function findRecentDuplicate(
   return null;
 }
 
-export async function listOrders(restaurantId: number, status?: string) {
+export async function listOrders(_restaurantId?: number, status?: string) {
   return prisma.order.findMany({
-    where: { restaurantId, ...(status ? { status } : {}) },
+    where: status ? { status } : {},
     orderBy: { createdAt: "desc" },
     include: { items: true, customer: true, payment: true },
     take: 200,

@@ -8,14 +8,8 @@ export type ActivityType =
   | "human_handoff"
   | "handoff_resolved";
 
-/**
- * Record a bot-health event for the dashboard Activity tab.
- * Writes an ActivityLog row AND broadcasts it over SSE (activity_logged) so the
- * dashboard updates live. Always fire-and-forget from callers (`void logActivity`)
- * so it never blocks a customer reply — internal errors are swallowed.
- */
 export async function logActivity(
-  restaurantId: number,
+  _restaurantId: number,
   type: ActivityType,
   message: string,
   meta?: Record<string, unknown>,
@@ -24,7 +18,6 @@ export async function logActivity(
   try {
     const row = await prisma.activityLog.create({
       data: {
-        restaurantId,
         type,
         message,
         meta: meta ? JSON.stringify(meta) : null,

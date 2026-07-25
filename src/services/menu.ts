@@ -1,11 +1,10 @@
 import { prisma } from "../db.js";
 
 export async function getMenu(
-  restaurantId: number,
+  _restaurantId?: number,
   opts: { includeUnavailable?: boolean } = {},
 ) {
   const categories = await prisma.category.findMany({
-    where: { restaurantId },
     orderBy: { sortOrder: "asc" },
     include: {
       items: {
@@ -23,8 +22,8 @@ export async function getMenu(
   return categories.filter((c) => c.items.length > 0);
 }
 
-export async function menuAsText(restaurantId: number): Promise<string> {
-  const cats = await getMenu(restaurantId);
+export async function menuAsText(_restaurantId?: number): Promise<string> {
+  const cats = await getMenu();
 
   const availableLines: string[] = [];
   const stockSoldOut: string[] = [];
@@ -32,7 +31,6 @@ export async function menuAsText(restaurantId: number): Promise<string> {
   for (const c of cats) {
     const lines: string[] = [];
     for (const i of c.items) {
-      // Items where stockCount hit 0 go to the sold-out section, not available
       if (i.stockCount !== null && i.stockCount === 0) {
         stockSoldOut.push(i.name);
         continue;
@@ -44,7 +42,6 @@ export async function menuAsText(restaurantId: number): Promise<string> {
         i.isVeg ? "(veg)" : "",
         i.spiceLevel ? `[${i.spiceLevel}]` : "",
         i.description ? `— ${i.description}` : "",
-        // Only mention to the customer if THEY ask — never proactively.
         i.pieceInfo ? `(pieceInfo: ${i.pieceInfo} — mention only if asked)` : "",
       ]
         .filter(Boolean)
@@ -66,9 +63,8 @@ export async function menuAsText(restaurantId: number): Promise<string> {
     ? "(The menu is currently empty.)"
     : availableLines.join("\n\n");
 
-  // Combine DB-marked unavailable + zero-stock items
   const dbSoldOut = await prisma.menuItem.findMany({
-    where: { available: false, restaurantId },
+    where: { available: false },
     select: { name: true },
   });
   const allSoldOut = [...dbSoldOut.map((s) => s.name), ...stockSoldOut];
@@ -79,9 +75,8 @@ export async function menuAsText(restaurantId: number): Promise<string> {
   return available + soldOutLine;
 }
 
-/** Customer-facing menu for the greeting message — no internal IDs, clean WhatsApp formatting. */
-export async function menuForCustomer(restaurantId: number): Promise<string> {
-  const cats = await getMenu(restaurantId);
+export async function menuForCustomer(_restaurantId?: number): Promise<string> {
+  const cats = await getMenu();
   const sections: string[] = [];
 
   for (const c of cats) {
@@ -102,10 +97,10 @@ export async function menuForCustomer(restaurantId: number): Promise<string> {
   return sections.length ? sections.join("\n\n") : "(Menu coming soon)";
 }
 
-export async function findItems(restaurantId: number, query: string) {
+export async function findItems(query: string, _restaurantId?: number) {
   const q = query.trim().toLowerCase();
   const all = await prisma.menuItem.findMany({
-    where: { available: true, restaurantId },
+    where: { available: true },
     include: { variants: { where: { available: true } } },
   });
   const exact = all.filter((i) => i.name.toLowerCase() === q);
@@ -115,14 +110,8 @@ export async function findItems(restaurantId: number, query: string) {
   );
 }
 
-/**
- * Build WhatsApp interactive carousel cards (real photo per card) for items that
- * have an imageUrl set. Tapping a card's button reuses the same menu_item_<id>
- * add-to-cart flow as the plain list. Caller falls back to the text list for
- * items with no photo on file (or when none exist yet).
- */
-export async function menuAsInteractiveCarouselCards(restaurantId: number) {
-  const categories = await getMenu(restaurantId);
+export async function menuAsInteractiveCarouselCards(_restaurantId?: number) {
+  const categories = await getMenu();
   const cards: Array<{ title: string; desc: string; imageUrl: string; buttonId: string; buttonTitle: string }> = [];
 
   for (const cat of categories) {
@@ -153,13 +142,8 @@ export async function menuAsInteractiveCarouselCards(restaurantId: number) {
   return cards;
 }
 
-/**
- * Format the restaurant menu as WhatsApp interactive list sections.
- * WhatsApp limits: max 10 sections total, max 10 rows per section (100 rows overall).
- * Row title: max 24 chars. Description: max 72 chars.
- */
-export async function menuAsInteractiveListSections(restaurantId: number) {
-  const categories = await getMenu(restaurantId);
+export async function menuAsInteractiveListSections(_restaurantId?: number) {
+  const categories = await getMenu();
 
   const sections: { title: string; rows: any[] }[] = [];
   let totalRows = 0;
@@ -208,14 +192,11 @@ export async function menuAsInteractiveListSections(restaurantId: number) {
   return sections;
 }
 
-/**
- * Build interactive list sections filtered by category or item search term (e.g. "Starters", "Biryani", "Veg", "Desserts").
- */
 export async function menuAsInteractiveListSectionsForFilter(
-  restaurantId: number,
   filterQuery: string,
+  _restaurantId?: number,
 ) {
-  const categories = await getMenu(restaurantId);
+  const categories = await getMenu();
   const q = filterQuery.trim().toLowerCase();
 
   const sections: { title: string; rows: any[] }[] = [];

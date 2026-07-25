@@ -22,16 +22,10 @@ export interface PendingCart {
 
 const CART_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-// ---------------------------------------------------------------------------
-// Tool definitions — loaded from DB so admin can toggle/tune without redeploy
-// ---------------------------------------------------------------------------
-
-export async function getEnabledTools(restaurantId: number): Promise<ChatCompletionTool[]> {
-  // Cached — the enabled tool set only changes when the owner toggles/edits a
-  // tool in the dashboard (which emits config_updated → cache invalidation).
+export async function getEnabledTools(restaurantId = 1): Promise<ChatCompletionTool[]> {
   return getCached(restaurantId, "enabledTools", async () => {
     const defs = await prisma.toolDefinition.findMany({
-      where: { isEnabled: true, restaurantId },
+      where: { isEnabled: true },
       orderBy: { sortOrder: "asc" },
     });
     return defs.map((def) => ({
@@ -44,10 +38,6 @@ export async function getEnabledTools(restaurantId: number): Promise<ChatComplet
     }));
   });
 }
-
-// ---------------------------------------------------------------------------
-// Pending cart helpers — persisted in DB so restarts don't lose staged orders
-// ---------------------------------------------------------------------------
 
 async function getPendingCart(customerId: number): Promise<PendingCart | null> {
   const row = await prisma.pendingOrder.findUnique({ where: { customerId } });
@@ -68,7 +58,7 @@ async function getPendingCart(customerId: number): Promise<PendingCart | null> {
   };
 }
 
-async function setPendingCart(customerId: number, restaurantId: number, cart: PendingCart): Promise<void> {
+async function setPendingCart(customerId: number, _restaurantId: number, cart: PendingCart): Promise<void> {
   const data = {
     lines: JSON.stringify(cart.lines),
     type: cart.type,
@@ -82,7 +72,7 @@ async function setPendingCart(customerId: number, restaurantId: number, cart: Pe
   };
   await prisma.pendingOrder.upsert({
     where: { customerId },
-    create: { customerId, restaurantId, ...data },
+    create: { customerId, ...data },
     update: data,
   });
 }
@@ -93,7 +83,6 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
     return { output: { ok: false, error: "No order staged. Call propose_order first." } };
   }
 
-  // Recalculate total from staged cart
   const menuItems = await prisma.menuItem.findMany({
     where: { id: { in: cart.lines.map((l) => l.menuItemId) } },
     include: { variants: true },
@@ -105,7 +94,6 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
     return sum + (v?.price ?? mi.price) * l.qty;
   }, 0);
 
-  // Idempotent — return existing link if already generated
   if (cart.razorpayLinkId && cart.razorpayLinkUrl) {
     return {
       output: {
@@ -119,7 +107,7 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
   }
 
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-  const restaurant = await prisma.botConfig.findUnique({ where: { id: restaurantId } });
+  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
 
   const link = await createPaymentLink({
     restaurantId,
@@ -130,7 +118,6 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
   });
 
   if (!link) {
-    // Razorpay not configured — fall back to UPI deep link
     const upiId = restaurant?.upiId;
     if (upiId) {
       const upiLink = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(restaurant!.restaurantName)}&am=${total}&tn=WhatsApp+Order&cu=INR`;
@@ -168,10 +155,6 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tool execution — names must match ToolDefinition.name in the DB
-// ---------------------------------------------------------------------------
-
 export async function runTool(
   customerId: number,
   restaurantId: number,
@@ -180,8 +163,6 @@ export async function runTool(
 ): Promise<{ output: unknown; orderId?: number; templateReply?: string; humanHandoff?: boolean }> {
   try {
     switch (name) {
-
-      // ── Save customer info ──────────────────────────────────────────────
       case "save_customer_info": {
         await updateCustomer(customerId, {
           name: args.name,
@@ -191,7 +172,6 @@ export async function runTool(
         return { output: { ok: true } };
       }
 
-      // ── Stage order (validate items + variants, calculate total) ────────
       case "propose_order": {
         const rawLines: Array<{ menuItemId: number; variantId?: number; qty: number; note?: string }> =
           (args.items ?? []).map((l: any) => ({
@@ -218,7 +198,6 @@ export async function runTool(
             continue;
           }
 
-          // Item has variants but customer didn't pick one — ask them
           if (mi.variants.length > 0 && !l.variantId) {
             const opts = mi.variants.map((v) => `${v.name}[v${v.id}]₹${v.price}`).join(", ");
             return {
@@ -242,7 +221,6 @@ export async function runTool(
             variantName = variant.name;
           }
 
-          // Stock check: null = unlimited; 0 = sold out; >0 = remaining units
           if (mi.stockCount !== null && mi.stockCount < l.qty) {
             if (mi.stockCount === 0) {
               rejected.push(`${mi.name} (sold out)`);
@@ -273,7 +251,6 @@ export async function runTool(
           };
         }
 
-        // Recalculate total from validated lines with correct prices
         const menuItemsForTotal = await prisma.menuItem.findMany({
           where: { id: { in: valid.map((l) => l.menuItemId) } },
           include: { variants: true },
@@ -294,12 +271,8 @@ export async function runTool(
           note: args.note,
         });
 
-        // Fetch restaurant payment config to pre-inform the bot
-        const restaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
-
-        // Razorpay is active whenever both keys are present — ignores the toggle.
+        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const razorpayReady = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
-        // Payment is always required before confirming an order.
         const requiresPayment = true;
 
         let paymentNote: string;
@@ -307,14 +280,12 @@ export async function runTool(
         let paymentPath: string;
 
         if (requiresPayment && razorpayReady) {
-          // PATH A — Online payment required, Razorpay configured
           paymentPath = "razorpay";
           paymentNote =
             `Read the total back and ask the customer to confirm. Once they say YES — ` +
             `call generate_payment_link. Do NOT call confirm_order. ` +
             `The order auto-confirms when they complete payment.`;
         } else if (requiresPayment) {
-          // PATH B — Online payment required, no Razorpay → UPI/manual
           paymentPath = "manual";
           if (restaurant?.upiId) {
             const upiName = encodeURIComponent(restaurant.restaurantName);
@@ -326,7 +297,6 @@ export async function runTool(
             ? `Read the total back. Share this UPI link: ${upiPayLink} — customer taps it and pays ₹${total}. Once the customer says they have paid (no UTR needed), call record_payment (method="upi") then confirm_order.`
             : `Read the total back. Ask them to pay ₹${total} via ${methodsStr}${restaurant?.upiId ? ` to ${restaurant.upiId}` : ""}. Once the customer confirms payment (no UTR needed), call record_payment (method="${restaurant?.paymentMethods?.split(",")[0] ?? "upi"}") then confirm_order.`;
         } else {
-          // PATH C — No payment required, cash at pickup
           paymentPath = "cash";
           paymentNote =
             `Read this total back and ask the customer to confirm. ` +
@@ -352,7 +322,6 @@ export async function runTool(
         };
       }
 
-      // ── Record payment (stage before confirm_order) ─────────────────────
       case "record_payment": {
         const cart = await getPendingCart(customerId);
         if (!cart) {
@@ -364,13 +333,10 @@ export async function runTool(
           };
         }
 
-        // With Razorpay, payment is verified ONLY by the Razorpay webhook — never
-        // by the customer's word. If they claim "I paid", check the actual state.
-        const rpRestaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
+        const rpRestaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const razorpayConfigured = !!(rpRestaurant?.razorpayKeyId && rpRestaurant.razorpayKeySecret);
         if (razorpayConfigured) {
           if (cart.confirmedOrderId) {
-            // Webhook already confirmed — payment really happened.
             const existing = await getOrder(cart.confirmedOrderId);
             return {
               output: {
@@ -378,22 +344,20 @@ export async function runTool(
                 alreadyPaid: true,
                 orderId: cart.confirmedOrderId,
                 total: existing?.total,
-                note: "Payment already received via Razorpay and the order is confirmed. Tell the customer their order number and that it's confirmed. Do NOT ask them to pay again.",
+                note: "Payment already received via Razorpay and the order is confirmed. Tell the customer their order number and that it's confirmed.",
               },
             };
           }
-          // No webhook confirmation yet — do NOT trust the claim, do NOT record anything.
           return {
             output: {
               ok: false,
               paymentPending: true,
-              note: "Razorpay online payment is in use. Payment is NOT received yet — it confirms automatically only when the customer completes the online payment link. Do NOT tell the customer payment is received or the order is confirmed. Say you don't see the payment yet and ask them to finish paying on the link; the order confirms on its own once done.",
+              note: "Razorpay online payment is in use. Payment is NOT received yet — it confirms automatically only when the customer completes payment.",
             },
             templateReply: paymentPendingTemplate(),
           };
         }
 
-        // Manual/UPI path (no Razorpay gateway) — accept the recorded method.
         await setPendingCart(customerId, restaurantId, {
           ...cart,
           paymentMethod: args.method,
@@ -410,7 +374,6 @@ export async function runTool(
         };
       }
 
-      // ── Place order (idempotent; checks payment if restaurant requires it) ─
       case "confirm_order": {
         const cart = await getPendingCart(customerId);
         if (!cart) {
@@ -422,32 +385,24 @@ export async function runTool(
           };
         }
 
-        // ── Payment gate (BEFORE dedup/idempotency check) ─────────────────────
-        const restaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
-        // Razorpay active when both keys present — ignores toggle.
+        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const razorpayConfigured = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
 
-        // Payment is always required.
-        {
-          // If Razorpay is configured, generate payment link immediately (no extra LLM roundtrip delay!)
-          if (razorpayConfigured) {
-            return await handleGeneratePaymentLink(customerId, restaurantId);
-          }
-          // Manual payment (UPI) — must have a recorded payment method
-          if (!cart.paymentMethod) {
-            return {
-              output: {
-                ok: false,
-                requiresPayment: true,
-                upiId: restaurant?.upiId,
-                paymentMethods: restaurant?.paymentMethods,
-                error: `Payment required. Share the UPI ID ${restaurant?.upiId ?? ""} and ask the customer to pay. Once they confirm payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
-              },
-            };
-          }
+        if (razorpayConfigured) {
+          return await handleGeneratePaymentLink(customerId, restaurantId);
+        }
+        if (!cart.paymentMethod) {
+          return {
+            output: {
+              ok: false,
+              requiresPayment: true,
+              upiId: restaurant?.upiId,
+              paymentMethods: restaurant?.paymentMethods,
+              error: `Payment required. Share the UPI ID ${restaurant?.upiId ?? ""} and ask the customer to pay. Once they confirm payment (no UTR needed), call record_payment (method="upi") then confirm_order.`,
+            },
+          };
         }
 
-        // ── Idempotency: already confirmed this cart ───────────────────────────
         if (cart.confirmedOrderId) {
           const existing = await getOrder(cart.confirmedOrderId);
           return {
@@ -456,7 +411,7 @@ export async function runTool(
               alreadyPlaced: true,
               orderId: cart.confirmedOrderId,
               total: existing?.total,
-              note: "Already placed — tell the customer their order number and reassure them it's confirmed. Do NOT place again.",
+              note: "Already placed — tell the customer their order number and reassure them it's confirmed.",
             },
           };
         }
@@ -471,22 +426,19 @@ export async function runTool(
 
         const order = await createOrder({
           customerId,
-          restaurantId,
+          lines: cart.lines,
           type: cart.type,
           note: cart.note,
-          lines: cart.lines,
           payment: cart.paymentMethod
             ? { method: cart.paymentMethod, reference: cart.paymentReference }
             : undefined,
         });
 
-        // Decrement stock for each line item
         for (const l of cart.lines) {
           await prisma.menuItem.updateMany({
             where: { id: l.menuItemId, stockCount: { not: null } },
             data: { stockCount: { decrement: l.qty } },
           });
-          // Clamp negatives to 0
           await prisma.menuItem.updateMany({
             where: { id: l.menuItemId, stockCount: { lt: 0 } },
             data: { stockCount: 0 },
@@ -508,23 +460,21 @@ export async function runTool(
         };
       }
 
-      // ── Generate Razorpay payment link (auto-confirms on payment) ──────────
       case "generate_payment_link": {
         return await handleGeneratePaymentLink(customerId, restaurantId);
       }
 
-      // ── Check the status of a customer's order ─────────────────────────────
       case "check_order_status": {
-        const restaurant = await prisma.botConfig.findFirst({ where: { id: restaurantId } });
+        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const restaurantName = restaurant?.restaurantName ?? "our restaurant";
 
         const order = args.orderId
           ? await prisma.order.findFirst({
-              where: { id: Number(args.orderId), customerId, restaurantId },
+              where: { id: Number(args.orderId), customerId },
               include: { items: true, customer: true, payment: true },
             })
           : await prisma.order.findFirst({
-              where: { customerId, restaurantId, status: { not: "cancelled" } },
+              where: { customerId, status: { not: "cancelled" } },
               orderBy: { createdAt: "desc" },
               include: { items: true, customer: true, payment: true },
             });
@@ -544,7 +494,6 @@ export async function runTool(
         };
       }
 
-      // ── Cancel a staged (not yet confirmed) order ───────────────────────────
       case "cancel_order": {
         const cart = await getPendingCart(customerId);
         if (!cart) {
@@ -569,13 +518,11 @@ export async function runTool(
         };
       }
 
-      // ── Request a human staff member (pauses the AI for this customer) ──────
       case "request_human_handoff": {
         const updatedCustomer = await prisma.customer.update({
           where: { id: customerId },
           data: { humanRequestedAt: new Date() },
         });
-        // Live-update the dashboard so the handoff banner appears immediately.
         void notifyAdminOfEvent("customer_updated", updatedCustomer);
         void logActivity(
           restaurantId,

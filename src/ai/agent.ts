@@ -14,11 +14,6 @@ export interface AgentResult {
   humanHandoffRequested?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Per-customer async lock — only one message per customer processed at a time.
-// Prevents race conditions when two messages arrive milliseconds apart.
-// ---------------------------------------------------------------------------
-
 const customerLocks = new Map<string, Promise<void>>();
 
 function withCustomerLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -35,11 +30,8 @@ function withCustomerLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     });
 }
 
-// ---------------------------------------------------------------------------
-
 function looksLikeToolGarbage(s: string): boolean {
   const c = s.trim();
-  // Catch raw JSON tool-call blobs the model sometimes leaks as text
   return (
     (c.startsWith("{") && c.includes('"name"')) ||
     (c.startsWith("{") && c.includes('"function"')) ||
@@ -49,12 +41,6 @@ function looksLikeToolGarbage(s: string): boolean {
   );
 }
 
-/**
- * "Andi" is a trailing Telugu honorific — it must never open a sentence.
- * The model occasionally starts a reply/line with "Andi, ..." despite the
- * prompt rule, so strip a leading "Andi" (per line) and re-capitalize the
- * next word deterministically.
- */
 function fixLeadingAndi(text: string): string {
   return text
     .split("\n")
@@ -75,7 +61,6 @@ async function processIncoming(
 ): Promise<AgentResult> {
   const customer = await getOrCreateCustomer(phone, restaurantId);
 
-  // Transform native WhatsApp interactive button/list row selections into natural intent
   if (userText.startsWith("menu_item_")) {
     const itemId = parseInt(userText.replace("menu_item_", ""), 10);
     if (!isNaN(itemId)) {
@@ -103,7 +88,6 @@ async function processIncoming(
     userText = "I want to update my delivery address";
   }
 
-  // Clean up and reset session if last messages contain order confirmations or if the history is old.
   const checkHistory = await recentMessages(customer.id, 5);
   const isGreeting = ["hi", "hello", "hey", "namaste", "start", "menu", "yo", "hola", "namaskar", "namaskaram"].includes(userText.trim().toLowerCase());
   
@@ -111,7 +95,7 @@ async function processIncoming(
   if (checkHistory.length > 0) {
     const lastMsg = checkHistory[checkHistory.length - 1];
     const diffMs = new Date().getTime() - new Date(lastMsg.createdAt).getTime();
-    const isOld = diffMs > 15 * 60 * 1000; // 15 minutes
+    const isOld = diffMs > 15 * 60 * 1000;
 
     const hasConfirmedInHistory = checkHistory.some(m => {
       if (m.role !== "assistant") return false;
@@ -136,12 +120,9 @@ async function processIncoming(
     ]);
   }
 
-  await logMessage(customer.id, restaurantId, "user", userText);
+  await logMessage(customer.id, "user", userText);
 
-  // Load up to 6 recent messages for fast context
   const history = await recentMessages(customer.id, 6);
-
-  // First message = only the current user message exists in history
   const isFirstMessage = history.length === 1;
 
   const [system, tools] = await Promise.all([
@@ -179,7 +160,6 @@ async function processIncoming(
       break;
     }
 
-    // Must include tool_calls in the assistant turn so the model sees what it called
     messages.push({
       role: "assistant",
       content: content ?? null,
@@ -200,7 +180,7 @@ async function processIncoming(
       console.log(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
       if (orderId) placedOrderId = orderId;
       if (humanHandoff) humanHandoffRequested = true;
-      if (tr) templateReply = tr; // last tool with a template wins
+      if (tr) templateReply = tr;
 
       messages.push({
         role: "tool",
@@ -209,27 +189,23 @@ async function processIncoming(
       } as any);
     }
 
-    if (templateReply) break; // Instant exit! Tool produced template reply — zero 2nd LLM roundtrip delay!
+    if (templateReply) break;
   }
 
-  // Fallback path: no tool template and the model produced nothing usable.
   const usedFallback = !templateReply && !finalText;
-  // Clean up the model's own text (templates are already brand-correct).
   if (finalText) finalText = fixLeadingAndi(finalText);
   finalText = templateReply ?? (finalText || fallbackTemplate());
 
-  // Fire-and-forget observability — never blocks the reply.
   const elapsedMs = Date.now() - startedAt;
   void logActivity(restaurantId, "response_time", `Reply in ${elapsedMs}ms`, { elapsedMs }, customer.id);
   if (usedFallback) {
     void logActivity(restaurantId, "fallback", `Fell back to generic reply for: ${userText.slice(0, 80)}`, undefined, customer.id);
   }
 
-  await logMessage(customer.id, restaurantId, "assistant", finalText);
+  await logMessage(customer.id, "assistant", finalText);
   return { reply: finalText, placedOrderId, humanHandoffRequested };
 }
 
-// Public entry point — serialises concurrent messages from the same customer.
 export async function handleIncoming(
   phone: string,
   userText: string,
