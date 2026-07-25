@@ -100,12 +100,17 @@ export class CloudAdapter implements WhatsAppAdapter {
     buttonText: string,
     url: string,
   ): Promise<void> {
+    const formattedUrl =
+      url.includes("ngrok") && !url.includes("ngrok-skip-browser-warning")
+        ? `${url}${url.includes("?") ? "&" : "?"}ngrok-skip-browser-warning=true`
+        : url;
+
     await this.sendInteractive(phone, {
       type: "cta_url",
-      body: { text: bodyText },
+      body: { text: bodyText || "Tap below to open link in WhatsApp 👇" },
       action: {
         name: "cta_url",
-        parameters: { display_text: buttonText, url },
+        parameters: { display_text: buttonText.slice(0, 20), url: formattedUrl },
       },
     });
   }

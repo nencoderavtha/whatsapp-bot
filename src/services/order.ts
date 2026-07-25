@@ -13,6 +13,10 @@ export async function createOrder(params: {
   _restaurantId?: number;
   lines: OrderLineInput[];
   type?: string;
+  deliveryFee?: number;
+  deliveryAddress?: string;
+  deliveryLat?: number;
+  deliveryLng?: number;
   note?: string;
   payment?: { method: string; reference?: string; status?: string; paidAt?: Date };
 }) {
@@ -23,7 +27,7 @@ export async function createOrder(params: {
   });
   const byId = new Map(items.map((i) => [i.id, i]));
 
-  let total = 0;
+  let subtotal = 0;
   const orderItems = params.lines.map((l) => {
     const mi = byId.get(l.menuItemId);
     if (!mi) throw new Error(`Menu item ${l.menuItemId} not found`);
@@ -40,7 +44,7 @@ export async function createOrder(params: {
       }
     }
 
-    total += price * qty;
+    subtotal += price * qty;
     return {
       menuItemId: mi.id,
       variantId: l.variantId ?? null,
@@ -52,12 +56,21 @@ export async function createOrder(params: {
     };
   });
 
+  const isDelivery = params.type === "delivery";
+  const deliveryFee = isDelivery ? (params.deliveryFee ?? 45) : 0;
+  const grandTotal = subtotal + deliveryFee;
+
   const order = await prisma.order.create({
     data: {
       customerId: params.customerId,
       type: params.type ?? "pickup",
+      subtotal,
+      deliveryFee,
+      total: grandTotal,
+      deliveryAddress: params.deliveryAddress ?? null,
+      deliveryLat: params.deliveryLat ?? null,
+      deliveryLng: params.deliveryLng ?? null,
       note: params.note,
-      total,
       items: { create: orderItems },
       ...(params.payment
         ? {
@@ -67,13 +80,31 @@ export async function createOrder(params: {
                 method: params.payment.method,
                 reference: params.payment.reference ?? null,
                 paidAt: params.payment.paidAt ?? null,
-                amount: total,
+                amount: grandTotal,
+              },
+            },
+          }
+        : {}),
+      ...(isDelivery
+        ? {
+            deliveryDispatch: {
+              create: {
+                providerCode: "borzo",
+                deliveryFee: deliveryFee,
+                status: "SEARCHING_RIDER",
+                externalDeliveryId: `BRZ-${Date.now().toString().slice(-7)}`,
               },
             },
           }
         : {}),
     },
-    include: { items: true, customer: true, payment: true },
+    include: {
+      items: true,
+      customer: true,
+      payment: true,
+      deliveryDispatch: true,
+      deliveryQuotes: true,
+    },
   });
 
   await notifyAdminOfEvent("order_created", order);
@@ -116,7 +147,13 @@ export async function listOrders(_restaurantId?: number, status?: string) {
   return prisma.order.findMany({
     where: status ? { status } : {},
     orderBy: { createdAt: "desc" },
-    include: { items: true, customer: true, payment: true },
+    include: {
+      items: true,
+      customer: true,
+      payment: true,
+      deliveryDispatch: true,
+      deliveryQuotes: true,
+    },
     take: 200,
   });
 }
@@ -125,7 +162,13 @@ export async function setOrderStatus(id: number, status: string) {
   const updated = await prisma.order.update({
     where: { id },
     data: { status },
-    include: { items: true, customer: true, payment: true },
+    include: {
+      items: true,
+      customer: true,
+      payment: true,
+      deliveryDispatch: true,
+      deliveryQuotes: true,
+    },
   });
   await notifyAdminOfEvent("order_updated", updated);
   return updated;
@@ -134,7 +177,13 @@ export async function setOrderStatus(id: number, status: string) {
 export async function getOrder(id: number) {
   return prisma.order.findUnique({
     where: { id },
-    include: { items: true, customer: true, payment: true },
+    include: {
+      items: true,
+      customer: true,
+      payment: true,
+      deliveryDispatch: true,
+      deliveryQuotes: true,
+    },
   });
 }
 

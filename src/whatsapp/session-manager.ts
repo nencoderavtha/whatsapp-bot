@@ -77,9 +77,11 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
     const isGreetingOrMenu =
       bubble.includes("Here's our menu:") ||
       bubble.includes("Here's our current menu") ||
+      bubble.includes("Special Menu:") ||
       bubble.includes("I can help you order anything from") ||
       bubble.match(/here'?s?\s+(the|our)\s+(full\s+)?menu/i) !== null ||
-      bubble.match(/take\s+a\s+look\s+at\s+(our|the)\s+menu/i) !== null;
+      bubble.match(/take\s+a\s+look\s+at\s+(our|the)\s+menu/i) !== null ||
+      (bubble.includes("Biryani") && bubble.includes("Annam") && bubble.includes("₹"));
 
     if (isGreetingOrMenu) {
       try {
@@ -230,6 +232,23 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
         } catch (err) {
           console.error("[Cloud] Failed to send address collection card:", err);
         }
+      }
+
+      // 7. General URL Interceptor → Convert ALL web links (menu, tracking, pay, general URLs)
+      // into native Interactive CTA URL Buttons so they open directly inside WhatsApp's In-App Browser
+      const urlMatch = bubble.match(/(https?:\/\/[^\s\n]+)/i);
+      if (urlMatch) {
+        const rawUrl = urlMatch[0];
+        let cleanBody = bubble.replace(rawUrl, "").trim();
+        if (!cleanBody) cleanBody = "Tap below to view inside WhatsApp 👇";
+
+        let buttonTitle = "🌐 Open Link";
+        if (rawUrl.includes("/menu")) buttonTitle = "📋 Full Menu";
+        else if (rawUrl.includes("/pay") || rawUrl.includes("rzp.io") || rawUrl.includes("razorpay")) buttonTitle = "💳 Pay Online";
+        else if (rawUrl.includes("track") || rawUrl.includes("order")) buttonTitle = "📍 Track Order";
+
+        await adapter.sendInteractiveCtaUrl(phone, cleanBody, buttonTitle, rawUrl);
+        continue;
       }
 
     await adapter.sendText(phone, bubble);
@@ -403,11 +422,9 @@ export class BotSessionManager {
         // ── Direct Action 1: View Menu ───────────────────────────────────────
         if (
           rawText === "view_menu" ||
-          cleanText === "view menu" ||
           cleanText === "menu" ||
-          cleanText.includes("view menu") ||
-          cleanText.includes("show menu") ||
-          cleanText.includes("full menu")
+          cleanText.includes("menu") ||
+          /\bmenu\b/i.test(lowerText)
         ) {
           const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
 

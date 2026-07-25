@@ -15,12 +15,14 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+    "mcp:delivery": "tsx src/mcp/delivery-server.ts",
     "build": "prisma generate && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
     "@kapso/whatsapp-cloud-api": "^0.2.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^6.5.0",
     "@whiskeysockets/baileys": "^6.7.16",
     "cookie-parser": "^1.4.7",
@@ -31,7 +33,8 @@
     "openai": "^6.42.0",
     "pino": "^9.6.0",
     "qrcode-terminal": "^0.12.0",
-    "razorpay": "^2.9.6"
+    "razorpay": "^2.9.6",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

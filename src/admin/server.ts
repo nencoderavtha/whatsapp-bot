@@ -46,6 +46,33 @@ function asyncRoute(
 export function buildAdminApp() {
   const app = express();
   app.use(cookieParser());
+  app.use((_req, res, next) => {
+    res.setHeader("ngrok-skip-browser-warning", "true");
+    next();
+  });
+
+  app.post("/webhook/borzo", express.json(), async (req, res) => {
+    const callbackToken = process.env.BORZO_CALLBACK_TOKEN;
+    const incomingToken = req.header("X-DV-Auth-Token") || req.header("X-DV-Callback-Token");
+
+    if (callbackToken && incomingToken && incomingToken !== callbackToken) {
+      console.warn("⚠️ [Borzo Webhook] Unauthorized callback attempt — token mismatch.");
+      res.status(401).json({ error: "Unauthorized callback token" });
+      return;
+    }
+
+    console.log("🚚 [Borzo Webhook Event Received]:", JSON.stringify(req.body, null, 2));
+
+    const body = req.body;
+    if (body && body.order) {
+      const orderId = body.order.order_id || body.order.client_order_id;
+      const status = body.order.status_name || body.order.status;
+      const courier = body.order.courier ? `${body.order.courier.name} (${body.order.courier.phone})` : "Unassigned";
+      console.log(`📦 [Borzo Delivery Status] Order #${orderId} -> Status: ${status} | Courier: ${courier}`);
+    }
+
+    res.json({ ok: true });
+  });
 
   app.post(
     "/webhook/razorpay",
