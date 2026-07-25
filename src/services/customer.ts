@@ -1,11 +1,23 @@
 import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
 
-export async function getOrCreateCustomer(phone: string, _restaurantId?: number) {
+export async function getOrCreateCustomer(
+  phone: string,
+  nameOrRestaurantId?: string | number,
+  _restaurantId?: number,
+) {
+  const name = typeof nameOrRestaurantId === "string" ? nameOrRestaurantId : undefined;
+  const validName = name && name.trim() && name.trim() !== "Unknown" ? name.trim() : undefined;
+
   return prisma.customer.upsert({
     where: { phone },
-    update: {},
-    create: { phone },
+    update: {
+      ...(validName ? { name: validName } : {}),
+    },
+    create: {
+      phone,
+      ...(validName ? { name: validName } : {}),
+    },
   });
 }
 

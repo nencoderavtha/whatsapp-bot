@@ -8,11 +8,12 @@ import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
 import { getMenu } from "../services/menu.js";
-import { createOrder, listOrders, setOrderStatus, setPaymentStatus } from "../services/order.js";
+import { createOrder, getOrder, listOrders, setOrderStatus, setPaymentStatus } from "../services/order.js";
 import {
   orderConfirmationMsg,
   orderStatusMsg,
   ownerNewOrderMsg,
+  deliveryStatusMsg,
 } from "../services/notifications.js";
 import {
   authMiddleware,
@@ -31,6 +32,7 @@ import { createPaymentLink, verifyWebhookSignature } from "../services/razorpay.
 import { transcribeAudio } from "../services/transcription.js";
 import { fetchMetaMedia } from "../whatsapp/media.js";
 import { VOICE_NOTE_SENTINEL, type InboundMessage } from "../whatsapp/adapter.js";
+import { DeliveryManager } from "../services/delivery/delivery-manager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,11 +66,102 @@ export function buildAdminApp() {
     console.log("🚚 [Borzo Webhook Event Received]:", JSON.stringify(req.body, null, 2));
 
     const body = req.body;
-    if (body && body.order) {
-      const orderId = body.order.order_id || body.order.client_order_id;
-      const status = body.order.status_name || body.order.status;
-      const courier = body.order.courier ? `${body.order.courier.name} (${body.order.courier.phone})` : "Unassigned";
-      console.log(`📦 [Borzo Delivery Status] Order #${orderId} -> Status: ${status} | Courier: ${courier}`);
+    const orderData = body?.order || (body?.delivery ? { order_id: body.delivery.order_id, status: body.delivery.status, courier: body.delivery.courier, points: [] } : null);
+
+    if (orderData) {
+      const borzoOrderId = String(orderData.order_id || "");
+      const dbOrderId = orderData.client_order_id ? Number(orderData.client_order_id) : null;
+      const rawStatus = String(orderData.status || orderData.status_description || "").toLowerCase();
+      const courier = orderData.courier;
+
+      const statusMap: Record<string, string> = {
+        // Order level statuses
+        new: "SEARCHING_RIDER",
+        available: "SEARCHING_RIDER",
+        active: "COURIER_ASSIGNED",
+        courier_assigned: "COURIER_ASSIGNED",
+        picked_up: "PICKED_UP",
+        in_transit: "IN_TRANSIT",
+        completed: "DELIVERED",
+        delivered: "DELIVERED",
+        canceled: "CANCELLED",
+        cancelled: "CANCELLED",
+
+        // Delivery point / rider progress statuses
+        planned: "SEARCHING_RIDER",
+        courier_departed: "COURIER_ASSIGNED",
+        courier_at_pickup: "COURIER_ASSIGNED",
+        parcel_picked_up: "PICKED_UP",
+        courier_arrived: "IN_TRANSIT",
+        finished: "DELIVERED",
+      };
+
+      const mappedStatus = statusMap[rawStatus] || "COURIER_ASSIGNED";
+      const trackingUrl = orderData.points?.find((p: any) => p.tracking_url)?.tracking_url || `https://robotapitest-in.borzodelivery.com/in/track/${borzoOrderId}`;
+
+      const logStatusMessages: Record<string, string> = {
+        SEARCHING_RIDER: `🔍 [Rider Search Active] Borzo Order #${borzoOrderId}: Searching for nearby riders...`,
+        COURIER_ASSIGNED: `👤 [Courier Assigned] Borzo Order #${borzoOrderId}: Rider ${courier ? `${courier.name} (${courier.phone})` : "Assigned"}`,
+        PICKED_UP: `📦 [Parcel Picked Up] Borzo Order #${borzoOrderId}: Courier picked up parcel from kitchen`,
+        IN_TRANSIT: `🛵 [Out for Delivery] Borzo Order #${borzoOrderId}: Courier enroute to customer address`,
+        DELIVERED: `🎉 [Delivery Completed] Borzo Order #${borzoOrderId}: Parcel delivered successfully!`,
+      };
+
+      console.log(logStatusMessages[mappedStatus] || `📦 [Borzo Status Update] Order #${borzoOrderId} -> ${mappedStatus}`);
+
+      try {
+        // Find dispatch record by externalDeliveryId (e.g. BRZ-329268 or 329268) or by orderId
+        const existing = await prisma.deliveryDispatch.findFirst({
+          where: {
+            OR: [
+              { externalDeliveryId: `BRZ-${borzoOrderId}` },
+              { externalDeliveryId: borzoOrderId },
+              ...(dbOrderId ? [{ orderId: dbOrderId }] : []),
+            ],
+          },
+        });
+
+        if (existing) {
+          const updatedDispatch = await prisma.deliveryDispatch.update({
+            where: { id: existing.id },
+            data: {
+              status: mappedStatus,
+              ...(courier?.name ? { riderName: courier.name } : {}),
+              ...(courier?.phone ? { riderPhone: courier.phone } : {}),
+              ...(courier?.vehicle_number ? { riderVehicleNumber: courier.vehicle_number } : {}),
+            },
+          });
+
+          // Send live WhatsApp status update to customer
+          const order = await getOrder(existing.orderId);
+          if (order && order.customer?.phone) {
+            const session = botSessionManager.getSession(1);
+            if (session) {
+              const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+              const msgText = deliveryStatusMsg(
+                existing.orderId,
+                mappedStatus,
+                courier?.name,
+                courier?.phone,
+                trackingUrl,
+                cfg?.restaurantName ?? "Godavari Ruchulu",
+              );
+              if (msgText) {
+                await session.sendText(order.customer.phone, msgText);
+                console.log(`📱 [WhatsApp Sent to Customer ${order.customer.phone}] Delivery Status: ${mappedStatus}`);
+              }
+            }
+          }
+
+          if (mappedStatus === "DELIVERED") {
+            await setOrderStatus(existing.orderId, "delivered");
+          } else {
+            await notifyAdminOfEvent("order_updated", { orderId: existing.orderId, status: mappedStatus, deliveryDispatch: updatedDispatch });
+          }
+        }
+      } catch (err) {
+        console.error("⚠️ [Borzo Webhook DB Error]", err);
+      }
     }
 
     res.json({ ok: true });
@@ -271,6 +364,54 @@ export function buildAdminApp() {
     res.json({ ok: true });
   }));
 
+  app.get("/address", (_req, res) => {
+    res.sendFile(path.join(__dirname, "public", "address.html"));
+  });
+
+  app.post("/public/api/customer/address", asyncRoute(async (req, res) => {
+    const { phone, address, lat, lng } = req.body;
+    if (!phone || !address) {
+      res.status(400).json({ error: "Missing phone or address" });
+      return;
+    }
+
+    const customer = await getOrCreateCustomer(phone);
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: {
+        address,
+        ...(lat ? { deliveryLat: Number(lat) } : {}),
+        ...(lng ? { deliveryLng: Number(lng) } : {}),
+      },
+    });
+
+    const pending = await prisma.pendingOrder.findFirst({
+      where: { customerId: customer.id, expiresAt: { gt: new Date() } },
+    });
+
+    if (pending) {
+      await prisma.pendingOrder.update({
+        where: { id: pending.id },
+        data: { type: "delivery" },
+      });
+    }
+
+    const session = botSessionManager.getSession(1);
+    if (session) {
+      await session.sendInteractiveButtons(
+        phone,
+        `📍 *Delivery Location Pinned!*\n\n*Address:* ${address}\n\nTap *✅ Confirm Order* to complete your order.`,
+        [
+          { id: "confirm_order_btn", title: "✅ Confirm Order" },
+          { id: "add_more_items_btn", title: "➕ Add More Items" },
+        ],
+        "📦 Delivery Location",
+      );
+    }
+
+    res.json({ ok: true, address });
+  }));
+
   app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"] ?? req.query.mode;
     const token = req.query["hub.verify_token"] ?? req.query.verify_token;
@@ -316,6 +457,40 @@ export function buildAdminApp() {
             } catch (e) {
               console.error("[Voice] Transcription failed, falling back:", e);
               text = VOICE_NOTE_SENTINEL;
+            }
+          }
+
+          if (!text && msg.type === "location" && msg.location) {
+            const lat = msg.location.latitude;
+            const lng = msg.location.longitude;
+            const locAddr = msg.location.address || msg.location.name || `GPS Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+
+            try {
+              const customer = await getOrCreateCustomer(msg.from);
+              await prisma.customer.update({
+                where: { id: customer.id },
+                data: {
+                  address: locAddr,
+                  deliveryLat: Number(lat),
+                  deliveryLng: Number(lng),
+                },
+              });
+
+              const pending = await prisma.pendingOrder.findFirst({
+                where: { customerId: customer.id, expiresAt: { gt: new Date() } },
+              });
+
+              if (pending) {
+                await prisma.pendingOrder.update({
+                  where: { id: pending.id },
+                  data: { type: "delivery" },
+                });
+              }
+
+              text = "confirm order";
+            } catch (e) {
+              console.error("[Location Webhook Error]", e);
+              text = locAddr;
             }
           }
 
@@ -568,6 +743,18 @@ export function buildAdminApp() {
       } catch (e) {
         console.error("[Status Notify] Failed:", e);
       }
+    }
+  });
+
+  api.post("/orders/:id/dispatch", async (req, res) => {
+    const orderId = Number(req.params.id);
+    const providerCode = req.body.providerCode || "borzo";
+    try {
+      const result = await DeliveryManager.dispatchOrder(orderId, providerCode);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[Manual Dispatch Failed]", e);
+      res.status(500).json({ error: e?.message ?? "Dispatch failed" });
     }
   });
 

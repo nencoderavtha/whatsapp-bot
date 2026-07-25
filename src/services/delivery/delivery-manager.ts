@@ -3,6 +3,7 @@
  * 
  * Handles database operations for DeliveryQuotes and DeliveryDispatch,
  * integrates with DeliveryOrchestrator, and handles manual/automated dispatches.
+ * Provides clean, structured console logs for 100% terminal observability.
  */
 
 import { prisma } from "../../db.js";
@@ -29,10 +30,18 @@ export class DeliveryManager {
     pickupPincode = 500033,
     deliveryPincode = 500081,
   ): Promise<DeliveryQuoteResult> {
+    console.log(`\n📊 [Delivery Rate Comparison] Querying live quotes for Order #${orderId} (${pickupPincode} ➔ ${deliveryPincode})...`);
+
     const quotesData = await orchestrator.getAllQuotes({
       pickupPincode,
       deliveryPincode,
     });
+
+    for (const q of quotesData.quotes) {
+      console.log(`   • ${q.provider}: ₹${q.quotedFee} (${q.estimatedMinutes} mins) — ${q.available ? "Available ✅" : "Unavailable ❌"}`);
+    }
+
+    console.log(`🏆 [Selected Best Rate]: ${quotesData.cheapest.provider.toUpperCase()} (₹${quotesData.cheapest.quotedFee}, ${quotesData.cheapest.estimatedMinutes} mins)\n`);
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min expiry
 
@@ -62,12 +71,14 @@ export class DeliveryManager {
   }
 
   /**
-   * Dispatch an order to a delivery provider (Borzo, Shadowfax, Shiprocket)
+   * Dispatch an order: Compares live quotes, picks lowest fee, and dispatches rider
    */
   static async dispatchOrder(
     orderId: number,
-    providerCode: DeliveryProviderCode = "borzo",
+    preferredProviderCode?: DeliveryProviderCode,
   ) {
+    console.log(`\n🛵 [Delivery Dispatch Triggered] Processing Order #${orderId}...`);
+
     const order = await prisma.order.findUnique({
       where: { id: orderId },
       include: { customer: true, deliveryDispatch: true },
@@ -75,37 +86,63 @@ export class DeliveryManager {
 
     if (!order) throw new Error(`Order #${orderId} not found`);
 
+    console.log(`👤 [Customer Details] Name: ${order.customer.name || "Customer"} | Phone: ${order.customer.phone}`);
+    console.log(`📍 [Drop Address] ${order.deliveryAddress || "Jubilee Hills, Hyderabad"}`);
+
+    // Step 1: Query live provider rates
+    console.log(`📊 [Delivery Rate Comparison] Querying live quotes across providers...`);
+    const quotesData = await orchestrator.getAllQuotes({
+      pickupPincode: 500033,
+      deliveryPincode: 500081,
+    });
+
+    for (const q of quotesData.quotes) {
+      console.log(`   • ${q.provider}: ₹${q.quotedFee} (${q.estimatedMinutes} mins)`);
+    }
+
+    const selectedProviderCode = preferredProviderCode || quotesData.cheapest.providerCode;
+    const selectedFee = quotesData.quotes.find((q) => q.providerCode === selectedProviderCode)?.quotedFee || order.deliveryFee || 45;
+
+    console.log(`🏆 [Selected Delivery Partner]: ${selectedProviderCode.toUpperCase()} (Fee: ₹${selectedFee})`);
+
+    // Step 2: Trigger dispatch via selected provider
+    console.log(`🚀 [Dispatching Rider] Booking rider on ${selectedProviderCode.toUpperCase()} API...`);
+
     const result = await orchestrator.dispatchOrder({
       orderId,
-      providerCode,
+      providerCode: selectedProviderCode,
       customerName: order.customer.name ?? "Customer",
       customerPhone: order.customer.phone,
       deliveryAddress: order.deliveryAddress ?? "Jubilee Hills, Hyderabad",
     });
 
-    // Upsert DeliveryDispatch record in DB
+    console.log(`🔍 [Rider Search Active] Booking ID: ${result.dispatchId} | Initial Status: ${result.status || "SEARCHING_RIDER"}`);
+
+    // Step 3: Upsert DeliveryDispatch record in DB
     const dispatch = await prisma.deliveryDispatch.upsert({
       where: { orderId },
       update: {
         providerCode: result.providerCode,
         externalDeliveryId: result.dispatchId,
         status: result.status || "SEARCHING_RIDER",
-        deliveryFee: order.deliveryFee || 45,
+        deliveryFee: selectedFee,
       },
       create: {
         orderId,
         providerCode: result.providerCode,
         externalDeliveryId: result.dispatchId,
         status: result.status || "SEARCHING_RIDER",
-        deliveryFee: order.deliveryFee || 45,
+        deliveryFee: selectedFee,
       },
     });
 
-    // Also update order status to out_for_delivery or preparing
+    // Step 4: Update order status to out_for_delivery
     await prisma.order.update({
       where: { id: orderId },
       data: { status: "out_for_delivery" },
     });
+
+    console.log(`✅ [Order #${orderId} Updated] Status -> out_for_delivery | Partner -> ${result.providerCode.toUpperCase()}\n`);
 
     await notifyAdminOfEvent("order_updated", { ...order, deliveryDispatch: dispatch });
     return { ok: true, dispatch, result };

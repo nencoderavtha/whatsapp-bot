@@ -29,10 +29,14 @@ export interface BorzoDispatchParams {
 
 export class BorzoDeliveryService {
   private apiToken: string;
-  private baseUrl: string = "https://robot.wefast.in/api/business/1.2";
+  private baseUrl: string;
 
   constructor() {
     this.apiToken = process.env.BORZO_API_TOKEN || "";
+    const isSandbox = !process.env.BORZO_ENV || process.env.BORZO_ENV === "sandbox" || this.apiToken.startsWith("71B39E");
+    this.baseUrl = isSandbox
+      ? "https://robotapitest-in.borzodelivery.com/api/business/1.8"
+      : "https://robot-in.borzodelivery.com/api/business/1.8";
   }
 
   /**

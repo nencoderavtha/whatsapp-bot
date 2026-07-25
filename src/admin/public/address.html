@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Pin Delivery Location — Godavari Ruchulu</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body, html { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    #map { height: 100vh; width: 100vw; position: absolute; inset: 0; z-index: 0; }
+    .glass-card { background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(20px); }
+    .slide-up { transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans relative overflow-hidden">
+
+  <!-- Full Screen Map -->
+  <div id="map"></div>
+
+  <!-- Top Search Bar Container -->
+  <div class="absolute top-4 left-4 right-4 z-20 max-w-md mx-auto">
+    <div class="glass-card rounded-2xl p-2 border border-slate-700/80 shadow-2xl flex items-center gap-2">
+      <span class="text-slate-400 pl-2 text-sm">🔍</span>
+      <input type="text" id="search-input" oninput="handleSearchInput(event)" placeholder="Search area, locality or landmark in Hyderabad..."
+        class="w-full bg-transparent text-xs text-white placeholder:text-slate-400 focus:outline-none py-1.5" />
+      <button onclick="clearSearch()" id="btn-clear" class="hidden text-slate-400 hover:text-white px-2 text-xs">✕</button>
+    </div>
+    
+    <!-- Search Results Dropdown -->
+    <div id="search-results" class="hidden glass-card rounded-2xl border border-slate-800 mt-2 max-h-48 overflow-y-auto shadow-2xl divide-y divide-slate-800 text-xs"></div>
+  </div>
+
+  <!-- Floating GPS Button -->
+  <button id="btn-gps" onclick="locateGPS()" class="absolute bottom-24 right-4 z-20 bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2 transition-all">
+    🎯 Locate Me
+  </button>
+
+  <!-- Floating Bottom Bar: Step 1 (Confirm Pin) -->
+  <div id="pin-confirm-bar" class="absolute bottom-0 left-0 right-0 z-20 p-4 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent">
+    <div class="max-w-md mx-auto space-y-2">
+      <div class="glass-card p-3 rounded-2xl border border-slate-800 text-center">
+        <p id="area-preview" class="text-xs text-slate-300 font-medium truncate">Fetching pinned area location...</p>
+      </div>
+      <button onclick="proceedToAddressForm()" class="w-full bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-extrabold py-3.5 rounded-2xl text-sm transition-all shadow-2xl flex items-center justify-center gap-2">
+        📍 Confirm Location & Fill Flat No ➔
+      </button>
+    </div>
+  </div>
+
+  <!-- Slide-up Full Address Form Sheet: Step 2 -->
+  <div id="address-sheet" class="absolute bottom-0 left-0 right-0 z-30 transform translate-y-full slide-up max-h-[90vh] overflow-y-auto glass-card rounded-t-3xl border-t border-slate-800 p-5 space-y-4 shadow-2xl">
+    <div class="max-w-md mx-auto space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-base font-extrabold text-white flex items-center gap-2">
+            <span>📍</span> Delivery Address Details
+          </h2>
+          <p class="text-[11px] text-slate-400 mt-0.5">Fill in house / flat details to dispatch your order</p>
+        </div>
+        <button onclick="closeAddressForm()" class="text-xs font-bold text-rose-400 hover:text-rose-300 bg-rose-950/60 px-3 py-1.5 rounded-xl border border-rose-500/30">
+          ← Edit Map Pin
+        </button>
+      </div>
+
+      <form id="address-form" onsubmit="submitAddress(event)" class="space-y-3">
+        <div>
+          <label class="block text-[11px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Pinned Area</label>
+          <textarea id="fullAddress" rows="2" readonly
+            class="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3.5 py-2 text-[11px] text-slate-300 focus:outline-none cursor-not-allowed resize-none"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-bold text-slate-300 mb-1 uppercase tracking-wider">Flat / House / Door No. *</label>
+          <input type="text" id="flatNo" required placeholder="e.g. Flat 402, Door No 8-2-293"
+            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-bold text-slate-300 mb-1 uppercase tracking-wider">Building / Apartment / Colony Name *</label>
+          <input type="text" id="buildingName" required placeholder="e.g. Bhavani Residency, Prashant Hills"
+            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-[11px] font-bold text-slate-300 mb-1 uppercase tracking-wider">Landmark</label>
+            <input type="text" id="landmark" placeholder="e.g. Near D-Mart"
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
+          </div>
+          <div>
+            <label class="block text-[11px] font-bold text-slate-300 mb-1 uppercase tracking-wider">Pincode</label>
+            <input type="text" id="pincode" placeholder="e.g. 500081" value="500081"
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500/60 transition-all placeholder:text-slate-600" />
+          </div>
+        </div>
+
+        <input type="hidden" id="lat" value="17.4380">
+        <input type="hidden" id="lng" value="78.4050">
+
+        <button type="submit" id="btn-submit" class="w-full bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-extrabold py-3.5 rounded-2xl text-sm transition-all shadow-xl flex items-center justify-center gap-2 mt-3">
+          ✅ Save & Return to WhatsApp
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Success Card -->
+  <div id="success-card" class="hidden fixed inset-0 z-40 glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
+    <div class="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-4xl mx-auto shadow-2xl">🎉</div>
+    <h2 class="text-xl font-extrabold text-emerald-400">Delivery Address Saved!</h2>
+    <p id="success-msg" class="text-xs text-slate-300 max-w-sm px-4">Your delivery location has been pinned and updated in WhatsApp.</p>
+    <p class="text-[11px] text-slate-500">You can now close this tab and return to WhatsApp to complete your order.</p>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const customerPhone = urlParams.get("phone") || "";
+
+    // Default Hyderabad center (Jubilee Hills / Madhapur)
+    let curLat = 17.4380;
+    let curLng = 78.4050;
+    let searchDebounce = null;
+
+    const map = L.map("map", { zoomControl: false }).setView([curLat, curLng], 15);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // Red Custom Pin Marker Icon
+    const redIcon = L.icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+
+    const marker = L.marker([curLat, curLng], { draggable: true, icon: redIcon }).addTo(map);
+
+    function updateCoords(lat, lng) {
+      curLat = lat;
+      curLng = lng;
+      document.getElementById("lat").value = lat.toFixed(6);
+      document.getElementById("lng").value = lng.toFixed(6);
+      reverseGeocode(lat, lng);
+    }
+
+    marker.on("dragend", function(e) {
+      const pos = marker.getLatLng();
+      updateCoords(pos.lat, pos.lng);
+    });
+
+    map.on("click", function(e) {
+      marker.setLatLng(e.latlng);
+      updateCoords(e.latlng.lat, e.latlng.lng);
+    });
+
+    async function reverseGeocode(lat, lng) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+        const data = await res.json();
+        if (data && data.display_name) {
+          const formatted = data.display_name;
+          document.getElementById("fullAddress").value = formatted;
+          document.getElementById("area-preview").textContent = formatted;
+          if (data.address && data.address.postcode) {
+            document.getElementById("pincode").value = data.address.postcode;
+          }
+        }
+      } catch (e) {
+        document.getElementById("fullAddress").value = `GPS Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        document.getElementById("area-preview").textContent = `GPS Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      }
+    }
+
+    function locateGPS() {
+      const btn = document.getElementById("btn-gps");
+      btn.textContent = "⏳ Locating...";
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            curLat = pos.coords.latitude;
+            curLng = pos.coords.longitude;
+            map.setView([curLat, curLng], 17);
+            marker.setLatLng([curLat, curLng]);
+            updateCoords(curLat, curLng);
+            btn.textContent = "🎯 Locate Me";
+          },
+          (err) => {
+            alert("Could not get GPS location. Please tap or search on the map.");
+            btn.textContent = "🎯 Locate Me";
+          },
+          { enableHighAccuracy: true }
+        );
+      } else {
+        alert("Geolocation not supported by browser.");
+        btn.textContent = "🎯 Locate Me";
+      }
+    }
+
+    // Auto locate on load
+    locateGPS();
+
+    // Map Search Functions
+    function handleSearchInput(e) {
+      const q = e.target.value.trim();
+      const clearBtn = document.getElementById("btn-clear");
+      const resultsDiv = document.getElementById("search-results");
+
+      if (q.length > 0) clearBtn.classList.remove("hidden");
+      else clearBtn.classList.add("hidden");
+
+      if (q.length < 3) {
+        resultsDiv.classList.add("hidden");
+        return;
+      }
+
+      if (searchDebounce) clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(() => searchLocation(q), 350);
+    }
+
+    function clearSearch() {
+      const input = document.getElementById("search-input");
+      input.value = "";
+      document.getElementById("btn-clear").classList.add("hidden");
+      document.getElementById("search-results").classList.add("hidden");
+    }
+
+    async function searchLocation(query) {
+      const resultsDiv = document.getElementById("search-results");
+      resultsDiv.innerHTML = `<div class="p-3 text-slate-400 text-center">Searching "${query}"...</div>`;
+      resultsDiv.classList.remove("hidden");
+
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ", Hyderabad, Telangana")}&limit=5`);
+        const data = await res.json();
+
+        if (!data || data.length === 0) {
+          resultsDiv.innerHTML = `<div class="p-3 text-slate-400 text-center">No matching locations found</div>`;
+          return;
+        }
+
+        resultsDiv.innerHTML = data.map((item) => `
+          <div onclick="selectSearchResult(${item.lat}, ${item.lon}, '${item.display_name.replace(/'/g, "\\'")}')" class="p-3 hover:bg-slate-800/80 cursor-pointer transition-colors text-slate-200 flex items-center gap-2">
+            <span>📍</span>
+            <span class="truncate">${item.display_name}</span>
+          </div>
+        `).join("");
+      } catch (err) {
+        resultsDiv.innerHTML = `<div class="p-3 text-rose-400 text-center">Search failed. Try dragging map.</div>`;
+      }
+    }
+
+    function selectSearchResult(lat, lng, displayName) {
+      const nLat = parseFloat(lat);
+      const nLng = parseFloat(lng);
+      map.setView([nLat, nLng], 17);
+      marker.setLatLng([nLat, nLng]);
+      updateCoords(nLat, nLng);
+      document.getElementById("search-results").classList.add("hidden");
+      document.getElementById("search-input").value = displayName.split(",")[0];
+    }
+
+    function proceedToAddressForm() {
+      document.getElementById("address-sheet").classList.remove("translate-y-full");
+    }
+
+    function closeAddressForm() {
+      document.getElementById("address-sheet").classList.add("translate-y-full");
+    }
+
+    async function submitAddress(e) {
+      e.preventDefault();
+      const flat = document.getElementById("flatNo").value.trim();
+      const bldg = document.getElementById("buildingName").value.trim();
+      const lmark = document.getElementById("landmark").value.trim();
+      const pin = document.getElementById("pincode").value.trim();
+      const area = document.getElementById("fullAddress").value.trim();
+      const lat = parseFloat(document.getElementById("lat").value);
+      const lng = parseFloat(document.getElementById("lng").value);
+
+      const fullFormattedAddress = `${flat}, ${bldg}${lmark ? `, Near ${lmark}` : ""}, ${area} - ${pin}`;
+
+      const btn = document.getElementById("btn-submit");
+      btn.disabled = true;
+      btn.textContent = "Saving Location...";
+
+      try {
+        const res = await fetch("/public/api/customer/address", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: customerPhone,
+            address: fullFormattedAddress,
+            lat,
+            lng,
+          }),
+        });
+
+        if (res.ok) {
+          document.getElementById("address-sheet").classList.add("translate-y-full");
+          document.getElementById("success-card").classList.remove("hidden");
+          document.getElementById("success-msg").textContent = `Delivery Address Saved: ${fullFormattedAddress}`;
+        } else {
+          alert("Could not save address. Please try again.");
+          btn.disabled = false;
+          btn.textContent = "✅ Save & Return to WhatsApp";
+        }
+      } catch (err) {
+        alert("Network error. Please try again.");
+        btn.disabled = false;
+        btn.textContent = "✅ Save & Return to WhatsApp";
+      }
+    }
+  </script>
+</body>
+</html>

@@ -96,6 +96,107 @@ function renderProgress(status) {
     <div class="flex justify-between mb-3">${labels}</div>`;
 }
 
+function renderDeliverySection(o) {
+  if (o.type !== "delivery") return "";
+
+  const dispatch = o.deliveryDispatch;
+  const status = dispatch ? dispatch.status : "NOT_SCHEDULED";
+  const providerCode = dispatch ? (dispatch.providerCode || "borzo") : "";
+  const providerName = providerCode ? (providerCode === "borzo" ? "Borzo Express" : providerCode === "shadowfax" ? "Shadowfax" : "Shiprocket / Rapido") : "None";
+  const fee = o.deliveryFee || (dispatch ? dispatch.deliveryFee : 45);
+
+  const statusLabels = {
+    SEARCHING_RIDER: "Searching for Rider",
+    COURIER_ASSIGNED: "Courier Assigned",
+    RIDER_ASSIGNED: "Courier Assigned",
+    PICKED_UP: "Parcel Picked Up",
+    IN_TRANSIT: "Out for Delivery",
+    DELIVERED: "Delivered",
+    CANCELLED: "Dispatch Cancelled",
+    NOT_SCHEDULED: "Not Dispatched",
+  };
+
+  const statusBadges = {
+    SEARCHING_RIDER: "bg-amber-950/70 text-amber-400 border-amber-500/30",
+    COURIER_ASSIGNED: "bg-blue-950/70 text-blue-400 border-blue-500/30",
+    RIDER_ASSIGNED: "bg-blue-950/70 text-blue-400 border-blue-500/30",
+    PICKED_UP: "bg-indigo-950/70 text-indigo-400 border-indigo-500/30",
+    IN_TRANSIT: "bg-purple-950/70 text-purple-400 border-purple-500/30",
+    DELIVERED: "bg-emerald-950/70 text-emerald-400 border-emerald-500/30",
+    CANCELLED: "bg-rose-950/70 text-rose-400 border-rose-500/30",
+    NOT_SCHEDULED: "bg-slate-900 text-slate-400 border-slate-800",
+  };
+
+  const badgeCls = statusBadges[status] || "bg-blue-950/70 text-blue-400 border-blue-500/30";
+  const displayStatus = statusLabels[status] || status;
+
+  const riderInfo = dispatch && dispatch.riderName
+    ? `<div class="text-[11px] text-slate-200 mt-1 font-medium flex items-center gap-1">👤 Rider: ${esc(dispatch.riderName)} ${dispatch.riderPhone ? `<a href="tel:${esc(dispatch.riderPhone)}" class="text-rose-400 underline font-mono">(${esc(dispatch.riderPhone)})</a>` : ""}</div>`
+    : "";
+
+  const trackId = dispatch?.externalDeliveryId;
+  const isTestTrack = trackId && (trackId.startsWith("329") || trackId.startsWith("29"));
+  const trackingUrl = trackId
+    ? (isTestTrack
+        ? `https://robotapitest-in.borzodelivery.com/in/track/${esc(trackId)}`
+        : `https://borzodelivery.com/in/track/${esc(trackId)}`)
+    : "";
+
+  const trackingLink = trackingUrl
+    ? `<a href="${trackingUrl}" target="_blank" class="text-[11px] text-rose-400 hover:underline flex items-center gap-1 mt-1 font-mono font-bold">🔗 Track Delivery Courier (${esc(trackId)})</a>`
+    : "";
+
+  const isDispatchActive = dispatch && !["NOT_SCHEDULED", "CANCELLED"].includes(status);
+
+  if (isDispatchActive) {
+    return `
+      <div class="bg-slate-900/90 rounded-xl p-3 mb-3 border border-blue-500/30 space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs">🛵</span>
+            <span class="font-bold text-xs text-white">${esc(providerName)}</span>
+            <span class="text-[10px] font-mono text-slate-400">(+₹${fee} delivery)</span>
+          </div>
+          <span class="text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">${displayStatus}</span>
+        </div>
+        ${riderInfo}
+        ${trackingLink}
+        <div class="pt-1 flex items-center justify-between">
+          <details class="text-[10px] w-full">
+            <summary class="cursor-pointer text-slate-400 hover:text-slate-200 transition-colors font-medium">🔄 Change Partner / Re-dispatch</summary>
+            <div class="flex gap-1.5 mt-2 pt-1.5 border-t border-slate-800">
+              <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 px-2 py-1 bg-blue-950 text-blue-300 border border-blue-500/40 rounded-md font-bold">
+                Switch Borzo
+              </button>
+              <button onclick="window.dispatchOrderDelivery(${o.id}, 'shadowfax')" class="flex-1 px-2 py-1 bg-slate-800 text-slate-300 border border-slate-700 rounded-md font-bold">
+                Switch Shadowfax
+              </button>
+            </div>
+          </details>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="bg-slate-900/60 rounded-xl p-3 mb-3 border border-slate-800 space-y-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-1.5">
+          <span class="text-xs">🛵</span>
+          <span class="font-bold text-xs text-slate-300">Delivery (+₹${fee})</span>
+        </div>
+        <span class="text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">${displayStatus}</span>
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
+          🛵 Dispatch Borzo Express
+        </button>
+        <button onclick="window.dispatchOrderDelivery(${o.id}, 'shadowfax')" class="text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700 transition-all">
+          Shadowfax
+        </button>
+      </div>
+    </div>`;
+}
+
 function renderActions(o) {
   if (["delivered", "cancelled"].includes(o.status)) return "";
   const flow = FLOW[o.status];
@@ -156,8 +257,10 @@ function renderOrder(o) {
       <div class="bg-slate-950/50 rounded-xl px-3 py-2.5 mb-3 border border-slate-900/80">
         <div class="font-bold text-sm text-slate-200 truncate">${esc(o.customer?.name || "Unknown")}</div>
         <div class="font-mono text-[11px] text-slate-500 mt-0.5">${esc(o.customer?.phone || "")}</div>
-        ${o.customer?.address ? `<div class="text-[11px] text-slate-400 mt-1.5 pt-1.5 border-t border-slate-900 flex gap-1.5"><span class="opacity-60">📍</span>${esc(o.customer.address)}</div>` : ""}
+        ${o.deliveryAddress || o.customer?.address ? `<div class="text-[11px] text-slate-400 mt-1.5 pt-1.5 border-t border-slate-900 flex gap-1.5"><span class="opacity-60">📍</span>${esc(o.deliveryAddress || o.customer.address)}</div>` : ""}
       </div>
+
+      ${renderDeliverySection(o)}
 
       <ul class="space-y-1 mb-2 flex-grow text-xs">
         ${o.items.map(i => `
@@ -176,7 +279,7 @@ function renderOrder(o) {
       <div class="flex items-end justify-between mt-auto">
         <div>
           <p class="text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Total</p>
-          <p class="font-black text-xl text-rose-400 leading-tight">₹${o.total}</p>
+          <p class="font-black text-xl text-rose-400 leading-tight">₹${o.total}${o.deliveryFee ? `<span class="text-xs font-normal text-slate-500 ml-1">(incl. ₹${o.deliveryFee} delivery)</span>` : ""}</p>
         </div>
         ${isDone ? `<span class="text-[11px] font-bold pb-0.5 ${o.status === "delivered" ? "text-emerald-500" : "text-rose-400"}">
           ${o.status === "delivered" ? "✓ Delivered" : "✗ Cancelled"}
@@ -279,6 +382,24 @@ export async function markPaid(orderId) {
     if (card) card.querySelectorAll("button").forEach(b => { b.disabled = false; });
   }
 }
+
+export async function dispatchOrderDelivery(orderId, providerCode = "borzo") {
+  const card = document.getElementById(`order-card-${orderId}`);
+  if (card) card.querySelectorAll("button").forEach(b => { b.disabled = true; });
+  try {
+    await api(`/orders/${orderId}/dispatch`, {
+      method: "POST",
+      body: JSON.stringify({ providerCode }),
+    });
+    showToast("Delivery Dispatched", `Dispatched Order #${orderId} via ${providerCode.toUpperCase()}`);
+    await loadOrders();
+  } catch (err) {
+    showToast("Dispatch Error", "Could not dispatch delivery order.");
+    if (card) card.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  }
+}
+
+window.dispatchOrderDelivery = dispatchOrderDelivery;
 
 export function setOrderFilter(val) {
   const sel = document.getElementById("order-filter");

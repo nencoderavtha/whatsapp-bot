@@ -379,10 +379,7 @@ export class BotSessionManager {
 
         const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
 
-        const customer = await prisma.customer.findFirst({
-          where: { phone: msg.phone },
-          include: { orders: true }
-        });
+        const customer = await getOrCreateCustomer(msg.phone, msg.name);
 
         // ── Human handoff active: AI is paused for this customer ────────────────
         // Staff reply from the dashboard until they hit "Resume AI". We still log
@@ -561,6 +558,28 @@ export class BotSessionManager {
             return;
           }
 
+          if (pending.type === "delivery" && !cust.address) {
+            const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+            const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+
+            try {
+              await adapter.sendInteractiveLocationRequest(
+                msg.phone,
+                "📍 *Delivery Location Needed!*\n\nTap *📍 Share Location* to send your current GPS location, or tap the button below to pin on map & enter flat/house number."
+              );
+            } catch (e) {
+              console.warn("[Location Request Failed, sending CTA URL]", e);
+            }
+
+            await adapter.sendInteractiveCtaUrl(
+              msg.phone,
+              "🗺️ Open Map & Address Form",
+              "🗺️ Pin Location on Map",
+              mapFormUrl,
+            );
+            return;
+          }
+
           let lines: any[] = [];
           try { lines = JSON.parse(pending.lines); } catch {}
           const menuItems = await prisma.menuItem.findMany({
@@ -568,7 +587,7 @@ export class BotSessionManager {
             include: { variants: true }
           });
           const byId = new Map(menuItems.map((m) => [m.id, m]));
-          let total = 0;
+          let subtotal = 0;
           for (const l of lines) {
             const mi = byId.get(l.menuItemId);
             if (!mi) continue;
@@ -577,8 +596,12 @@ export class BotSessionManager {
               const v = mi.variants.find((v) => v.id === l.variantId);
               if (v) p = v.price;
             }
-            total += p * l.qty;
+            subtotal += p * l.qty;
           }
+
+          const isDelivery = pending.type === "delivery";
+          const deliveryFee = isDelivery ? 45 : 0;
+          const grandTotal = subtotal + deliveryFee;
 
           const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
 
@@ -586,13 +609,13 @@ export class BotSessionManager {
             const payRes = await createPaymentLink({
               restaurantId,
               customerId: cust.id,
-              amount: total,
+              amount: grandTotal,
               customerPhone: msg.phone,
               restaurantName: botConfig.restaurantName,
             });
 
             if (payRes?.url) {
-              const payMsg = paymentLinkTemplate(payRes.url, total);
+              const payMsg = paymentLinkTemplate(payRes.url, grandTotal);
               await adapter.sendText(msg.phone, payMsg);
               return;
             }
@@ -600,7 +623,7 @@ export class BotSessionManager {
 
           await adapter.sendInteractiveButtons(
             msg.phone,
-            `₹${total} ela pay chestharu andi?`,
+            `₹${grandTotal} ela pay chestharu andi?`,
             [
               { id: "pay_method_upi", title: "📱 UPI" },
               { id: "pay_method_cash", title: "💵 Cash on Pickup" }

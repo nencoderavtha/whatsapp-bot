@@ -54,13 +54,26 @@ let currentPairingCode = null;
 // ── Auth ───────────────────────────────────────────────────────────────────
 async function login() {
   const username = document.getElementById("un")?.value?.trim() ?? "";
-  const password = document.getElementById("pw").value;
+  const password = document.getElementById("pw")?.value ?? "";
+  const btn = document.querySelector("#login button");
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Entering...";
+  }
+
   try {
     await apiLogin(username, password);
-    document.getElementById("loginErr").classList.add("hidden");
+    document.getElementById("loginErr")?.classList.add("hidden");
     showApp();
-  } catch {
-    document.getElementById("loginErr").classList.remove("hidden");
+  } catch (err) {
+    console.error("[Login Failed]", err);
+    document.getElementById("loginErr")?.classList.remove("hidden");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Enter Dashboard";
+    }
   }
 }
 

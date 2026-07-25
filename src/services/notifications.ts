@@ -6,11 +6,15 @@
 export type NotifOrder = {
   id: number;
   type: string;
+  subtotal?: number;
+  deliveryFee?: number;
+  deliveryAddress?: string | null;
   total: number;
   note?: string | null;
   payment?: { method?: string | null; reference?: string | null; status?: string | null } | null;
   items: { qty: number; nameSnap: string; variantSnap?: string | null; priceSnap: number }[];
   customer: { name?: string | null; phone: string };
+  deliveryDispatch?: { providerCode?: string; status?: string; externalDeliveryId?: string | null; riderName?: string | null; riderPhone?: string | null } | null;
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -73,6 +77,9 @@ function itemLines(order: NotifOrder): string {
 export function orderConfirmationMsg(order: NotifOrder, restaurantName: string): string {
   const noteSection = order.note ? `\n📝 _Note: ${order.note}_` : "";
   const typeLabel = TYPE_LABEL[order.type] ?? order.type;
+  const deliverySection = order.type === "delivery"
+    ? `\n📍 *Delivery Address:* ${order.deliveryAddress || "Address requested"}\n🛵 *Delivery Fee:* ₹${(order.deliveryFee || 0).toFixed(0)}`
+    : "";
 
   return [
     `✅ *Order #${order.id} Confirmed!*`,
@@ -82,12 +89,12 @@ export function orderConfirmationMsg(order: NotifOrder, restaurantName: string):
     itemLines(order),
     "",
     `━━━━━━━━━━━━━━━━━━━━`,
-    `💰 *Total: ₹${order.total.toFixed(0)}*`,
-    `📦 *Type:* ${typeLabel}`,
+    `💰 *Total: ₹${order.total.toFixed(0)}*${order.subtotal ? ` _(Subtotal: ₹${order.subtotal.toFixed(0)})_` : ""}`,
+    `📦 *Type:* ${typeLabel}${deliverySection}`,
     `💵 *Payment:* ${paymentLabel(order)}${noteSection}`,
     `━━━━━━━━━━━━━━━━━━━━`,
     "",
-    `⏱ _Ready in ~20–25 mins. We'll send you an update!_ 🙏`,
+    `⏱ _Estimated time: ~25–35 mins. We'll update you on delivery status!_ 🙏`,
     "",
     `— _${restaurantName}_`,
   ].join("\n");
@@ -113,6 +120,54 @@ export function orderStatusMsg(order: NotifOrder, status: string, restaurantName
   ].join("\n");
 }
 
+// ─── Sent to customer for live delivery updates ────────────────────────────
+
+export function deliveryStatusMsg(
+  orderId: number,
+  status: string,
+  riderName?: string | null,
+  riderPhone?: string | null,
+  trackingUrl?: string | null,
+  restaurantName = "Godavari Ruchulu",
+): string {
+  const statusMessages: Record<string, { emoji: string; title: string; body: string }> = {
+    COURIER_ASSIGNED: {
+      emoji: "🛵",
+      title: "Delivery Courier Assigned!",
+      body: `Courier partner ${riderName ? `*${riderName}*` : ""} ${riderPhone ? `(${riderPhone})` : ""} has been assigned to pick up your order.`,
+    },
+    PICKED_UP: {
+      emoji: "📦",
+      title: "Order Picked Up!",
+      body: "Your order has been picked up from the kitchen and is on its way to you! 🛵💨",
+    },
+    IN_TRANSIT: {
+      emoji: "🛵",
+      title: "Out for Delivery!",
+      body: "Your courier is nearby and approaching your delivery location.",
+    },
+    DELIVERED: {
+      emoji: "🎉",
+      title: "Order Delivered!",
+      body: "Your order has been successfully delivered. Enjoy your meal! 😊",
+    },
+  };
+
+  const info = statusMessages[status];
+  if (!info) return "";
+
+  const trackingLine = trackingUrl ? `\n🔗 *Track Live:* ${trackingUrl}` : "";
+
+  return [
+    `${info.emoji} *Order #${orderId} — ${info.title}*`,
+    "",
+    info.body,
+    trackingLine,
+    "",
+    `— _${restaurantName}_`,
+  ].join("\n");
+}
+
 // ─── Sent to owner(s) when a new order is placed ────────────────────────────
 
 export function ownerNewOrderMsg(order: NotifOrder): string {
@@ -127,12 +182,15 @@ export function ownerNewOrderMsg(order: NotifOrder): string {
 
   const noteSection = order.note ? `\n📝 _${order.note}_` : "";
   const typeLabel = TYPE_LABEL[order.type] ?? order.type;
+  const deliveryInfo = order.type === "delivery"
+    ? `\n📍 *Delivery Address:* ${order.deliveryAddress || "Not specified"}\n🛵 *Delivery Fee:* ₹${(order.deliveryFee || 0).toFixed(0)}`
+    : "";
 
   return [
     `🔔 *New Order #${order.id}!*`,
     "",
     `👤 *Customer:* ${customer}`,
-    `📦 *Type:* ${typeLabel}  •  🕐 ${now}`,
+    `📦 *Type:* ${typeLabel}  •  🕐 ${now}${deliveryInfo}`,
     "",
     `📋 *Items:*`,
     itemLines(order),
