@@ -126,7 +126,9 @@ Raw conversation history (30-day retention).
 | `id` | `Int` | `@id @default(autoincrement())` | Primary Key. |
 | `customerId` | `Int` | FK $\rightarrow$ `Customer.id` | Link to Customer. |
 | `role` | `String` | Required | Sender role (`"user"` = Customer, `"assistant"` = Bot/Staff). |
-| `content` | `String` | Required | Message text content. |
+| `content` | `String` | Required | Message text content or Sarvam AI speech transcript. |
+| `mediaType` | `String` | `"text"` | Content format (`"text"`, `"audio"`, `"image"`). |
+| `mediaUrl` | `String?` | Optional | Supabase Storage URL for original voice recording / dish photo. |
 | `createdAt` | `DateTime` | `@default(now())` | Timestamp for chat retention pruning. |
 
 ---

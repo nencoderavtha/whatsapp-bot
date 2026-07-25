@@ -156,7 +156,12 @@ model Message {
   customerId Int
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   role       String   // "user" | "assistant"
-  content    String
+  content    String   // Text message or Sarvam AI audio transcript
+  
+  // Media & Voice Support
+  mediaType  String   @default("text") // "text" | "audio" | "image"
+  mediaUrl   String?  // Supabase Storage URL for original voice note / image
+
   createdAt  DateTime @default(now())
 
   @@index([customerId, createdAt])
