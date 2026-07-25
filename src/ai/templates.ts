@@ -24,19 +24,28 @@ const TYPE_LABEL: Record<string, string> = {
 
 export function orderStagedTemplate(
   items: string[],
-  total: number,
+  subtotal: number,
   type: string,
   note?: string,
+  deliveryFee = 45,
 ): string {
   const typeLabel = TYPE_LABEL[type] ?? "Pickup";
-  const noteLine = note ? `\nNote: ${note}` : "";
+  const noteLine = note ? `\n📝 Note: ${note}` : "";
   const itemList = items.map((i) => `• ${i}`).join("\n");
+  const isDelivery = type === "delivery";
+  const grandTotal = isDelivery ? subtotal + deliveryFee : subtotal;
+
+  const costBreakdown = isDelivery
+    ? `\n🍲 Items Subtotal: ₹${subtotal}\n🛵 Delivery Charge: ₹${deliveryFee}\n━━━━━━━━━━━━━━━━━━━━\n💰 Grand Total: ₹${grandTotal}`
+    : `\n💰 Grand Total: ₹${subtotal}`;
 
   return [
-    `Order idi andi —`,
+    `🛒 *Order Summary:*`,
     itemList,
-    `Total: ₹${total} · ${typeLabel}${noteLine}`,
-    `Confirm cheyyocha?`,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `📦 *Type:* ${typeLabel}${costBreakdown}${noteLine}`,
+    ``,
+    `Tap *✅ Confirm & Pay* to place your order!`,
   ].join("\n");
 }
 

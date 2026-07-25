@@ -105,7 +105,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
           phone,
           bubble,
           [
-            { id: "confirm_order_btn", title: "✅ Confirm Order" },
+            { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
             { id: "add_more_items_btn", title: "➕ Add More Items" }
           ],
           "🛒 Order Summary",
@@ -398,17 +398,32 @@ export class BotSessionManager {
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
         if (isGreeting) {
-          const nameStr = customer?.name ? ` ${customer.name}` : "";
-          const welcomeBody = `Namaskaram${nameStr} andi 🙏 Ee roju menu ready undi.`;
+          const isReturning = customer && (customer.lastOrderedAt || customer.name);
+          const nameStr = customer?.name ? `${customer.name} garu` : "andi";
+          const welcomeHeader = isReturning ? `Namaskaram ${nameStr} 🙏 Welcome back to Godavari Ruchulu!` : `Namaskaram ${nameStr} 🙏 Welcome to Godavari Ruchulu!`;
 
-          await adapter.sendInteractiveButtons(
-            msg.phone,
-            welcomeBody,
-            [
-              { id: "view_menu", title: "📋 Menu" },
-              { id: "location_info", title: "📍 Location & Hours" }
-            ],
-          );
+          const infoBlock = [
+            welcomeHeader,
+            "",
+            "📍 *Godavari Ruchulu* — MLA Colony, Jubilee Hills, Hyderabad",
+            "⏰ Evening service starting from 7:30 PM.",
+            "🔥 Authentic Rayalaseema food cooked fresh to order!",
+            "",
+            "Ee roju Specials & Menu kindha chudandi 👇",
+          ].join("\n");
+
+          const heroImg = "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=800&auto=format&fit=crop&q=80";
+
+          try {
+            await adapter.sendImage(msg.phone, heroImg, infoBlock);
+          } catch (e) {
+            await adapter.sendText(msg.phone, infoBlock);
+          }
+
+          await new Promise((r) => setTimeout(r, 1200));
+
+          const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
+          await sendMenuVisual(adapter, msg.phone, restaurantId, "🔥 Ee Roju Specials & Menu:", webMenuUrl);
           return;
         }
 
@@ -546,6 +561,55 @@ export class BotSessionManager {
           return;
         }
 
+        // ── Direct Action 4b: Use Saved Address vs Pin New Location ──────────────
+        if (rawText === "use_saved_address_btn" || cleanText.includes("use saved address")) {
+          const cust = await getOrCreateCustomer(msg.phone);
+          const prevOrders = await prisma.order.findMany({
+            where: { customerId: cust.id, deliveryAddress: { not: null } },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          });
+          const saved = cust.address || prevOrders[0]?.deliveryAddress;
+          if (saved) {
+            await prisma.customer.update({
+              where: { id: cust.id },
+              data: { address: saved },
+            });
+            await adapter.sendInteractiveButtons(
+              msg.phone,
+              `📍 *Delivery Location Confirmed!*\n\n*Address:* ${saved}\n\nTap *✅ Confirm & Pay* to complete your order.`,
+              [
+                { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+                { id: "add_more_items_btn", title: "➕ Add More Items" },
+              ],
+              "📦 Delivery Address",
+            );
+            return;
+          }
+        }
+
+        if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location")) {
+          const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+          const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+
+          try {
+            await adapter.sendInteractiveLocationRequest(
+              msg.phone,
+              "📍 *Delivery Location Needed!*\n\nTap *📍 Share Location* to send your current GPS location, or tap the button below to pin on map & enter flat/house number."
+            );
+          } catch (e) {
+            console.warn("[Location Request Failed, sending CTA URL]", e);
+          }
+
+          await adapter.sendInteractiveCtaUrl(
+            msg.phone,
+            "🗺️ Open Map & Address Form",
+            "🗺️ Pin Location on Map",
+            mapFormUrl,
+          );
+          return;
+        }
+
         // ── Direct Action 5: Confirm Order Button ──────────────────────────────
         if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
@@ -561,6 +625,28 @@ export class BotSessionManager {
           if (pending.type === "delivery" && !cust.address) {
             const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
             const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+
+            // Check if customer has a saved address from previous orders
+            const prevOrders = await prisma.order.findMany({
+              where: { customerId: cust.id, deliveryAddress: { not: null } },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            });
+
+            const savedAddr = cust.address || prevOrders[0]?.deliveryAddress;
+
+            if (savedAddr) {
+              await adapter.sendInteractiveButtons(
+                msg.phone,
+                `📍 *Delivery Location Preview:*\n\nWe found your previous address:\n🏠 *${savedAddr}*\n\nWould you like to use this location or pin a new map location?`,
+                [
+                  { id: "use_saved_address_btn", title: "📍 Use Saved Address" },
+                  { id: "pin_new_location_btn", title: "🗺️ Pin New Location" },
+                ],
+                "📦 Select Delivery Location",
+              );
+              return;
+            }
 
             try {
               await adapter.sendInteractiveLocationRequest(

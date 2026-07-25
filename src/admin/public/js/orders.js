@@ -150,7 +150,7 @@ function renderDeliverySection(o) {
 
   if (isDispatchActive) {
     return `
-      <div class="bg-slate-900/90 rounded-xl p-3 mb-3 border border-blue-500/30 space-y-1.5">
+      <div class="bg-slate-900/90 rounded-xl p-3 mb-2 border border-blue-500/30 space-y-1.5">
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-1.5">
             <span class="text-xs">🛵</span>
@@ -178,7 +178,7 @@ function renderDeliverySection(o) {
   }
 
   return `
-    <div class="bg-slate-900/60 rounded-xl p-3 mb-3 border border-slate-800 space-y-2">
+    <div class="bg-slate-900/60 rounded-xl p-3 mb-2 border border-slate-800 space-y-2">
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-1.5">
           <span class="text-xs">🛵</span>
@@ -188,10 +188,7 @@ function renderDeliverySection(o) {
       </div>
       <div class="flex gap-2 pt-1">
         <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
-          🛵 Dispatch Borzo Express
-        </button>
-        <button onclick="window.dispatchOrderDelivery(${o.id}, 'shadowfax')" class="text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700 transition-all">
-          Shadowfax
+          🛵 Dispatch Delivery Rider
         </button>
       </div>
     </div>`;
@@ -206,7 +203,7 @@ function renderActions(o) {
   const spinner = `<svg class="animate-spin w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`;
 
   return `
-    <div class="flex items-center gap-2 pt-3 border-t border-slate-900/60 mt-3">
+    <div class="flex items-center gap-2 pt-3 border-t border-slate-900/60 mt-2">
       <button id="action-btn-${o.id}"
         onclick="window.setOrderStatus(${o.id}, '${flow.next}')"
         class="flex-1 h-10 px-3 text-[12px] font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${flow.cls}">
@@ -240,12 +237,15 @@ function renderOrder(o) {
       ? "text-purple-400 bg-purple-500/10 border-purple-500/20"
       : "text-slate-400 bg-slate-800/50 border-slate-700/30";
 
-  return `
-    <div id="order-card-${o.id}" class="glass rounded-2xl p-4 flex flex-col border ${urgency} ${isDone ? "opacity-55" : ""} transition-all">
+  const itemCount = o.items ? o.items.reduce((acc, i) => acc + i.qty, 0) : 0;
 
+  return `
+    <div id="order-card-${o.id}" class="glass rounded-2xl p-4 flex flex-col border ${urgency} ${isDone ? "opacity-55" : ""} transition-all shadow-xl">
+
+      <!-- Header: Order ID, Type, Payment, Age -->
       <div class="flex items-start justify-between gap-2 mb-2">
         <div class="flex items-center gap-2 flex-wrap min-w-0">
-          <span class="font-black text-slate-100 tracking-tight">#${o.id}</span>
+          <span class="font-black text-slate-100 tracking-tight text-base">#${o.id}</span>
           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${typeClr} uppercase tracking-wide">${o.type}</span>
           ${pmt ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${pmtBadge(pmt.status)}">${pmt.status}</span>` : ""}
         </div>
@@ -254,37 +254,45 @@ function renderOrder(o) {
 
       ${renderProgress(o.status)}
 
-      <div class="bg-slate-950/50 rounded-xl px-3 py-2.5 mb-3 border border-slate-900/80">
-        <div class="font-bold text-sm text-slate-200 truncate">${esc(o.customer?.name || "Unknown")}</div>
-        <div class="font-mono text-[11px] text-slate-500 mt-0.5">${esc(o.customer?.phone || "")}</div>
-        ${o.deliveryAddress || o.customer?.address ? `<div class="text-[11px] text-slate-400 mt-1.5 pt-1.5 border-t border-slate-900 flex gap-1.5"><span class="opacity-60">📍</span>${esc(o.deliveryAddress || o.customer.address)}</div>` : ""}
-      </div>
-
-      ${renderDeliverySection(o)}
-
-      <ul class="space-y-1 mb-2 flex-grow text-xs">
-        ${o.items.map(i => `
-          <li class="flex items-baseline justify-between gap-2">
-            <span class="text-slate-300 min-w-0 truncate">
-              <span class="font-bold text-white">${i.qty}×</span> ${esc(i.nameSnap)}${i.variantSnap ? `<span class="text-slate-500"> (${esc(i.variantSnap)})</span>` : ""}
-            </span>
-            <span class="font-mono text-slate-500 flex-shrink-0 text-[11px]">₹${i.priceSnap * i.qty}</span>
-          </li>
-          ${i.note ? `<li class="text-[10px] text-amber-400/80 italic pl-3 truncate">↳ ${esc(i.note)}</li>` : ""}`
-        ).join("")}
-      </ul>
-
-      ${o.note ? `<p class="text-[11px] text-amber-400 bg-amber-950/20 px-2.5 py-2 rounded-lg border border-amber-900/30 mb-2 truncate">📝 ${esc(o.note)}</p>` : ""}
-
-      <div class="flex items-end justify-between mt-auto">
+      <!-- Customer Summary Header -->
+      <div class="bg-slate-950/60 rounded-xl px-3 py-2 mb-2 border border-slate-900/80 flex items-center justify-between">
         <div>
-          <p class="text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Total</p>
-          <p class="font-black text-xl text-rose-400 leading-tight">₹${o.total}${o.deliveryFee ? `<span class="text-xs font-normal text-slate-500 ml-1">(incl. ₹${o.deliveryFee} delivery)</span>` : ""}</p>
+          <div class="font-bold text-xs text-slate-200">${esc(o.customer?.name || "Customer")}</div>
+          <div class="font-mono text-[10px] text-slate-500">${esc(o.customer?.phone || "")}</div>
         </div>
-        ${isDone ? `<span class="text-[11px] font-bold pb-0.5 ${o.status === "delivered" ? "text-emerald-500" : "text-rose-400"}">
-          ${o.status === "delivered" ? "✓ Delivered" : "✗ Cancelled"}
-        </span>` : ""}
+        <div class="text-right">
+          <div class="font-black text-base text-rose-400">₹${o.total}</div>
+          <div class="text-[9px] text-slate-500 font-medium">${itemCount} items</div>
+        </div>
       </div>
+
+      <!-- Expandable Details Dropdown -->
+      <details class="mb-2 group">
+        <summary class="cursor-pointer text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors py-1.5 flex items-center justify-between border-t border-b border-slate-900/60 my-1">
+          <span class="flex items-center gap-1">📋 View Items, Address & Tracking</span>
+          <span class="text-[9px] font-mono text-slate-500 group-open:rotate-180 transition-transform">▼</span>
+        </summary>
+
+        <div class="pt-2 space-y-2">
+          ${o.deliveryAddress || o.customer?.address ? `<div class="text-[11px] text-slate-300 bg-slate-950/40 p-2 rounded-lg border border-slate-900"><span class="opacity-60">📍 Address: </span>${esc(o.deliveryAddress || o.customer.address)}</div>` : ""}
+
+          ${renderDeliverySection(o)}
+
+          <ul class="space-y-1 text-xs bg-slate-950/40 p-2.5 rounded-xl border border-slate-900">
+            ${o.items.map(i => `
+              <li class="flex items-baseline justify-between gap-2">
+                <span class="text-slate-300 min-w-0 truncate">
+                  <span class="font-bold text-white">${i.qty}×</span> ${esc(i.nameSnap)}${i.variantSnap ? `<span class="text-slate-500"> (${esc(i.variantSnap)})</span>` : ""}
+                </span>
+                <span class="font-mono text-slate-500 flex-shrink-0 text-[11px]">₹${i.priceSnap * i.qty}</span>
+              </li>
+              ${i.note ? `<li class="text-[10px] text-amber-400/80 italic pl-3 truncate">↳ ${esc(i.note)}</li>` : ""}`
+            ).join("")}
+          </ul>
+
+          ${o.note ? `<p class="text-[11px] text-amber-400 bg-amber-950/20 px-2.5 py-2 rounded-lg border border-amber-900/30">📝 ${esc(o.note)}</p>` : ""}
+        </div>
+      </details>
 
       ${renderActions(o)}
     </div>`;

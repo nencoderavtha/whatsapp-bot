@@ -27,27 +27,27 @@ const STATUS_CONFIG: Record<string, { emoji: string; heading: string; body: stri
   pending: {
     emoji: "🧾",
     heading: "Order Received",
-    body: "We've got your order and it'll head to the kitchen shortly. We'll keep you posted! 🙏",
+    body: "We've received your order! We'll keep you posted. 🙏",
   },
   confirmed: {
-    emoji: "👍",
+    emoji: "👨‍🍳",
     heading: "Order Confirmed",
-    body: "Your order is confirmed and lined up for the kitchen. We'll update you as it progresses! 🙏",
+    body: "Your order has been confirmed and is being prepared in the kitchen!",
   },
   preparing: {
-    emoji: "🍳",
+    emoji: "👨‍🍳",
     heading: "Being Prepared",
-    body: "Great news! Your order is in the kitchen and being freshly prepared. We'll ping you the moment it's ready! 🙏",
+    body: "Your order is being freshly prepared in the kitchen!",
   },
   ready: {
-    emoji: "✅",
-    heading: "Ready for Pickup!",
-    body: "Your order is ready and waiting at the counter. Come collect it at your convenience! 🎉",
+    emoji: "🔔",
+    heading: "Order Ready!",
+    body: "Your order is ready and packed!",
   },
   delivered: {
     emoji: "🎉",
-    heading: "Delivered!",
-    body: "Hope you enjoy every bite! 😊 Thank you for ordering with us — we'd love to see you again soon!",
+    heading: "Order Delivered!",
+    body: "Your order has been delivered! Enjoy your meal! 😊",
   },
   cancelled: {
     emoji: "❌",
@@ -134,7 +134,7 @@ export function deliveryStatusMsg(
     COURIER_ASSIGNED: {
       emoji: "🛵",
       title: "Delivery Courier Assigned!",
-      body: `Courier partner ${riderName ? `*${riderName}*` : ""} ${riderPhone ? `(${riderPhone})` : ""} has been assigned to pick up your order.`,
+      body: `Courier partner ${riderName ? `*${riderName}*` : "rider"} has been assigned to pick up your order.`,
     },
     PICKED_UP: {
       emoji: "📦",
@@ -156,16 +156,25 @@ export function deliveryStatusMsg(
   const info = statusMessages[status];
   if (!info) return "";
 
+  const cleanPhone = riderPhone
+    ? (riderPhone.startsWith("+") ? riderPhone : `+${riderPhone.replace(/\D/g, "")}`)
+    : null;
+
+  const riderContactLine = cleanPhone
+    ? `\n👤 *Delivery Agent:* ${riderName || "Courier Partner"}\n📞 *Call Rider:* ${cleanPhone}`
+    : "";
+
   const trackingLine = trackingUrl ? `\n🔗 *Track Live:* ${trackingUrl}` : "";
 
   return [
     `${info.emoji} *Order #${orderId} — ${info.title}*`,
     "",
     info.body,
+    riderContactLine,
     trackingLine,
     "",
     `— _${restaurantName}_`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 // ─── Sent to owner(s) when a new order is placed ────────────────────────────

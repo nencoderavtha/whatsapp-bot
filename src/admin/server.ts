@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Request, type Response, type NextFunction } from "express";
@@ -132,23 +133,25 @@ export function buildAdminApp() {
             },
           });
 
-          // Send live WhatsApp status update to customer
-          const order = await getOrder(existing.orderId);
-          if (order && order.customer?.phone) {
-            const session = botSessionManager.getSession(1);
-            if (session) {
-              const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
-              const msgText = deliveryStatusMsg(
-                existing.orderId,
-                mappedStatus,
-                courier?.name,
-                courier?.phone,
-                trackingUrl,
-                cfg?.restaurantName ?? "Godavari Ruchulu",
-              );
-              if (msgText) {
-                await session.sendText(order.customer.phone, msgText);
-                console.log(`📱 [WhatsApp Sent to Customer ${order.customer.phone}] Delivery Status: ${mappedStatus}`);
+          // Send live WhatsApp status update to customer (Only for PICKED_UP, IN_TRANSIT, DELIVERED)
+          if (["PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(mappedStatus)) {
+            const order = await getOrder(existing.orderId);
+            if (order && order.customer?.phone) {
+              const session = botSessionManager.getSession(1);
+              if (session) {
+                const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+                const msgText = deliveryStatusMsg(
+                  existing.orderId,
+                  mappedStatus,
+                  courier?.name,
+                  courier?.phone,
+                  trackingUrl,
+                  cfg?.restaurantName ?? "Godavari Ruchulu",
+                );
+                if (msgText) {
+                  await session.sendText(order.customer.phone, msgText);
+                  console.log(`📱 [WhatsApp Sent to Customer ${order.customer.phone}] Delivery Status: ${mappedStatus}`);
+                }
               }
             }
           }
@@ -351,7 +354,7 @@ export function buildAdminApp() {
         phone,
         stagedMsg,
         [
-          { id: "confirm_order_btn", title: "✅ Confirm Order" },
+          { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
           { id: "add_more_items_btn", title: "➕ Add More Items" }
         ],
         "🛒 Order Summary",
@@ -365,7 +368,17 @@ export function buildAdminApp() {
   }));
 
   app.get("/address", (_req, res) => {
-    res.sendFile(path.join(__dirname, "public", "address.html"));
+    const htmlPath = path.join(__dirname, "public", "address.html");
+    fs.readFile(htmlPath, "utf8", (err, content) => {
+      if (err) {
+        res.sendFile(htmlPath);
+        return;
+      }
+      const apiKey = process.env.GOOGLE_MAPS_API_KEY || "";
+      const injected = content.replace("/* GOOGLE_MAPS_KEY_PLACEHOLDER */", `window.GOOGLE_MAPS_API_KEY = "${apiKey}";`);
+      res.setHeader("Content-Type", "text/html");
+      res.send(injected);
+    });
   });
 
   app.post("/public/api/customer/address", asyncRoute(async (req, res) => {
@@ -400,9 +413,9 @@ export function buildAdminApp() {
     if (session) {
       await session.sendInteractiveButtons(
         phone,
-        `📍 *Delivery Location Pinned!*\n\n*Address:* ${address}\n\nTap *✅ Confirm Order* to complete your order.`,
+        `📍 *Delivery Location Pinned!*\n\n*Address:* ${address}\n\nTap *✅ Confirm & Pay* to complete your order.`,
         [
-          { id: "confirm_order_btn", title: "✅ Confirm Order" },
+          { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
           { id: "add_more_items_btn", title: "➕ Add More Items" },
         ],
         "📦 Delivery Location",
