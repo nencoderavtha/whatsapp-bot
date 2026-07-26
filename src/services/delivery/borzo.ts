@@ -33,7 +33,10 @@ export class BorzoDeliveryService {
 
   constructor() {
     this.apiToken = process.env.BORZO_API_TOKEN || "";
-    const isSandbox = !process.env.BORZO_ENV || process.env.BORZO_ENV === "sandbox" || this.apiToken.startsWith("71B39E");
+    // Sandbox unless BORZO_ENV is explicitly "production". This used to also force
+    // sandbox for any token starting with the old test token's prefix, which meant
+    // BORZO_ENV=production silently did nothing.
+    const isSandbox = (process.env.BORZO_ENV ?? "sandbox") !== "production";
     this.baseUrl = isSandbox
       ? "https://robotapitest-in.borzodelivery.com/api/business/1.8"
       : "https://robot-in.borzodelivery.com/api/business/1.8";

@@ -25,8 +25,17 @@ async function main() {
     throw err;
   });
 
-  // WhatsApp bot
-  await runBot();
+  // WhatsApp bot. A bot startup failure (bad DB schema, missing WhatsApp creds)
+  // must not take the admin portal down with it — the portal is where you go to
+  // fix that configuration, and on Cloud Run exiting here becomes a crash loop.
+  try {
+    await runBot();
+  } catch (e) {
+    console.error(
+      "❌ Bot failed to start — admin portal stays up so config can be fixed:",
+      e,
+    );
+  }
 }
 
 main().catch((e) => {

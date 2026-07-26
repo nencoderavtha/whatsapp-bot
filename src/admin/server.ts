@@ -98,7 +98,13 @@ export function buildAdminApp() {
       };
 
       const mappedStatus = statusMap[rawStatus] || "COURIER_ASSIGNED";
-      const trackingUrl = orderData.points?.find((p: any) => p.tracking_url)?.tracking_url || `https://robotapitest-in.borzodelivery.com/in/track/${borzoOrderId}`;
+      // Fall back to a tracking URL on whichever Borzo environment we're pointed at —
+      // hardcoding the sandbox host sent production customers to a test tracking page.
+      const borzoTrackHost =
+        (process.env.BORZO_ENV ?? "sandbox") === "production"
+          ? "https://borzodelivery.com"
+          : "https://robotapitest-in.borzodelivery.com";
+      const trackingUrl = orderData.points?.find((p: any) => p.tracking_url)?.tracking_url || `${borzoTrackHost}/in/track/${borzoOrderId}`;
 
       const logStatusMessages: Record<string, string> = {
         SEARCHING_RIDER: `🔍 [Rider Search Active] Borzo Order #${borzoOrderId}: Searching for nearby riders...`,
