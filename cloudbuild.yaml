@@ -1,0 +1,50 @@
+# Cloud Build pipeline: GitHub push on `meta-production` → build → deploy to Cloud Run.
+#
+# Images are tagged with the commit SHA and that exact tag is what gets deployed,
+# so `gcloud run revisions list` doubles as a deploy history and rollback is
+# unambiguous. `:latest` is still pushed as a convenience pointer, but nothing
+# deploys from it.
+
+substitutions:
+  _SERVICE: godavari-ruchulu-bot
+  _REGION: asia-south1
+  _REPO: asia-south1-docker.pkg.dev/${PROJECT_ID}/bot
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - -t
+      - ${_REPO}/${_SERVICE}:latest
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, "${_REPO}/${_SERVICE}"]
+
+  # Only --image is passed. Deploying with just the image preserves the service's
+  # existing env vars and Secret Manager bindings — do NOT add --set-env-vars here,
+  # it REPLACES the whole set and would drop every secretKeyRef.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --quiet
+
+images:
+  - ${_REPO}/${_SERVICE}:${SHORT_SHA}
+  - ${_REPO}/${_SERVICE}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s

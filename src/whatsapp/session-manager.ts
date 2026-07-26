@@ -589,7 +589,7 @@ export class BotSessionManager {
         }
 
         if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location")) {
-          const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+          const serverUrl = process.env.SERVER_URL || "https://godavari-ruchulu-bot-1014973248302.asia-south1.run.app";
           const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
 
           try {
@@ -623,7 +623,7 @@ export class BotSessionManager {
           }
 
           if (pending.type === "delivery" && !cust.address) {
-            const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+            const serverUrl = process.env.SERVER_URL || "https://godavari-ruchulu-bot-1014973248302.asia-south1.run.app";
             const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
 
             // Check if customer has a saved address from previous orders

@@ -3,6 +3,11 @@ dist/
 .env
 .env.*
 !.env.example
+# Stray copies of the env file that lack the leading dot, e.g. "env (4)" from a
+# browser download. The .env rules above do not match these.
+env
+env *
+env(*)
 *.db
 *.db-journal
 prisma/dev.db

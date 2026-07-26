@@ -8,3 +8,5 @@ auth_session*
 *.log
 dev.db
 npm-debug.log*
+images/
+uber-direct-notes.html
