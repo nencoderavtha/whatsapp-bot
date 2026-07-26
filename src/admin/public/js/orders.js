@@ -1,11 +1,13 @@
 import { api } from "./api.js";
 import { showToast, badge, pmtBadge, esc } from "./utils.js";
 
-// Status flow: each active state knows what button to show
+// Status flow: each active state knows what button to show.
+// "Mark Ready" also books a courier server-side, so there is no separate
+// dispatch step to remember; "Call Rider Now" is there to book one earlier.
 const FLOW = {
   pending:   { next: "confirmed",  label: "Accept Order",  icon: "✓",  cls: "bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white" },
   confirmed: { next: "preparing",  label: "Start Cooking", icon: "🍳", cls: "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white" },
-  preparing: { next: "ready",      label: "Cooking Done",  icon: "🔔", cls: "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white" },
+  preparing: { next: "ready",      label: "Mark Ready",    icon: "🔔", cls: "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white" },
   ready:     { next: "delivered",  label: "Delivered",     icon: "✓",  cls: "bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white" },
 };
 
@@ -193,7 +195,7 @@ function renderDeliverySection(o) {
       </div>
       <p class="text-[10px] text-slate-500 leading-snug">
         A rider takes ~10 min to reach the kitchen. Call one while the food is
-        finishing — otherwise one is booked automatically at <em>Cooking Done</em>.
+        finishing — otherwise one is booked automatically on <em>Mark Ready</em>.
       </p>
     </div>`;
 }
