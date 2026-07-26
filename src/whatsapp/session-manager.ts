@@ -432,11 +432,17 @@ export class BotSessionManager {
         const cleanText = lowerText.replace(/[^\w\s]/g, "").trim();
 
         // ── Direct Action 1: View Menu ───────────────────────────────────────
+        // Item button ids look like "menu_item_22" / "menu_item_22_v_3", which the
+        // substring check below would otherwise treat as "show me the menu" — the
+        // add-to-cart handler further down never got reached, so every tap on an
+        // item just reopened the menu.
+        const isMenuItemButton = /^menu_item_\d+(?:_v_\d+)?$/.test(rawText);
         if (
-          rawText === "view_menu" ||
-          cleanText === "menu" ||
-          cleanText.includes("menu") ||
-          /\bmenu\b/i.test(lowerText)
+          !isMenuItemButton &&
+          (rawText === "view_menu" ||
+            cleanText === "menu" ||
+            cleanText.includes("menu") ||
+            /\bmenu\b/i.test(lowerText))
         ) {
           const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
 
