@@ -12,7 +12,10 @@ process.on("unhandledRejection", (reason) => {
 async function main() {
   // Admin portal
   const server = buildAdminApp().listen(config.adminPort, "0.0.0.0", () => {
-    console.log(`🛠️  Admin portal: http://0.0.0.0:${config.adminPort}  (password in .env)`);
+    // 0.0.0.0 is the bind address, not somewhere you can browse to. On Cloud Run
+    // the reachable address is SERVER_URL, so log that when it's set.
+    const portalUrl = process.env.SERVER_URL ?? `http://localhost:${config.adminPort}`;
+    console.log(`🛠️  Admin portal listening on :${config.adminPort} — ${portalUrl}`);
   });
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {

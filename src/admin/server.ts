@@ -350,7 +350,7 @@ export function buildAdminApp() {
     const CART_TTL_MS = 2 * 60 * 60 * 1000;
     const cartData = {
       lines: JSON.stringify(validLines),
-      type: "pickup",
+      type: "delivery",
       expiresAt: new Date(Date.now() + CART_TTL_MS),
     };
     await prisma.pendingOrder.create({

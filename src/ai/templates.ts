@@ -29,23 +29,21 @@ export function orderStagedTemplate(
   note?: string,
   deliveryFee = 45,
 ): string {
-  const typeLabel = TYPE_LABEL[type] ?? "Pickup";
   const noteLine = note ? `\n📝 Note: ${note}` : "";
   const itemList = items.map((i) => `• ${i}`).join("\n");
-  const isDelivery = type === "delivery";
-  const grandTotal = isDelivery ? subtotal + deliveryFee : subtotal;
 
-  const costBreakdown = isDelivery
-    ? `\n🍲 Items Subtotal: ₹${subtotal}\n🛵 Delivery Charge: ₹${deliveryFee}\n━━━━━━━━━━━━━━━━━━━━\n💰 Grand Total: ₹${grandTotal}`
-    : `\n💰 Grand Total: ₹${subtotal}`;
-
+  // Every order is a delivery order. The fee isn't known until the customer
+  // pins a location, so the cart shows the items total and the final bill
+  // adds delivery once we have somewhere to quote to.
   return [
-    `🛒 *Order Summary:*`,
     itemList,
     `━━━━━━━━━━━━━━━━━━━━`,
-    `📦 *Type:* ${typeLabel}${costBreakdown}${noteLine}`,
+    `📦 *Type:* 🛵 Delivery`,
+    `💰 *Items Total:* ₹${subtotal}${noteLine}`,
     ``,
-    `Tap *✅ Confirm & Pay* to place your order!`,
+    `_Delivery fee location pin chesaka add avutundi._`,
+    ``,
+    `Tap *✅ Confirm & Pay* to continue.`,
   ].join("\n");
 }
 

@@ -582,32 +582,20 @@ export class BotSessionManager {
         const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
 
         if (isGreeting) {
-          const isReturning = customer && (customer.lastOrderedAt || customer.name);
+          // Greet and let the customer choose. This used to push a hero image and
+          // then the full menu 1.2s later, so the welcome was buried and nobody
+          // got a say in what they saw next.
           const nameStr = customer?.name ? `${customer.name} garu` : "andi";
-          const welcomeHeader = isReturning ? `Namaskaram ${nameStr} 🙏 Welcome back to Godavari Ruchulu!` : `Namaskaram ${nameStr} 🙏 Welcome to Godavari Ruchulu!`;
+          const greetingName = cfg?.restaurantName ?? "Godavari Ruchulu";
 
-          const infoBlock = [
-            welcomeHeader,
-            "",
-            "📍 *Godavari Ruchulu* — MLA Colony, Jubilee Hills, Hyderabad",
-            "⏰ Evening service starting from 7:30 PM.",
-            "🔥 Authentic Rayalaseema food cooked fresh to order!",
-            "",
-            "Ee roju Specials & Menu kindha chudandi 👇",
-          ].join("\n");
-
-          const heroImg = "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=800&auto=format&fit=crop&q=80";
-
-          try {
-            await adapter.sendImage(msg.phone, heroImg, infoBlock);
-          } catch (e) {
-            await adapter.sendText(msg.phone, infoBlock);
-          }
-
-          await new Promise((r) => setTimeout(r, 1200));
-
-          const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
-          await sendMenuVisual(adapter, msg.phone, restaurantId, "🔥 Ee Roju Specials & Menu:", webMenuUrl);
+          await adapter.sendInteractiveButtons(
+            msg.phone,
+            `Namaskaram ${nameStr} 🙏\n\n${greetingName} ki welcome. Ee roju menu ready undi.`,
+            [
+              { id: "view_menu", title: "📋 Menu" },
+              { id: "location_info", title: "📍 Location & Hours" },
+            ],
+          );
           return;
         }
 
@@ -733,11 +721,11 @@ export class BotSessionManager {
           const expiresAt = new Date(Date.now() + CART_TTL_MS);
           await prisma.pendingOrder.upsert({
             where: { customerId: cust.id },
-            create: { customerId: cust.id, lines: JSON.stringify(validLines), type: "pickup", expiresAt },
+            create: { customerId: cust.id, lines: JSON.stringify(validLines), type: "delivery", expiresAt },
             update: { lines: JSON.stringify(validLines), expiresAt },
           });
 
-          const stagedMsg = orderStagedTemplate(labels, total, existing?.type ?? "pickup");
+          const stagedMsg = orderStagedTemplate(labels, total, "delivery");
           await adapter.sendInteractiveButtons(
             msg.phone,
             stagedMsg,
