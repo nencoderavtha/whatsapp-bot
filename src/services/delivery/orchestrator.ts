@@ -48,6 +48,16 @@ export class DeliveryOrchestrator {
     pickupPincode: number;
     deliveryPincode: number;
     weightKg?: number;
+    // Optional precise routing — Borzo prices on these when supplied, instead of
+    // geocoding a pincode to its centroid and under-quoting the real distance.
+    pickupAddress?: string;
+    pickupLat?: number | null;
+    pickupLng?: number | null;
+    pickupPhone?: string;
+    deliveryAddress?: string;
+    deliveryLat?: number | null;
+    deliveryLng?: number | null;
+    deliveryPhone?: string;
   }): Promise<{
     ok: boolean;
     pickupPincode: number;

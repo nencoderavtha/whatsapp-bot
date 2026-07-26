@@ -473,11 +473,35 @@ async function proceedToBilling(
   }
 
   // Live quote rather than a flat rate, so the fee matches the actual distance.
+  // Send the pinned address and coordinates, not just a pincode — Borzo geocodes
+  // whatever it is given, and a bare pincode resolves to the area centroid, which
+  // under-quotes the real route and leaves the restaurant covering the shortfall.
+  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const customerRow = await prisma.customer.findUnique({ where: { id: customerId } });
+  const ownerPhone = (restaurant?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean)[0];
+
+  // Don't route the rider off the schema's placeholder address — it names a
+  // different suburb than the kitchen, so quoting from it would be worse than
+  // falling back to the pickup pincode.
+  const PLACEHOLDER_ADDRESS = "Plot 12, Main Road, Gachibowli, Hyderabad";
+  const pickupAddress =
+    restaurant?.restaurantAddress && restaurant.restaurantAddress !== PLACEHOLDER_ADDRESS
+      ? restaurant.restaurantAddress
+      : undefined;
+
   let deliveryFee = FALLBACK_DELIVERY_FEE;
   try {
     const quotes = await deliveryOrchestrator.getAllQuotes({
       pickupPincode: PICKUP_PINCODE,
       deliveryPincode: pincodeFromAddress(address) ?? PICKUP_PINCODE,
+      pickupAddress,
+      pickupLat: restaurant?.restaurantLat,
+      pickupLng: restaurant?.restaurantLng,
+      pickupPhone: ownerPhone,
+      deliveryAddress: address,
+      deliveryLat: customerRow?.deliveryLat,
+      deliveryLng: customerRow?.deliveryLng,
+      deliveryPhone: phone,
     });
     if (quotes?.cheapest?.quotedFee != null) {
       deliveryFee = Math.round(quotes.cheapest.quotedFee);

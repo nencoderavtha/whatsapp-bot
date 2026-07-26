@@ -9,6 +9,48 @@ export interface BorzoQuoteParams {
   pickupPincode: number;
   deliveryPincode: number;
   weightKg?: number;
+
+  /**
+   * Precise routing. Borzo geocodes whatever address string it is given, so a
+   * synthesised "Hyderabad Pincode 500033" resolves to the pincode centroid and
+   * the fee is computed between centroids rather than the real pickup and drop.
+   * On a measured Jubilee Hills → Gachibowli run that was ₹73 against a true
+   * ₹140, i.e. the restaurant absorbing the difference. Pass the pinned address
+   * and coordinates whenever they are known.
+   */
+  pickupAddress?: string;
+  pickupLat?: number | null;
+  pickupLng?: number | null;
+  pickupPhone?: string;
+  deliveryAddress?: string;
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
+  deliveryPhone?: string;
+}
+
+/** Borzo wants E.164; ownerNumbers are stored bare, e.g. "917842766505". */
+function e164(phone: string): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return digits ? `+${digits}` : "";
+}
+
+/** Borzo warns on points without a contact phone and prices them anyway. */
+function borzoPoint(
+  address: string,
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  name: string,
+  phone: string,
+): Record<string, unknown> {
+  const point: Record<string, unknown> = {
+    address,
+    contact_person: { name, phone: e164(phone) },
+  };
+  if (lat != null && lng != null) {
+    point.latitude = String(lat);
+    point.longitude = String(lng);
+  }
+  return point;
 }
 
 export interface BorzoQuoteResponse {
@@ -25,6 +67,14 @@ export interface BorzoDispatchParams {
   customerName: string;
   customerPhone: string;
   deliveryAddress: string;
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
+  /** Restaurant pickup details — the rider calls pickupPhone on arrival. */
+  pickupName?: string;
+  pickupAddress?: string;
+  pickupLat?: number | null;
+  pickupLng?: number | null;
+  pickupPhone?: string;
 }
 
 export class BorzoDeliveryService {
@@ -56,9 +106,22 @@ export class BorzoDeliveryService {
           },
           body: JSON.stringify({
             matter: "Food parcel",
+            total_weight_kg: params.weightKg ?? 1,
             points: [
-              { address: `Hyderabad Pincode ${params.pickupPincode}` },
-              { address: `Hyderabad Pincode ${params.deliveryPincode}` },
+              borzoPoint(
+                params.pickupAddress ?? `Hyderabad Pincode ${params.pickupPincode}`,
+                params.pickupLat,
+                params.pickupLng,
+                "Pickup",
+                params.pickupPhone ?? "",
+              ),
+              borzoPoint(
+                params.deliveryAddress ?? `Hyderabad Pincode ${params.deliveryPincode}`,
+                params.deliveryLat,
+                params.deliveryLng,
+                "Customer",
+                params.deliveryPhone ?? params.pickupPhone ?? "",
+              ),
             ],
           }),
         });
@@ -66,8 +129,24 @@ export class BorzoDeliveryService {
         if (res.ok) {
           const data = (await res.json()) as {
             is_successful?: boolean;
-            order?: { payment_amount?: string; delivery_fee_amount?: string };
+            order?: {
+              payment_amount?: string;
+              delivery_fee_amount?: string;
+              points?: Array<{ previous_point_driving_distance_meters?: number }>;
+            };
+            parameter_warnings?: unknown;
           };
+
+          // Borzo answers 200 with warnings rather than failing, so a malformed
+          // point still returns a (wrong) price. Surface it instead of silently
+          // charging the customer whatever came back.
+          if (data.parameter_warnings) {
+            console.warn(
+              "[Borzo] Quote returned parameter warnings:",
+              JSON.stringify(data.parameter_warnings),
+            );
+          }
+
           if (data.is_successful && data.order) {
             const amount = Number(data.order.payment_amount || data.order.delivery_fee_amount || 52);
             return {
@@ -102,8 +181,6 @@ export class BorzoDeliveryService {
    * Dispatch delivery order via Borzo
    */
   async dispatchOrder(params: BorzoDispatchParams) {
-    const mockDispatchId = `BRZ-${Date.now().toString().slice(-7)}`;
-
     if (this.apiToken) {
       try {
         const res = await fetch(`${this.baseUrl}/create-order`, {
@@ -114,24 +191,42 @@ export class BorzoDeliveryService {
           },
           body: JSON.stringify({
             matter: `Food Order #${params.orderId}`,
+            total_weight_kg: 1,
             points: [
-              {
-                address: "Godavari Ruchulu, Jubilee Hills, Hyderabad",
-                contact_person: { phone: "+919999999999" },
-              },
-              {
-                address: params.deliveryAddress,
-                contact_person: {
-                  name: params.customerName,
-                  phone: params.customerPhone,
-                },
-              },
+              borzoPoint(
+                params.pickupAddress ?? "Godavari Ruchulu, MLA Colony, Jubilee Hills, Hyderabad",
+                params.pickupLat,
+                params.pickupLng,
+                params.pickupName ?? "Restaurant",
+                // The rider calls this number on arrival. It used to be the
+                // placeholder +919999999999, which reaches nobody.
+                params.pickupPhone ?? "",
+              ),
+              borzoPoint(
+                params.deliveryAddress,
+                params.deliveryLat,
+                params.deliveryLng,
+                params.customerName,
+                params.customerPhone,
+              ),
             ],
           }),
         });
 
+        const raw = await res.text();
+        if (!res.ok) {
+          console.error(`[Borzo Dispatch] HTTP ${res.status}:`, raw.slice(0, 500));
+        }
+
         if (res.ok) {
-          const data = (await res.json()) as { is_successful?: boolean; order?: { order_id?: number } };
+          const data = JSON.parse(raw) as {
+            is_successful?: boolean;
+            order?: { order_id?: number };
+            parameter_warnings?: unknown;
+          };
+          if (data.parameter_warnings) {
+            console.warn("[Borzo Dispatch] parameter warnings:", JSON.stringify(data.parameter_warnings));
+          }
           if (data.is_successful && data.order?.order_id) {
             return {
               ok: true,
