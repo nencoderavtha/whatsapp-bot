@@ -89,21 +89,21 @@ export class DeliveryManager {
     console.log(`👤 [Customer Details] Name: ${order.customer.name || "Customer"} | Phone: ${order.customer.phone}`);
     console.log(`📍 [Drop Address] ${order.deliveryAddress || "Jubilee Hills, Hyderabad"}`);
 
-    // Step 1: Query live provider rates
-    console.log(`📊 [Delivery Rate Comparison] Querying live quotes across providers...`);
-    const quotesData = await orchestrator.getAllQuotes({
-      pickupPincode: 500033,
-      deliveryPincode: 500081,
-    });
-
-    for (const q of quotesData.quotes) {
-      console.log(`   • ${q.provider}: ₹${q.quotedFee} (${q.estimatedMinutes} mins)`);
+    if (order.deliveryDispatch && order.deliveryDispatch.externalDeliveryId) {
+      console.log(
+        `↩️  [Already Dispatched] Order #${orderId} → ${order.deliveryDispatch.externalDeliveryId}. Not booking a second courier.`,
+      );
+      return { ok: true, dispatch: order.deliveryDispatch, result: null, alreadyDispatched: true };
     }
 
-    const selectedProviderCode = preferredProviderCode || quotesData.cheapest.providerCode;
-    const selectedFee = quotesData.quotes.find((q) => q.providerCode === selectedProviderCode)?.quotedFee || order.deliveryFee || 45;
+    // The customer paid order.deliveryFee at checkout. That figure is settled and
+    // is never recomputed here — re-quoting at booking time (20-30 minutes later,
+    // at a different price) and writing the new number back left the books
+    // disagreeing with what was actually charged.
+    const selectedProviderCode = preferredProviderCode ?? "borzo";
+    const billedFee = order.deliveryFee || 45;
 
-    console.log(`🏆 [Selected Delivery Partner]: ${selectedProviderCode.toUpperCase()} (Fee: ₹${selectedFee})`);
+    console.log(`🏆 [Delivery Partner]: ${selectedProviderCode.toUpperCase()} | Customer was billed ₹${billedFee}`);
 
     // Step 2: Trigger dispatch via selected provider
     console.log(`🚀 [Dispatching Rider] Booking rider on ${selectedProviderCode.toUpperCase()} API...`);
@@ -129,33 +129,39 @@ export class DeliveryManager {
       pickupPhone: ownerPhone,
     });
 
+    // A rejected booking is not a dispatch. Recording one wrote a row with a null
+    // id and status SEARCHING_RIDER, and moved the order to out_for_delivery — so
+    // the dashboard showed a rider en route when Borzo had booked nobody.
+    if (!result.ok || !result.dispatchId) {
+      console.error(
+        `❌ [Dispatch Failed] Order #${orderId}: ${result.message ?? "provider returned no booking"}`,
+      );
+      throw new Error(result.message ?? `Could not book a rider for order #${orderId}`);
+    }
+
     console.log(`🔍 [Rider Search Active] Booking ID: ${result.dispatchId} | Initial Status: ${result.status || "SEARCHING_RIDER"}`);
 
-    // Step 3: Upsert DeliveryDispatch record in DB
     const dispatch = await prisma.deliveryDispatch.upsert({
       where: { orderId },
       update: {
         providerCode: result.providerCode,
         externalDeliveryId: result.dispatchId,
         status: result.status || "SEARCHING_RIDER",
-        deliveryFee: selectedFee,
+        deliveryFee: billedFee,
       },
       create: {
         orderId,
         providerCode: result.providerCode,
         externalDeliveryId: result.dispatchId,
         status: result.status || "SEARCHING_RIDER",
-        deliveryFee: selectedFee,
+        deliveryFee: billedFee,
       },
     });
 
-    // Step 4: Update order status to out_for_delivery
-    await prisma.order.update({
-      where: { id: orderId },
-      data: { status: "out_for_delivery" },
-    });
-
-    console.log(`✅ [Order #${orderId} Updated] Status -> out_for_delivery | Partner -> ${result.providerCode.toUpperCase()}\n`);
+    // The order stays "ready" until the courier actually collects it. Borzo's
+    // PICKED_UP webhook moves it to out_for_delivery, so the status reflects
+    // where the food is rather than when we sent an API call.
+    console.log(`✅ [Order #${orderId}] Rider booked on ${result.providerCode.toUpperCase()} — awaiting pickup\n`);
 
     await notifyAdminOfEvent("order_updated", { ...order, deliveryDispatch: dispatch });
     return { ok: true, dispatch, result };

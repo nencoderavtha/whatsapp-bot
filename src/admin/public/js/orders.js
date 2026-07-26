@@ -5,7 +5,7 @@ import { showToast, badge, pmtBadge, esc } from "./utils.js";
 const FLOW = {
   pending:   { next: "confirmed",  label: "Accept Order",  icon: "✓",  cls: "bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white" },
   confirmed: { next: "preparing",  label: "Start Cooking", icon: "🍳", cls: "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white" },
-  preparing: { next: "ready",      label: "Mark Ready",    icon: "🔔", cls: "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white" },
+  preparing: { next: "ready",      label: "Cooking Done",  icon: "🔔", cls: "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white" },
   ready:     { next: "delivered",  label: "Delivered",     icon: "✓",  cls: "bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white" },
 };
 
@@ -188,9 +188,13 @@ function renderDeliverySection(o) {
       </div>
       <div class="flex gap-2 pt-1">
         <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
-          🛵 Dispatch Delivery Rider
+          🛵 Call Rider Now
         </button>
       </div>
+      <p class="text-[10px] text-slate-500 leading-snug">
+        A rider takes ~10 min to reach the kitchen. Call one while the food is
+        finishing — otherwise one is booked automatically at <em>Cooking Done</em>.
+      </p>
     </div>`;
 }
 

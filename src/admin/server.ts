@@ -164,6 +164,12 @@ export function buildAdminApp() {
 
           if (mappedStatus === "DELIVERED") {
             await setOrderStatus(existing.orderId, "delivered");
+          } else if (["PICKED_UP", "IN_TRANSIT"].includes(mappedStatus)) {
+            // The courier has the food — only now is the order really out for
+            // delivery. Setting this at booking time claimed it before a rider
+            // had even been assigned.
+            await setOrderStatus(existing.orderId, "out_for_delivery");
+            await notifyAdminOfEvent("order_updated", { orderId: existing.orderId, status: mappedStatus, deliveryDispatch: updatedDispatch });
           } else {
             await notifyAdminOfEvent("order_updated", { orderId: existing.orderId, status: mappedStatus, deliveryDispatch: updatedDispatch });
           }
@@ -754,7 +760,8 @@ export function buildAdminApp() {
   });
 
   api.put("/orders/:id/status", async (req, res) => {
-    const order = await setOrderStatus(Number(req.params.id), req.body.status);
+    const orderId = Number(req.params.id);
+    const order = await setOrderStatus(orderId, req.body.status);
     res.json(order);
 
     const { status } = req.body;
@@ -768,6 +775,36 @@ export function buildAdminApp() {
         }
       } catch (e) {
         console.error("[Status Notify] Failed:", e);
+      }
+    }
+
+    // Cooking done → book a courier, unless one was already called manually from
+    // the "Call Rider" button while the food was still cooking. A rider takes
+    // roughly ten minutes to reach the kitchen, so calling one earlier is the
+    // better move; this is the safety net for when nobody did.
+    if (status === "ready" && order.type === "delivery") {
+      try {
+        const result: any = await DeliveryManager.dispatchOrder(orderId, "borzo");
+        console.log(
+          result?.alreadyDispatched
+            ? `[Auto-Dispatch] Order #${orderId} already had a courier booked.`
+            : `[Auto-Dispatch] Courier booked for order #${orderId}.`,
+        );
+      } catch (e: any) {
+        // Hot food and no courier — the owner has to know, because nothing else
+        // in the system will chase it.
+        console.error(`[Auto-Dispatch Failed] Order #${orderId}:`, e?.message ?? e);
+        try {
+          const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+          const owners = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+          const session = botSessionManager.getSession(1);
+          const text = `⚠️ *Rider booking failed — Order #${orderId}*\n\n${e?.message ?? "Unknown error"}\n\nFood is ready but no courier is booked. Use *Call Rider* in the dashboard to retry.`;
+          for (const num of owners) {
+            if (session) await session.sendText(num, text);
+          }
+        } catch (notifyErr) {
+          console.error("[Auto-Dispatch] Owner alert failed:", notifyErr);
+        }
       }
     }
   });

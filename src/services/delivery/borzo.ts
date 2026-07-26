@@ -215,7 +215,20 @@ export class BorzoDeliveryService {
 
         const raw = await res.text();
         if (!res.ok) {
+          // Log what we sent alongside the rejection. A bare "invalid_phone" on
+          // points[0] is not actionable without seeing the value that produced it.
           console.error(`[Borzo Dispatch] HTTP ${res.status}:`, raw.slice(0, 500));
+          console.error(
+            "[Borzo Dispatch] payload was:",
+            JSON.stringify({
+              pickupAddress: params.pickupAddress,
+              pickupPhone: params.pickupPhone,
+              pickupLat: params.pickupLat,
+              pickupLng: params.pickupLng,
+              deliveryAddress: params.deliveryAddress,
+              deliveryPhone: params.customerPhone,
+            }),
+          );
         }
 
         if (res.ok) {
