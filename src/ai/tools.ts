@@ -164,9 +164,26 @@ export async function runTool(
   try {
     switch (name) {
       case "save_customer_info": {
+        // An address that came from the map form is authoritative — it has GPS
+        // coordinates behind it and a courier drives to it. The model would
+        // otherwise rewrite it from conversation text: one order was saved as
+        // "<pinned address> — already add chesa" because the customer happened
+        // to say that while the address was in context.
+        const existing = await prisma.customer.findUnique({
+          where: { id: customerId },
+          select: { deliveryLat: true, deliveryLng: true },
+        });
+        const hasPinnedAddress = existing?.deliveryLat != null && existing?.deliveryLng != null;
+
+        if (args.address && hasPinnedAddress) {
+          console.warn(
+            `[save_customer_info] Ignoring model-supplied address for customer ${customerId} — a pinned location is already on file.`,
+          );
+        }
+
         await updateCustomer(customerId, {
           name: args.name,
-          address: args.address,
+          address: hasPinnedAddress ? undefined : args.address,
           notes: args.notes,
         });
         return { output: { ok: true } };
