@@ -691,7 +691,10 @@ export class BotSessionManager {
         }
 
         // ── Direct Action 2: Location & Hours ────────────────────────────────
-        if (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("location") || lowerText.includes("opening hours")) {
+        if (
+          rawText !== "pin_new_location_btn" && 
+          (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("location") || lowerText.includes("opening hours"))
+        ) {
           const city = cfg?.restaurantCity ?? "Hyderabad";
           const locationMsg = `*${rName}*, ${city}\nEvening service 7:30 PM nunchi andi.`;
           await adapter.sendText(msg.phone, locationMsg);
