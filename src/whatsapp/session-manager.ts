@@ -311,8 +311,12 @@ async function sendOrderReceipt(adapter: CloudAdapter, phone: string, _restauran
   }
 }
 
-/** Restaurant pickup pincode, used as the origin for delivery quotes. */
-const PICKUP_PINCODE = Number(process.env.PICKUP_PINCODE ?? 500033);
+/**
+ * Restaurant pickup pincode — Madhapur. Only used as a fallback origin when
+ * RestaurantConfig has no usable address; the address is preferred because a
+ * pincode geocodes to the area centroid rather than the kitchen.
+ */
+const PICKUP_PINCODE = Number(process.env.PICKUP_PINCODE ?? 500081);
 /** Used only when the provider quote fails — never leave a customer without a bill. */
 const FALLBACK_DELIVERY_FEE = 45;
 
