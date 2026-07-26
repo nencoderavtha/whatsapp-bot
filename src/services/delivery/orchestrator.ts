@@ -9,6 +9,7 @@
  * Features parallel query fan-out, sorting by fee/ETA, and seamless failovers.
  */
 
+import { prisma } from "../../db.js";
 import { ShiprocketDeliveryService, ShiprocketQuoteResponse } from "./shiprocket.js";
 import { ShadowfaxDeliveryService, ShadowfaxQuoteResponse } from "./shadowfax.js";
 import { BorzoDeliveryService, BorzoQuoteResponse } from "./borzo.js";
@@ -55,12 +56,22 @@ export class DeliveryOrchestrator {
     cheapest: UnifiedQuote;
     fastest: UnifiedQuote;
   }> {
-    const results = await Promise.allSettled([
-      this.shiprocket.getQuote(params),
-      this.shadowfax.getQuote(params),
-      this.borzo.getQuote(params),
-      this.getDirectRapidoQuote(params),
-    ]);
+    // Only ask providers that actually have credentials. Unconfigured providers
+    // used to return invented "simulation" fees marked available, and since the
+    // cheapest quote wins, a made-up number would routinely undercut the one
+    // real quote and become the fee charged to the customer.
+    const pending: Array<Promise<UnifiedQuote | null>> = [];
+    if (process.env.SHIPROCKET_API_EMAIL && process.env.SHIPROCKET_API_PASSWORD) {
+      pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
+    }
+    if (process.env.SHADOWFAX_API_KEY) {
+      pending.push(this.shadowfax.getQuote(params) as Promise<UnifiedQuote | null>);
+    }
+    if (process.env.BORZO_API_TOKEN) {
+      pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
+    }
+
+    const results = await Promise.allSettled(pending);
 
     const quotes: UnifiedQuote[] = [];
 
@@ -109,33 +120,35 @@ export class DeliveryOrchestrator {
   }
 
   /**
-   * Fetch Live Rider Tracking Details
+   * Live rider details for a dispatch.
+   *
+   * Reads the DeliveryDispatch row, which the provider status webhooks keep up
+   * to date. The per-provider implementations this replaced returned hardcoded
+   * placeholder riders ("Vikram Reddy" and friends), so callers were shown a
+   * confident answer that had nothing to do with the real courier.
    */
-  async getTrackingStatus(dispatchId: string, providerCode?: DeliveryProviderCode) {
-    if (dispatchId.startsWith("SFX")) {
-      return this.shadowfax.getTrackingStatus(dispatchId);
-    }
-    if (dispatchId.startsWith("BRZ")) {
-      return this.borzo.getTrackingStatus(dispatchId);
-    }
-    return this.shiprocket.getTrackingStatus(dispatchId);
-  }
+  async getTrackingStatus(dispatchId: string) {
+    const dispatch = await prisma.deliveryDispatch.findFirst({
+      where: { externalDeliveryId: dispatchId },
+    });
 
-  /**
-   * Direct Rapido Quote Helper (simulated/direct enterprise partner route)
-   */
-  private async getDirectRapidoQuote(params: { pickupPincode: number; deliveryPincode: number }) {
-    const distanceKm = Math.abs(params.deliveryPincode - params.pickupPincode) % 10 + 2;
-    const fee = Math.max(42, Math.round(32 + distanceKm * 5.2));
-    const eta = Math.min(35, 12 + distanceKm * 1.8);
+    if (!dispatch) {
+      return { ok: false, dispatchId, status: "UNKNOWN", rider: null };
+    }
 
     return {
-      provider: "Rapido Parcel (Direct)",
-      providerCode: "rapido" as const,
-      quotedFee: fee,
-      estimatedMinutes: eta,
-      available: true,
-      vehicleType: "2-Wheeler Bike",
+      ok: true,
+      dispatchId,
+      providerCode: dispatch.providerCode,
+      status: dispatch.status,
+      trackingUrl: dispatch.trackingUrl ?? null,
+      rider: dispatch.riderName
+        ? {
+            name: dispatch.riderName,
+            phone: dispatch.riderPhone ?? null,
+            vehicleNumber: dispatch.riderVehicleNumber ?? null,
+          }
+        : null,
     };
   }
 }

@@ -191,21 +191,7 @@ export class ShiprocketDeliveryService {
   }
 
   /**
-   * Get Live Rider Tracking Status
+   * Tracking is served from the DeliveryDispatch row that provider webhooks
+   * keep current — see DeliveryOrchestrator.getTrackingStatus.
    */
-  async getTrackingStatus(dispatchId: string) {
-    return {
-      ok: true,
-      dispatchId,
-      providerCode: "shiprocket",
-      status: "IN_TRANSIT",
-      rider: {
-        name: "Suresh Reddy",
-        phone: "+919848012345",
-        vehicleNumber: "TS 09 EQ 8821",
-        currentLocation: { lat: 17.4325, lng: 78.4071 },
-      },
-      estimatedArrivalMinutes: 14,
-    };
-  }
 }

@@ -59,6 +59,26 @@ export function paymentLinkTemplate(url: string, total: number): string {
   ].join("\n\n");
 }
 
+// ── Final bill, shown after the delivery fee is quoted and before paying ─────
+
+export function finalBillTemplate(subtotal: number, deliveryFee: number): string {
+  const total = subtotal + deliveryFee;
+  return [
+    `🧾 *Final Bill*`,
+    ``,
+    `Food Total: ₹${subtotal}`,
+    `Delivery Fee: ₹${deliveryFee}`,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `*Total Amount: ₹${total}*`,
+  ].join("\n");
+}
+
+// ── Razorpay could not produce a link; the owner is notified separately ──────
+
+export function paymentUnavailableTemplate(): string {
+  return `Sorry andi, payment link generate cheyyaledu 🙏 Manager ki inform chesaanu — konchem sepatlo meeku contact avthaaru.`;
+}
+
 // ── Sent when a customer claims they paid but Razorpay hasn't confirmed yet ──
 
 export function paymentPendingTemplate(): string {

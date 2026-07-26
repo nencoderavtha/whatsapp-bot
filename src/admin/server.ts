@@ -225,11 +225,21 @@ export function buildAdminApp() {
         note: pendingRow.note ?? undefined,
       };
 
+      // Snapshot the delivery details onto the order. Without these the receipt,
+      // the owner notification and the customer's saved-address list all come up
+      // empty, and the order total omits the delivery fee that was charged.
+      const payingCustomer = await prisma.customer.findUnique({ where: { id: customerId } });
+
       const order = await createOrder({
         customerId,
-        type: cart.type,
+        // Every order is a delivery order — there is no pickup path.
+        type: "delivery",
         note: cart.note,
         lines: cart.lines,
+        deliveryFee: pendingRow.deliveryFee ?? undefined,
+        deliveryAddress: payingCustomer?.address ?? undefined,
+        deliveryLat: payingCustomer?.deliveryLat ?? undefined,
+        deliveryLng: payingCustomer?.deliveryLng ?? undefined,
         payment: {
           method: "razorpay",
           reference: event.payload?.payment?.entity?.id ?? null,

@@ -85,17 +85,15 @@ export class BorzoDeliveryService {
       }
     }
 
-    // Fallback simulation mode
-    const distanceKm = Math.abs(params.deliveryPincode - params.pickupPincode) % 14 + 3;
-    const estimatedFee = Math.max(45, Math.round(34 + distanceKm * 5.8));
-    const estimatedMinutes = Math.min(45, 14 + distanceKm * 2.1);
-
+    // No invented fee. A made-up number here becomes the amount the customer is
+    // actually charged, so an unavailable quote must report itself unavailable
+    // and let the caller fall back to the flat rate deliberately.
     return {
       provider: "Borzo Express",
       providerCode: "borzo",
-      quotedFee: estimatedFee,
-      estimatedMinutes: Math.round(estimatedMinutes),
-      available: true,
+      quotedFee: 0,
+      estimatedMinutes: 0,
+      available: false,
       vehicleType: "2-Wheeler Express Courier",
     };
   }
@@ -151,33 +149,17 @@ export class BorzoDeliveryService {
       }
     }
 
+    // Report the failure honestly. This used to return ok:true with a fabricated
+    // dispatch id and tracking URL, so a failed dispatch looked successful and
+    // the customer was told a courier was coming when none had been booked.
     return {
-      ok: true,
+      ok: false,
       orderId: params.orderId,
       providerCode: "borzo",
-      dispatchId: mockDispatchId,
-      trackingUrl: `https://track.delivery.exter.ai/borzo/${mockDispatchId}`,
-      status: "COURIER_ASSIGNED",
-      message: "Delivery order created on Borzo Express courier network.",
-    };
-  }
-
-  /**
-   * Get Live Tracking Status
-   */
-  async getTrackingStatus(dispatchId: string) {
-    return {
-      ok: true,
-      dispatchId,
-      providerCode: "borzo",
-      status: "ON_THE_WAY",
-      rider: {
-        name: "Vikram Reddy",
-        phone: "+919866112233",
-        vehicleNumber: "TS 07 ED 9900",
-        currentLocation: { lat: 17.4380, lng: 78.4050 },
-      },
-      estimatedArrivalMinutes: 8,
+      dispatchId: null,
+      trackingUrl: null,
+      status: "FAILED",
+      message: "Could not create the delivery order on Borzo.",
     };
   }
 }

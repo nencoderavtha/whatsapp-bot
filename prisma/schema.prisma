@@ -226,8 +226,9 @@ model PendingOrder {
   customerId       Int      @unique
   customer         Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   lines            String   // JSON cart lines [{menuItemId, variantId, qty, note}]
-  type             String   @default("pickup")
+  type             String   @default("delivery")
   note             String?
+  deliveryFee      Float?   // Quote shown on the final bill; reused when the payment webhook creates the order so the order total matches what was charged.
   appliedCoupon    String?
   redeemedPoints   Int      @default(0)
   confirmedOrderId Int?

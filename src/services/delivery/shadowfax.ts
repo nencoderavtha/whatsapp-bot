@@ -142,21 +142,7 @@ export class ShadowfaxDeliveryService {
   }
 
   /**
-   * Get Live Tracking Status
+   * Tracking is served from the DeliveryDispatch row that provider webhooks
+   * keep current — see DeliveryOrchestrator.getTrackingStatus.
    */
-  async getTrackingStatus(dispatchId: string) {
-    return {
-      ok: true,
-      dispatchId,
-      providerCode: "shadowfax",
-      status: "PICKED_UP",
-      rider: {
-        name: "Venkat Rao",
-        phone: "+919701122334",
-        vehicleNumber: "TS 10 EW 4410",
-        currentLocation: { lat: 17.4350, lng: 78.4095 },
-      },
-      estimatedArrivalMinutes: 10,
-    };
-  }
 }

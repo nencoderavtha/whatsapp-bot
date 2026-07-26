@@ -8,9 +8,15 @@ import { notifyAdminOfEvent } from "../services/events.js";
 import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notifications.js";
 import { menuAsInteractiveListSections, menuAsInteractiveCarouselCards } from "../services/menu.js";
 import { getOrCreateCustomer } from "../services/customer.js";
-import { createOrder } from "../services/order.js";
 import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate, systemErrorTemplate, voiceNoteFallbackTemplate } from "../ai/templates.js";
+import {
+  orderStagedTemplate,
+  systemErrorTemplate,
+  voiceNoteFallbackTemplate,
+  finalBillTemplate,
+  paymentUnavailableTemplate,
+} from "../ai/templates.js";
+import { DeliveryOrchestrator } from "../services/delivery/orchestrator.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 
@@ -305,6 +311,184 @@ async function sendOrderReceipt(adapter: CloudAdapter, phone: string, _restauran
   }
 }
 
+/** Restaurant pickup pincode, used as the origin for delivery quotes. */
+const PICKUP_PINCODE = Number(process.env.PICKUP_PINCODE ?? 500033);
+/** Used only when the provider quote fails — never leave a customer without a bill. */
+const FALLBACK_DELIVERY_FEE = 45;
+
+const deliveryOrchestrator = new DeliveryOrchestrator();
+
+/**
+ * Distinct delivery addresses this customer has used, newest first — their
+ * current one plus anything from past orders. Recomputed on demand so the
+ * `use_addr_<n>` buttons stay stateless across restarts.
+ */
+async function savedAddressesFor(
+  customerId: number,
+  currentAddress?: string | null,
+): Promise<string[]> {
+  const prevOrders = await prisma.order.findMany({
+    where: { customerId, deliveryAddress: { not: null } },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const candidate of [currentAddress, ...prevOrders.map((o) => o.deliveryAddress)]) {
+    const addr = (candidate ?? "").trim();
+    if (!addr || seen.has(addr)) continue;
+    seen.add(addr);
+    out.push(addr);
+  }
+  return out;
+}
+
+/** Ask the customer to drop a pin, falling back to the map form CTA. */
+async function sendPinLocationPrompt(adapter: CloudAdapter, phone: string): Promise<void> {
+  const base = botSessionManager.getPublicServerUrl().replace(/\/+$/, "");
+  const mapFormUrl = `${base}/address?phone=${encodeURIComponent(phone)}`;
+
+  try {
+    await adapter.sendInteractiveLocationRequest(
+      phone,
+      "📍 Delivery address kavali andi. Mee location share cheyandi, leda kinda button tap chesi map lo pin drop cheyandi.",
+    );
+  } catch (e) {
+    console.warn("[Location Request Failed, sending CTA URL]", e);
+  }
+
+  await adapter.sendInteractiveCtaUrl(
+    phone,
+    "Ee link lo mee location pin drop cheyandi 👇",
+    "📍 Drop Location on Maps",
+    mapFormUrl,
+  );
+}
+
+/** The address form appends the pincode as "... - 500081". */
+function pincodeFromAddress(address?: string | null): number | null {
+  const m = address?.match(/(\d{6})\s*$/) ?? address?.match(/\b(\d{6})\b/);
+  return m ? Number(m[1]) : null;
+}
+
+async function notifyOwnerOfPaymentIssue(
+  adapter: CloudAdapter,
+  phone: string,
+  amount: number,
+) {
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const text = `⚠️ *Payment link failed!*\n\n👤 Customer: ${phone}\n💰 Amount: ₹${amount}\n\nRazorpay did not return a link. Please contact the customer.`;
+  for (const num of ownerNumbers) {
+    try {
+      await adapter.sendText(num, text);
+    } catch (e) {
+      console.error("[Owner Payment Alert] Failed:", e);
+    }
+  }
+}
+
+/**
+ * Cart is confirmed and a delivery address is known: quote the delivery fee,
+ * show the final bill, then send the Razorpay link as a tappable CTA button.
+ *
+ * Every order is a delivery order and payment is Razorpay only, so a failure
+ * here escalates to the owner rather than falling back to a cash option the
+ * restaurant has no way to collect on.
+ */
+async function proceedToBilling(
+  adapter: CloudAdapter,
+  phone: string,
+  restaurantId: number,
+  customerId: number,
+  address: string,
+): Promise<void> {
+  const pending = await prisma.pendingOrder.findFirst({
+    where: { customerId, expiresAt: { gt: new Date() } },
+  });
+  if (!pending || !pending.lines || pending.lines === "[]") {
+    await adapter.sendText(phone, "Cart empty andi. *📋 Menu* tap cheyandi.");
+    return;
+  }
+
+  let lines: any[] = [];
+  try { lines = JSON.parse(pending.lines); } catch {}
+
+  const menuItems = await prisma.menuItem.findMany({
+    where: { id: { in: lines.map((l) => l.menuItemId) } },
+    include: { variants: true },
+  });
+  const byId = new Map(menuItems.map((m) => [m.id, m]));
+  let subtotal = 0;
+  for (const l of lines) {
+    const mi = byId.get(l.menuItemId);
+    if (!mi) continue;
+    let p = mi.price;
+    if (l.variantId) {
+      const v = mi.variants.find((v) => v.id === l.variantId);
+      if (v) p = v.price;
+    }
+    subtotal += p * l.qty;
+  }
+
+  // Live quote rather than a flat rate, so the fee matches the actual distance.
+  let deliveryFee = FALLBACK_DELIVERY_FEE;
+  try {
+    const quotes = await deliveryOrchestrator.getAllQuotes({
+      pickupPincode: PICKUP_PINCODE,
+      deliveryPincode: pincodeFromAddress(address) ?? PICKUP_PINCODE,
+    });
+    if (quotes?.cheapest?.quotedFee != null) {
+      deliveryFee = Math.round(quotes.cheapest.quotedFee);
+    }
+  } catch (e) {
+    console.warn("[Delivery quote failed — using flat fee]", e);
+  }
+
+  const grandTotal = subtotal + deliveryFee;
+
+  // Persist the quoted fee so the payment webhook builds the order with the same
+  // number the customer was billed, instead of re-quoting and drifting.
+  await prisma.pendingOrder.update({
+    where: { id: pending.id },
+    data: { deliveryFee, type: "delivery" },
+  });
+
+  await adapter.sendText(phone, finalBillTemplate(subtotal, deliveryFee));
+
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+
+  let payUrl: string | null = null;
+  if (cfg?.razorpayEnabled && cfg.razorpayKeyId && cfg.razorpayKeySecret) {
+    try {
+      const payRes = await createPaymentLink({
+        restaurantId,
+        customerId,
+        amount: grandTotal,
+        customerPhone: phone,
+        restaurantName: cfg.restaurantName,
+      });
+      payUrl = payRes?.url ?? null;
+    } catch (e) {
+      console.error("[Razorpay link generation failed]", e);
+    }
+  }
+
+  if (!payUrl) {
+    await adapter.sendText(phone, paymentUnavailableTemplate());
+    await notifyOwnerOfPaymentIssue(adapter, phone, grandTotal);
+    return;
+  }
+
+  await adapter.sendInteractiveCtaUrl(
+    phone,
+    "Pay ayyaka order confirm avutundi.",
+    `💳 Pay ₹${grandTotal}`,
+    payUrl,
+  );
+}
+
 export class BotSessionManager {
   private sessions = new Map<number, CloudAdapter>();
   // Cloud API only: phoneNumberId → restaurantId for fast webhook routing
@@ -569,50 +753,22 @@ export class BotSessionManager {
 
         // ── Direct Action 4b: Use Saved Address vs Pin New Location ──────────────
         if (rawText === "use_saved_address_btn" || cleanText.includes("use saved address")) {
-          const cust = await getOrCreateCustomer(msg.phone);
-          const prevOrders = await prisma.order.findMany({
-            where: { customerId: cust.id, deliveryAddress: { not: null } },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-          });
-          const saved = cust.address || prevOrders[0]?.deliveryAddress;
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const saved = (await savedAddressesFor(cust.id, cust.address))[0];
           if (saved) {
             await prisma.customer.update({
               where: { id: cust.id },
               data: { address: saved },
             });
-            await adapter.sendInteractiveButtons(
-              msg.phone,
-              `📍 *Delivery Location Confirmed!*\n\n*Address:* ${saved}\n\nTap *✅ Confirm & Pay* to complete your order.`,
-              [
-                { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
-                { id: "add_more_items_btn", title: "➕ Add More Items" },
-              ],
-              "📦 Delivery Address",
-            );
+            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, saved);
             return;
           }
+          await sendPinLocationPrompt(adapter, msg.phone);
+          return;
         }
 
         if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location")) {
-          const serverUrl = process.env.SERVER_URL || "https://godavari-ruchulu-bot-1014973248302.asia-south1.run.app";
-          const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
-
-          try {
-            await adapter.sendInteractiveLocationRequest(
-              msg.phone,
-              "📍 *Delivery Location Needed!*\n\nTap *📍 Share Location* to send your current GPS location, or tap the button below to pin on map & enter flat/house number."
-            );
-          } catch (e) {
-            console.warn("[Location Request Failed, sending CTA URL]", e);
-          }
-
-          await adapter.sendInteractiveCtaUrl(
-            msg.phone,
-            "🗺️ Open Map & Address Form",
-            "🗺️ Pin Location on Map",
-            mapFormUrl,
-          );
+          await sendPinLocationPrompt(adapter, msg.phone);
           return;
         }
 
@@ -628,100 +784,54 @@ export class BotSessionManager {
             return;
           }
 
-          if (pending.type === "delivery" && !cust.address) {
-            const serverUrl = process.env.SERVER_URL || "https://godavari-ruchulu-bot-1014973248302.asia-south1.run.app";
-            const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+          // Every order is a delivery order and the location is never assumed —
+          // each order re-offers the known addresses or a fresh pin, because
+          // customers order to home, office and elsewhere on different days.
+          const savedAddresses = await savedAddressesFor(cust.id, cust.address);
 
-            // Check if customer has a saved address from previous orders
-            const prevOrders = await prisma.order.findMany({
-              where: { customerId: cust.id, deliveryAddress: { not: null } },
-              orderBy: { createdAt: "desc" },
-              take: 1,
-            });
-
-            const savedAddr = cust.address || prevOrders[0]?.deliveryAddress;
-
-            if (savedAddr) {
-              await adapter.sendInteractiveButtons(
-                msg.phone,
-                `📍 *Delivery Location Preview:*\n\nWe found your previous address:\n🏠 *${savedAddr}*\n\nWould you like to use this location or pin a new map location?`,
-                [
-                  { id: "use_saved_address_btn", title: "📍 Use Saved Address" },
-                  { id: "pin_new_location_btn", title: "🗺️ Pin New Location" },
-                ],
-                "📦 Select Delivery Location",
-              );
-              return;
-            }
-
-            try {
-              await adapter.sendInteractiveLocationRequest(
-                msg.phone,
-                "📍 *Delivery Location Needed!*\n\nTap *📍 Share Location* to send your current GPS location, or tap the button below to pin on map & enter flat/house number."
-              );
-            } catch (e) {
-              console.warn("[Location Request Failed, sending CTA URL]", e);
-            }
-
-            await adapter.sendInteractiveCtaUrl(
+          if (savedAddresses.length > 0) {
+            // WhatsApp allows at most three reply buttons, so offer the two most
+            // recent addresses plus the escape hatch to pin a new one.
+            const shortlist = savedAddresses.slice(0, 2);
+            const body = shortlist.map((a, i) => `${i + 1}. ${a}`).join("\n\n");
+            await adapter.sendInteractiveButtons(
               msg.phone,
-              "🗺️ Open Map & Address Form",
-              "🗺️ Pin Location on Map",
-              mapFormUrl,
+              `Ekkada deliver cheyyamantaru andi?\n\n${body}`,
+              [
+                ...shortlist.map((addr, i) => ({
+                  id: `use_addr_${i}`,
+                  title: `📍 ${addr.slice(0, 18)}`,
+                })),
+                { id: "pin_new_location_btn", title: "🗺️ New Address" },
+              ],
+              "📦 Delivery Location",
             );
             return;
           }
 
-          let lines: any[] = [];
-          try { lines = JSON.parse(pending.lines); } catch {}
-          const menuItems = await prisma.menuItem.findMany({
-            where: { id: { in: lines.map((l) => l.menuItemId) } },
-            include: { variants: true }
-          });
-          const byId = new Map(menuItems.map((m) => [m.id, m]));
-          let subtotal = 0;
-          for (const l of lines) {
-            const mi = byId.get(l.menuItemId);
-            if (!mi) continue;
-            let p = mi.price;
-            if (l.variantId) {
-              const v = mi.variants.find((v) => v.id === l.variantId);
-              if (v) p = v.price;
-            }
-            subtotal += p * l.qty;
-          }
-
-          const isDelivery = pending.type === "delivery";
-          const deliveryFee = isDelivery ? 45 : 0;
-          const grandTotal = subtotal + deliveryFee;
-
-          const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
-
-          if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
-            const payRes = await createPaymentLink({
-              restaurantId,
-              customerId: cust.id,
-              amount: grandTotal,
-              customerPhone: msg.phone,
-              restaurantName: botConfig.restaurantName,
-            });
-
-            if (payRes?.url) {
-              const payMsg = paymentLinkTemplate(payRes.url, grandTotal);
-              await adapter.sendText(msg.phone, payMsg);
-              return;
-            }
-          }
-
-          await adapter.sendInteractiveButtons(
-            msg.phone,
-            `₹${grandTotal} ela pay chestharu andi?`,
-            [
-              { id: "pay_method_upi", title: "📱 UPI" },
-              { id: "pay_method_cash", title: "💵 Cash on Pickup" }
-            ],
-          );
+          await sendPinLocationPrompt(adapter, msg.phone);
           return;
+        }
+
+        // ── Direct Action 5b: Customer picked one of their saved addresses ─────
+        const savedAddrChoice = rawText.match(/^use_addr_(\d+)$/);
+        if (savedAddrChoice) {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const list = await savedAddressesFor(cust.id, cust.address);
+          const chosen = list[Number(savedAddrChoice[1])];
+
+          if (!chosen) {
+            await sendPinLocationPrompt(adapter, msg.phone);
+            return;
+          }
+
+          await prisma.customer.update({
+            where: { id: cust.id },
+            data: { address: chosen },
+          });
+          await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, chosen);
+          return;
+
         }
 
         // ── Direct Action 6: Add More Items Button ──────────────────────────────
@@ -731,31 +841,18 @@ export class BotSessionManager {
           return;
         }
 
-        // ── Direct Action 7: Cash / UPI Payment Method Button ──────────────────
-        if (rawText === "pay_method_cash" || cleanText === "cash on pickup" || cleanText === "pay cash") {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
-          });
-          if (pending) {
-            let lines: any[] = [];
-            try { lines = JSON.parse(pending.lines); } catch {}
-            const newOrder = await createOrder({
-              customerId: cust.id,
-              type: (pending.type as any) ?? "pickup",
-              lines: lines,
-              payment: { method: "cash", status: "pending" },
-            });
-
-            await prisma.pendingOrder.delete({ where: { id: pending.id } });
-
-            await Promise.all([
-              sendOrderReceipt(adapter, msg.phone, restaurantId, newOrder.id),
-              notifyOwner(adapter, restaurantId, newOrder.id)
-            ]);
-          } else {
-            await adapter.sendText(msg.phone, "No pending order found to complete.");
-          }
+        // Cash / pay-on-delivery is deliberately gone: every order is prepaid via
+        // Razorpay, so an order must never be created before the webhook fires.
+        if (
+          rawText === "pay_method_cash" ||
+          rawText === "pay_method_upi" ||
+          cleanText === "cash on pickup" ||
+          cleanText === "pay cash"
+        ) {
+          await adapter.sendText(
+            msg.phone,
+            "Payment antha online ne andi 🙏 Pai lo unna *Pay* button tap cheyandi.",
+          );
           return;
         }
 
