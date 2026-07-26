@@ -32,6 +32,12 @@ export interface DispatchRequest {
   customerName: string;
   customerPhone: string;
   deliveryAddress: string;
+  deliveryLat?: number;
+  deliveryLng?: number;
+  pickupAddress?: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  pickupPhone?: string;
   pickupPincode?: number;
   deliveryPincode?: number;
 }

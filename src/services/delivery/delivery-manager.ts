@@ -108,12 +108,25 @@ export class DeliveryManager {
     // Step 2: Trigger dispatch via selected provider
     console.log(`🚀 [Dispatching Rider] Booking rider on ${selectedProviderCode.toUpperCase()} API...`);
 
+    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+    const ownerPhone = (restaurant?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean)[0];
+    const PLACEHOLDER_ADDRESS = "Plot 12, Main Road, Gachibowli, Hyderabad";
+    const pickupAddress = restaurant?.restaurantAddress && restaurant.restaurantAddress !== PLACEHOLDER_ADDRESS
+      ? restaurant.restaurantAddress
+      : undefined;
+
     const result = await orchestrator.dispatchOrder({
       orderId,
       providerCode: selectedProviderCode,
       customerName: order.customer.name ?? "Customer",
       customerPhone: order.customer.phone,
       deliveryAddress: order.deliveryAddress ?? "Jubilee Hills, Hyderabad",
+      deliveryLat: order.deliveryLat ?? undefined,
+      deliveryLng: order.deliveryLng ?? undefined,
+      pickupAddress,
+      pickupLat: restaurant?.restaurantLat ?? undefined,
+      pickupLng: restaurant?.restaurantLng ?? undefined,
+      pickupPhone: ownerPhone,
     });
 
     console.log(`🔍 [Rider Search Active] Booking ID: ${result.dispatchId} | Initial Status: ${result.status || "SEARCHING_RIDER"}`);
