@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Pin Delivery Location — Godavari Ruchulu</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>/* GOOGLE_MAPS_KEY_PLACEHOLDER */</script>
   <style>
     body, html { height: 100%; margin: 0; padding: 0; overflow: hidden; }
@@ -33,9 +31,6 @@
         class="w-full bg-transparent text-xs text-white placeholder:text-slate-400 focus:outline-none py-1.5" />
       <button onclick="clearSearch()" id="btn-clear" class="hidden text-slate-400 hover:text-white px-2 text-xs">✕</button>
     </div>
-    
-    <!-- OpenStreetMap Fallback Search Results Dropdown -->
-    <div id="search-results" class="hidden glass-card rounded-2xl border border-slate-800 mt-2 max-h-48 overflow-y-auto shadow-2xl divide-y divide-slate-800 text-xs"></div>
   </div>
 
   <!-- Floating GPS Button -->
@@ -126,38 +121,42 @@
 
     let curLat = 17.4380;
     let curLng = 78.4050;
-    let mapEngine = "leaflet"; // "google" or "leaflet"
 
     let gMap = null;
     let gMarker = null;
     let gGeocoder = null;
+    let gAutocomplete = null;
 
-    let lMap = null;
-    let lMarker = null;
-    let searchDebounce = null;
-
-    // Check if Google Maps API key exists and dynamically load script
     const googleApiKey = window.GOOGLE_MAPS_API_KEY || "";
+
+    function showMapError(msg) {
+      const el = document.getElementById("area-preview");
+      el.textContent = msg;
+      el.classList.add("text-rose-400");
+    }
+
     if (googleApiKey) {
-      window.initGoogleMaps = function() {
-        mapEngine = "google";
+      window.initGoogleMaps = function () {
         initGoogleEngine();
+        // GPS is requested only after the map exists. Previously locateGPS() ran
+        // at parse time, before the async Maps script had loaded, so its success
+        // handler had no map or marker to move.
+        locateGPS();
       };
       const script = document.createElement("script");
       script.src = `https://maps.googleapis.com/maps/api/js?key=${googleApiKey}&libraries=places&callback=initGoogleMaps`;
       script.async = true;
-      script.onerror = function() {
-        console.warn("Google Maps failed to load, falling back to Leaflet.");
-        initLeafletEngine();
+      script.onerror = function () {
+        showMapError("Map failed to load. Please check your connection and reload.");
       };
       document.head.appendChild(script);
     } else {
-      initLeafletEngine();
+      showMapError("Map unavailable — GOOGLE_MAPS_API_KEY is not configured.");
     }
 
     function initGoogleEngine() {
       const container = document.getElementById("map");
-      container.innerHTML = ""; // clear
+      container.innerHTML = "";
 
       gMap = new google.maps.Map(container, {
         center: { lat: curLat, lng: curLng },
@@ -175,25 +174,24 @@
 
       gGeocoder = new google.maps.Geocoder();
 
-      gMarker.addListener("dragend", function() {
+      gMarker.addListener("dragend", function () {
         const pos = gMarker.getPosition();
         updateCoords(pos.lat(), pos.lng());
       });
 
-      gMap.addListener("click", function(e) {
+      gMap.addListener("click", function (e) {
         gMarker.setPosition(e.latLng);
         updateCoords(e.latLng.lat(), e.latLng.lng());
       });
 
-      // Google Places Autocomplete Search
       const searchInput = document.getElementById("search-input");
-      const autocomplete = new google.maps.places.Autocomplete(searchInput, {
+      gAutocomplete = new google.maps.places.Autocomplete(searchInput, {
         componentRestrictions: { country: "in" },
         fields: ["geometry", "formatted_address", "name"],
       });
 
-      autocomplete.addListener("place_changed", function() {
-        const place = autocomplete.getPlace();
+      gAutocomplete.addListener("place_changed", function () {
+        const place = gAutocomplete.getPlace();
         if (!place.geometry || !place.geometry.location) return;
 
         const lat = place.geometry.location.lat();
@@ -205,36 +203,11 @@
 
         updateCoords(lat, lng);
       });
-    }
 
-    function initLeafletEngine() {
-      mapEngine = "leaflet";
-      lMap = L.map("map", { zoomControl: false }).setView([curLat, curLng], 15);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap'
-      }).addTo(lMap);
-
-      const redIcon = L.icon({
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41]
-      });
-
-      lMarker = L.marker([curLat, curLng], { draggable: true, icon: redIcon }).addTo(lMap);
-
-      lMarker.on("dragend", function() {
-        const pos = lMarker.getLatLng();
-        updateCoords(pos.lat, pos.lng);
-      });
-
-      lMap.on("click", function(e) {
-        lMarker.setLatLng(e.latlng);
-        updateCoords(e.latlng.lat, e.latlng.lng);
-      });
+      // Resolve the starting pin straight away. "Pinned Area" is readonly, so if
+      // nothing ever geocodes — customer declines GPS and doesn't move the pin —
+      // it stays blank, cannot be typed into, and the saved address loses its area.
+      updateCoords(curLat, curLng);
     }
 
     function updateCoords(lat, lng) {
@@ -243,139 +216,70 @@
       document.getElementById("lat").value = lat.toFixed(6);
       document.getElementById("lng").value = lng.toFixed(6);
 
-      if (mapEngine === "google" && gGeocoder) {
-        gGeocoder.geocode({ location: { lat, lng } }, (results, status) => {
-          if (status === "OK" && results && results[0]) {
-            const formatted = results[0].formatted_address;
-            document.getElementById("fullAddress").value = formatted;
-            document.getElementById("area-preview").textContent = formatted;
+      if (!gGeocoder) return;
 
-            // Extract pincode from Google components
-            const postalComp = results[0].address_components.find(c => c.types.includes("postal_code"));
-            if (postalComp) {
-              document.getElementById("pincode").value = postalComp.long_name;
-            }
-          }
-        });
-      } else {
-        reverseGeocodeLeaflet(lat, lng);
-      }
-    }
-
-    async function reverseGeocodeLeaflet(lat, lng) {
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-        const data = await res.json();
-        if (data && data.display_name) {
-          const formatted = data.display_name;
+      gGeocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        if (status === "OK" && results && results[0]) {
+          const formatted = results[0].formatted_address;
           document.getElementById("fullAddress").value = formatted;
           document.getElementById("area-preview").textContent = formatted;
-          if (data.address && data.address.postcode) {
-            document.getElementById("pincode").value = data.address.postcode;
+
+          const postalComp = results[0].address_components.find((c) => c.types.includes("postal_code"));
+          if (postalComp) {
+            document.getElementById("pincode").value = postalComp.long_name;
           }
+        } else {
+          // Still give the courier the coordinates rather than an empty area.
+          const fallback = `GPS Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+          document.getElementById("fullAddress").value = fallback;
+          document.getElementById("area-preview").textContent = fallback;
         }
-      } catch (e) {
-        document.getElementById("fullAddress").value = `GPS Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-        document.getElementById("area-preview").textContent = `GPS Pin (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-      }
+      });
     }
 
     function locateGPS() {
       const btn = document.getElementById("btn-gps");
       btn.textContent = "⏳ Locating...";
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            curLat = pos.coords.latitude;
-            curLng = pos.coords.longitude;
 
-            if (mapEngine === "google" && gMap && gMarker) {
-              gMap.setCenter({ lat: curLat, lng: curLng });
-              gMap.setZoom(17);
-              gMarker.setPosition({ lat: curLat, lng: curLng });
-            } else if (lMap && lMarker) {
-              lMap.setView([curLat, curLng], 17);
-              lMarker.setLatLng([curLat, curLng]);
-            }
-
-            updateCoords(curLat, curLng);
-            btn.textContent = "🎯 Locate Me";
-          },
-          (err) => {
-            alert("Could not get GPS location. Please tap or search on the map.");
-            btn.textContent = "🎯 Locate Me";
-          },
-          { enableHighAccuracy: true }
-        );
-      } else {
-        alert("Geolocation not supported by browser.");
+      if (!navigator.geolocation) {
         btn.textContent = "🎯 Locate Me";
-      }
-    }
-
-    locateGPS();
-
-    function handleSearchInput(e) {
-      if (mapEngine === "google") return; // Google Places handles search automatically
-
-      const q = e.target.value.trim();
-      const clearBtn = document.getElementById("btn-clear");
-      const resultsDiv = document.getElementById("search-results");
-
-      if (q.length > 0) clearBtn.classList.remove("hidden");
-      else clearBtn.classList.add("hidden");
-
-      if (q.length < 3) {
-        resultsDiv.classList.add("hidden");
         return;
       }
 
-      if (searchDebounce) clearTimeout(searchDebounce);
-      searchDebounce = setTimeout(() => searchLocationLeaflet(q), 350);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          curLat = pos.coords.latitude;
+          curLng = pos.coords.longitude;
+
+          if (gMap && gMarker) {
+            gMap.setCenter({ lat: curLat, lng: curLng });
+            gMap.setZoom(17);
+            gMarker.setPosition({ lat: curLat, lng: curLng });
+          }
+
+          updateCoords(curLat, curLng);
+          btn.textContent = "🎯 Locate Me";
+        },
+        () => {
+          // Keep the default pin — the customer can drag or search instead. No
+          // alert here: it fired on page load and blocked the whole form.
+          btn.textContent = "🎯 Locate Me";
+        },
+        { enableHighAccuracy: true },
+      );
+    }
+
+    // Google Places Autocomplete drives the search box itself; these two just
+    // manage the clear button, which the markup wires to oninput/onclick.
+    function handleSearchInput(e) {
+      const clearBtn = document.getElementById("btn-clear");
+      if (e.target.value.trim().length > 0) clearBtn.classList.remove("hidden");
+      else clearBtn.classList.add("hidden");
     }
 
     function clearSearch() {
-      const input = document.getElementById("search-input");
-      input.value = "";
+      document.getElementById("search-input").value = "";
       document.getElementById("btn-clear").classList.add("hidden");
-      document.getElementById("search-results").classList.add("hidden");
-    }
-
-    async function searchLocationLeaflet(query) {
-      const resultsDiv = document.getElementById("search-results");
-      resultsDiv.innerHTML = `<div class="p-3 text-slate-400 text-center">Searching "${query}"...</div>`;
-      resultsDiv.classList.remove("hidden");
-
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ", Hyderabad, Telangana")}&limit=5`);
-        const data = await res.json();
-
-        if (!data || data.length === 0) {
-          resultsDiv.innerHTML = `<div class="p-3 text-slate-400 text-center">No matching locations found</div>`;
-          return;
-        }
-
-        resultsDiv.innerHTML = data.map((item) => `
-          <div onclick="selectSearchResult(${item.lat}, ${item.lon}, '${item.display_name.replace(/'/g, "\\'")}')" class="p-3 hover:bg-slate-800/80 cursor-pointer transition-colors text-slate-200 flex items-center gap-2">
-            <span>📍</span>
-            <span class="truncate">${item.display_name}</span>
-          </div>
-        `).join("");
-      } catch (err) {
-        resultsDiv.innerHTML = `<div class="p-3 text-rose-400 text-center">Search failed. Try dragging map.</div>`;
-      }
-    }
-
-    function selectSearchResult(lat, lng, displayName) {
-      const nLat = parseFloat(lat);
-      const nLng = parseFloat(lng);
-      if (lMap && lMarker) {
-        lMap.setView([nLat, nLng], 17);
-        lMarker.setLatLng([nLat, nLng]);
-      }
-      updateCoords(nLat, nLng);
-      document.getElementById("search-results").classList.add("hidden");
-      document.getElementById("search-input").value = displayName.split(",")[0];
     }
 
     function proceedToAddressForm() {
@@ -395,6 +299,13 @@
       const area = document.getElementById("fullAddress").value.trim();
       const lat = parseFloat(document.getElementById("lat").value);
       const lng = parseFloat(document.getElementById("lng").value);
+
+      // Area is readonly, so an empty value means geocoding never ran. Sending it
+      // would save a half-formed address a courier can't use.
+      if (!area) {
+        alert("Please pin your location on the map first.");
+        return;
+      }
 
       const fullFormattedAddress = `${flat}, ${bldg}${lmark ? `, Near ${lmark}` : ""}, ${area} - ${pin}`;
 
