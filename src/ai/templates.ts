@@ -43,7 +43,7 @@ export function orderStagedTemplate(
     ``,
     `_Delivery fee location pin chesaka add avutundi._`,
     ``,
-    `Tap *✅ Confirm & Pay* to continue.`,
+    `Tap *✅ Confirm Order* to continue.`,
   ].join("\n");
 }
 

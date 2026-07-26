@@ -370,7 +370,7 @@ export function buildAdminApp() {
         phone,
         stagedMsg,
         [
-          { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+          { id: "confirm_order_btn", title: "✅ Confirm Order" },
           { id: "add_more_items_btn", title: "➕ Add More Items" }
         ],
         "🛒 Order Summary",
@@ -421,20 +421,17 @@ export function buildAdminApp() {
     if (pending) {
       await prisma.pendingOrder.update({
         where: { id: pending.id },
-        data: { type: "delivery" },
+        data: { type: "delivery_awaiting_details" },
       });
     }
 
+    // After the customer pins their location, ask for flat/door number and
+    // landmark details before proceeding to billing.
     const session = botSessionManager.getSession(1);
     if (session) {
-      await session.sendInteractiveButtons(
+      await session.sendText(
         phone,
-        `📍 *Delivery Location Pinned!*\n\n*Address:* ${address}\n\nTap *✅ Confirm & Pay* to complete your order.`,
-        [
-          { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
-          { id: "add_more_items_btn", title: "➕ Add More Items" },
-        ],
-        "📦 Delivery Location",
+        `📍 *Location vachindi andi!*\n\nMee flat/door number, building name and landmark cheppandi.`,
       );
     }
 

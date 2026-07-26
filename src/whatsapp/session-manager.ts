@@ -111,7 +111,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
           phone,
           bubble,
           [
-            { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+            { id: "confirm_order_btn", title: "✅ Confirm Order" },
             { id: "add_more_items_btn", title: "➕ Add More Items" }
           ],
           "🛒 Order Summary",
@@ -363,6 +363,46 @@ async function sendPinLocationPrompt(adapter: CloudAdapter, phone: string): Prom
     "Ee link lo mee location pin drop cheyandi 👇",
     "📍 Drop Location on Maps",
     mapFormUrl,
+  );
+}
+
+/**
+ * Show a WhatsApp interactive LIST popup with saved addresses so the full
+ * address text is visible (description supports ~72 chars). Much better than
+ * buttons which truncate at 20 characters and make the address unreadable
+ * for both the customer and for Borzo quote lookups.
+ */
+async function sendAddressPickerList(
+  adapter: CloudAdapter,
+  phone: string,
+  savedAddresses: string[],
+): Promise<void> {
+  // Show up to 5 saved addresses plus "📍 New Address" at the bottom
+  const shortlist = savedAddresses.slice(0, 5);
+
+  const rows = shortlist.map((addr, i) => {
+    // title: short label (max 24 chars), description: full address (max 72 chars)
+    const title = addr.length <= 24 ? addr : addr.slice(0, 21) + "...";
+    return {
+      id: `use_addr_${i}`,
+      title,
+      description: addr.slice(0, 72),
+    };
+  });
+
+  // Always add "New Address" as the last option
+  rows.push({
+    id: "pin_new_location_btn",
+    title: "📍 New Address",
+    description: "Drop a pin on Google Maps",
+  });
+
+  await adapter.sendInteractiveList(
+    phone,
+    "Ekkada deliver cheyyamantaru andi? Kinda list lo select cheyandi 👇",
+    "📍 Select Address",
+    [{ title: "Delivery Addresses", rows }],
+    "📦 Delivery Location",
   );
 }
 
@@ -778,22 +818,7 @@ export class BotSessionManager {
           const savedAddresses = await savedAddressesFor(cust.id, cust.address);
 
           if (savedAddresses.length > 0) {
-            // WhatsApp allows at most three reply buttons, so offer the two most
-            // recent addresses plus the escape hatch to pin a new one.
-            const shortlist = savedAddresses.slice(0, 2);
-            const body = shortlist.map((a, i) => `${i + 1}. ${a}`).join("\n\n");
-            await adapter.sendInteractiveButtons(
-              msg.phone,
-              `Ekkada deliver cheyyamantaru andi?\n\n${body}`,
-              [
-                ...shortlist.map((addr, i) => ({
-                  id: `use_addr_${i}`,
-                  title: `📍 ${addr.slice(0, 18)}`,
-                })),
-                { id: "pin_new_location_btn", title: "🗺️ New Address" },
-              ],
-              "📦 Delivery Location",
-            );
+            await sendAddressPickerList(adapter, msg.phone, savedAddresses);
             return;
           }
 
@@ -842,6 +867,61 @@ export class BotSessionManager {
             "Payment antha online ne andi 🙏 Pai lo unna *Pay* button tap cheyandi.",
           );
           return;
+        }
+
+        // ── Direct Action: Flat/Door number after Google Maps pin ────────────
+        // After the customer pins their location, the system asks for flat/door
+        // details. The pending order is marked "delivery_awaiting_details" so we
+        // know the next message is those details — append to address and bill.
+        {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const pending = await prisma.pendingOrder.findFirst({
+            where: { customerId: cust.id, type: "delivery_awaiting_details", expiresAt: { gt: new Date() } },
+          });
+          if (pending) {
+            // Append flat/door details to the GPS address
+            const currentAddr = cust.address ?? "";
+            const fullAddress = currentAddr
+              ? `${currentAddr} — ${rawText}`
+              : rawText;
+
+            await prisma.customer.update({
+              where: { id: cust.id },
+              data: { address: fullAddress },
+            });
+
+            // Mark as regular delivery so this handler doesn't fire again
+            await prisma.pendingOrder.update({
+              where: { id: pending.id },
+              data: { type: "delivery" },
+            });
+
+            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, fullAddress);
+            return;
+          }
+        }
+
+        // ── Direct Action: Text-based order confirmation ──────────────────────
+        // If the customer types "confirm", "yes", "haan" etc. AND has a staged
+        // cart, route through the same address → billing flow as the ✅ button.
+        const confirmWords = ["confirm", "yes", "haan", "ha", "sure", "ok", "okay", "avunu", "sare", "confirm order"];
+        if (confirmWords.includes(cleanText)) {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const pending = await prisma.pendingOrder.findFirst({
+            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+          });
+          if (pending && pending.lines && pending.lines !== "[]") {
+            // Same flow as confirm_order_btn — show saved addresses or pin prompt
+            const savedAddresses = await savedAddressesFor(cust.id, cust.address);
+
+            if (savedAddresses.length > 0) {
+              await sendAddressPickerList(adapter, msg.phone, savedAddresses);
+              return;
+            }
+
+            await sendPinLocationPrompt(adapter, msg.phone);
+            return;
+          }
         }
 
         const { reply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);

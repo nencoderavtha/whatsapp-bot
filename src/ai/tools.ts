@@ -388,8 +388,17 @@ export async function runTool(
         const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const razorpayConfigured = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
 
+        // When Razorpay is configured, order confirmation is handled by the
+        // session manager which collects the delivery address, fetches a live
+        // Borzo delivery quote, shows the final bill, and then generates the
+        // payment link. The AI must NOT short-circuit this flow.
         if (razorpayConfigured) {
-          return await handleGeneratePaymentLink(customerId, restaurantId);
+          return {
+            output: {
+              ok: false,
+              error: "Order confirmation is handled automatically. Tell the customer to tap the ✅ Confirm Order button shown earlier, or say 'confirm' / 'yes'. The system will ask for their delivery address and show the final bill with delivery fee before generating the payment link. Do NOT call generate_payment_link yourself.",
+            },
+          };
         }
         if (!cart.paymentMethod) {
           return {
