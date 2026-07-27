@@ -1312,6 +1312,12 @@ export class BotSessionManager {
         }
 
         const { reply, mediaReply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
+
+        // An empty reply means this message was folded into a turn already in
+        // flight for the same customer — that turn answers all of them at once,
+        // so there is nothing to send here.
+        if (!reply && !mediaReply) return;
+
         console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
 
         if (mediaReply) {

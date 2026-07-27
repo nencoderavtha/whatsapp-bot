@@ -204,11 +204,83 @@ async function processIncoming(
   return { reply: finalText, placedOrderId, humanHandoffRequested };
 }
 
+/**
+ * Messages that arrived for a customer while their previous turn was still
+ * being answered. Keyed the same way as the lock.
+ */
+const pendingFollowUps = new Map<string, string[]>();
+
+/** Turns that have been superseded by a newer message and must not reply. */
+const supersededTurns = new Set<string>();
+
+/**
+ * Coalesce messages a customer sends in quick succession into one turn.
+ *
+ * People type an order across several lines — "2 biryani", "1 parotta",
+ * "deliver to home" — and answering each separately gives three replies and
+ * three chances to misread the order.
+ *
+ * Nothing is delayed to achieve this. A turn already takes ~2.2s at the median,
+ * so anything typed during that window is free to absorb: the in-flight reply is
+ * discarded and one turn is run over the combined text. A customer who sends a
+ * single message waits exactly as long as before — deliberately, since a blanket
+ * debounce would have roughly doubled the median response time to fix a case
+ * that only affects burst typers.
+ */
 export async function handleIncoming(
   phone: string,
   userText: string,
   restaurantId: number,
 ): Promise<AgentResult> {
   const lockKey = `${restaurantId}:${phone}`;
-  return withCustomerLock(lockKey, () => processIncoming(phone, userText, restaurantId));
+
+  // A turn is already running for this customer: hand them our text and let
+  // that turn deliver the combined answer, so this message produces no reply
+  // of its own.
+  if (customerLocks.has(lockKey)) {
+    const queued = pendingFollowUps.get(lockKey) ?? [];
+    queued.push(userText);
+    pendingFollowUps.set(lockKey, queued);
+    supersededTurns.add(lockKey);
+    console.log(`[agent] Coalescing follow-up for ${lockKey}: "${userText.slice(0, 60)}"`);
+    return { reply: "" };
+  }
+
+  return withCustomerLock(lockKey, async () => {
+    let text = userText;
+
+    for (let round = 0; round < 3; round++) {
+      supersededTurns.delete(lockKey);
+      const turnStart = new Date();
+      const result = await processIncoming(phone, text, restaurantId);
+
+      const followUps = pendingFollowUps.get(lockKey);
+      if (!supersededTurns.has(lockKey) || !followUps?.length) {
+        return result;
+      }
+
+      // Newer messages landed mid-turn. Drop this reply and answer once over
+      // everything the customer actually said. The superseded exchange is
+      // removed from history too — otherwise the re-run reads a reply that was
+      // never sent, and the combined text would appear twice.
+      pendingFollowUps.delete(lockKey);
+      try {
+        const cust = await getOrCreateCustomer(phone, restaurantId);
+        await prisma.message.deleteMany({
+          where: { customerId: cust.id, createdAt: { gte: turnStart } },
+        });
+      } catch (e) {
+        console.error("[agent] Could not clear superseded turn from history:", e);
+      }
+
+      text = [text, ...followUps].join("\n");
+      console.log(`[agent] Re-running ${lockKey} over ${followUps.length + 1} combined messages`);
+    }
+
+    // Ran out of rounds — someone is typing faster than we can answer. Reply to
+    // what we have rather than looping.
+    pendingFollowUps.delete(lockKey);
+    supersededTurns.delete(lockKey);
+    return processIncoming(phone, text, restaurantId);
+  });
 }
