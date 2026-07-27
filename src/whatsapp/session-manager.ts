@@ -110,10 +110,15 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
     }
 
     // 2. Intercept cart staged summary → native WhatsApp interactive buttons (Confirm Order / Add More)
+    // Match against text with WhatsApp markup stripped. Bolding the total as
+    // "*Items Total:* ₹350" put an asterisk between the colon and the ₹, which
+    // silently stopped this matching and took the Confirm / Add More buttons
+    // with it — a formatting change should not be able to remove a button.
+    const plain = lower.replace(/[*_~`]/g, "");
     const isCartSummary =
-      (lower.includes("total: ₹") || lower.includes("here's your order") || lower.includes("order summary") || lower.includes("order breakdown")) &&
-      !lower.includes("payment details") &&
-      !lower.includes("order #");
+      (plain.includes("total: ₹") || plain.includes("here's your order") || plain.includes("order summary") || plain.includes("order breakdown")) &&
+      !plain.includes("payment details") &&
+      !plain.includes("order #");
 
     if (isCartSummary) {
       try {

@@ -26,7 +26,7 @@ import {
   meHandler,
 } from "./auth.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
-import { orderStagedTemplate } from "../ai/templates.js";
+import { cartSummaryText } from "../whatsapp/renderers.js";
 import { notifyAdminOfEvent, eventBus } from "../services/events.js";
 import { logActivity } from "../services/activity.js";
 import { createPaymentLink, verifyWebhookSignature } from "../services/razorpay.js";
@@ -371,7 +371,14 @@ export function buildAdminApp() {
       const promptText = `I selected some items from the web menu: ${validLines.map(v => `${v.qty}x ${byId.get(v.menuItemId)?.name}`).join(", ")}`;
       await logMessage(customer.id, "user", promptText);
 
-      const stagedMsg = orderStagedTemplate(labels, total, "pickup");
+      // Same stage-aware summary as every other path. orderStagedTemplate ended
+      // with "Tap Confirm Order to continue", duplicating the button directly
+      // beneath it and repeating the pin-location hint after an address existed.
+      const cart = await prisma.pendingOrder.findUnique({
+        where: { customerId: customer.id },
+        select: { stage: true },
+      });
+      const stagedMsg = cartSummaryText(labels, total, cart?.stage ?? "BUILDING_CART");
       await session.sendInteractiveButtons(
         phone,
         stagedMsg,
