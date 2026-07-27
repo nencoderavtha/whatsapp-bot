@@ -72,21 +72,16 @@ async function processIncoming(
         userText = `I want to order 1 ${item.name}`;
       }
     }
-  } else if (userText === "pay_method_upi") {
-    userText = "I want to pay via UPI";
-  } else if (userText === "pay_method_razorpay") {
-    userText = "I want to pay online via Razorpay";
-  } else if (userText === "pay_method_cash") {
-    userText = "I want to pay cash on delivery or at counter";
   } else if (userText === "confirm_order_btn") {
     userText = "Yes, confirm my order";
   } else if (userText === "add_more_items_btn") {
     userText = "I want to add more items to my order";
-  } else if (userText === "use_saved_address") {
-    userText = "Please use my saved delivery address";
-  } else if (userText === "change_address") {
-    userText = "I want to update my delivery address";
   }
+  // Address and payment-method button ids are deliberately absent. Rewriting a
+  // tap into prose sent the model off to compose its own reply — which is how a
+  // customer asking about their address got told they had none, and how the
+  // address loop formed. Those ids are handled deterministically before the
+  // agent is reached; anything still arriving here is genuine free text.
 
   const checkHistory = await recentMessages(customer.id, 5);
   const isGreeting = ["hi", "hello", "hey", "namaste", "start", "menu", "yo", "hola", "namaskar", "namaskaram"].includes(userText.trim().toLowerCase());

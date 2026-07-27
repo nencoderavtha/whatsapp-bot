@@ -139,42 +139,11 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
       }
     }
 
-    // 3. Intercept payment option requests -> multiple payment method buttons
-    const isPaymentPrompt =
-      lower.includes("how would you like to pay") ||
-      lower.includes("choose your payment method") ||
-      lower.includes("select a payment option");
-
-    if (isPaymentPrompt) {
-      try {
-        const botCfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
-        const methods = (botCfg?.paymentMethods ?? "cash,upi").split(",").map(s => s.trim().toLowerCase());
-
-          const buttons: { id: string; title: string }[] = [];
-          if (methods.includes("upi") && botCfg?.upiId) {
-            buttons.push({ id: "pay_method_upi", title: "📱 Instant UPI" });
-          }
-          if (methods.includes("razorpay") && botCfg?.razorpayEnabled) {
-            buttons.push({ id: "pay_method_razorpay", title: "💳 Pay Online" });
-          }
-          if (methods.includes("cash")) {
-            buttons.push({ id: "pay_method_cash", title: "💵 Pay on Delivery" });
-          }
-
-          if (buttons.length > 0) {
-            await adapter.sendInteractiveButtons(
-              phone,
-              `${bubble}\n\nPlease select your preferred payment method below:`,
-              buttons.slice(0, 3),
-              "💳 Select Payment Method",
-              "Safe & Secure Payment Options"
-            );
-            continue;
-          }
-        } catch (err) {
-          console.error("[Kapso] Payment buttons failed:", err);
-        }
-      }
+    // The payment-method picker that lived here is gone. It offered Cash on
+    // Delivery and UPI buttons, which the handler now refuses outright with
+    // "payment antha online ne andi" — the bot was presenting choices it would
+    // not honour. Payment is Razorpay only, sent as a CTA button by
+    // proceedToBilling once the final bill is agreed.
 
       // 4. Intercept UPI payment links → native WhatsApp button message (no browser redirect)
       if (bubble.includes("upi://pay?")) {
@@ -216,45 +185,16 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
         }
       }
 
-      // 6. Intercept delivery address requests → native WhatsApp address collection sheet or saved address buttons
-      const isAddressRequest =
-        bubble.toLowerCase().includes("delivery address") ||
-        bubble.toLowerCase().includes("provide your address") ||
-        bubble.toLowerCase().includes("share your address") ||
-        bubble.toLowerCase().includes("address details") ||
-        bubble.toLowerCase().includes("where should we deliver");
-
-      if (isAddressRequest) {
-        try {
-          const customer = await prisma.customer.findFirst({
-            where: { phone },
-            select: { name: true, address: true }
-          });
-
-          if (customer?.address) {
-            await adapter.sendInteractiveButtons(
-              phone,
-              `🏠 We have your saved delivery address:\n*${customer.address}*\n\nWould you like to use this address or enter a new one?`,
-              [
-                { id: "use_saved_address", title: "🏠 Use Saved Address" },
-                { id: "change_address", title: "✏️ Enter New Address" }
-              ],
-              "📍 Delivery Address",
-              "Fast & Reliable Delivery"
-            );
-            continue;
-          } else {
-            await adapter.sendInteractiveAddress(
-              phone,
-              "🏠 Please tap below to enter your delivery address details securely.",
-              { name: customer?.name ?? undefined }
-            );
-            continue;
-          }
-        } catch (err) {
-          console.error("[Cloud] Failed to send address collection card:", err);
-        }
-      }
+      // The address interceptor that lived here is gone. It fired whenever the
+      // model's prose happened to contain "delivery address" and replaced it
+      // with a fourth address template, in English, whose button ids
+      // (use_saved_address / change_address) did not match the handlers, which
+      // check use_saved_address_btn. Taps therefore fell through to the agent,
+      // which turned them back into prose containing "delivery address", which
+      // re-fired this interceptor — the loop customers were stuck in.
+      //
+      // Address intents are now handled deterministically from stored state in
+      // the message handler, using the shared address renderers.
 
       // 7. General URL Interceptor → Convert ALL web links (menu, tracking, pay, general URLs)
       // into native Interactive CTA URL Buttons so they open directly inside WhatsApp's In-App Browser
@@ -856,7 +796,14 @@ export class BotSessionManager {
         }
 
         // ── Direct Action 4b: Use Saved Address vs Pin New Location ──────────────
-        if (rawText === "use_saved_address_btn" || cleanText.includes("use saved address")) {
+        // Both id spellings are accepted — older messages in customers' chat
+        // history still carry "use_saved_address", and a stale button must not
+        // fall through to the model.
+        if (
+          rawText === "use_saved_address_btn" ||
+          rawText === "use_saved_address" ||
+          cleanText.includes("use saved address")
+        ) {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
           const saved = (await savedAddressesFor(cust.id, cust.address))[0];
           if (saved) {
@@ -944,9 +891,12 @@ export class BotSessionManager {
 
         // Cash / pay-on-delivery is deliberately gone: every order is prepaid via
         // Razorpay, so an order must never be created before the webhook fires.
+        // Nothing emits these any more, but old buttons live on in customers'
+        // chat history and a stale tap must not reach the model.
         if (
           rawText === "pay_method_cash" ||
           rawText === "pay_method_upi" ||
+          rawText === "pay_method_razorpay" ||
           cleanText === "cash on pickup" ||
           cleanText === "pay cash"
         ) {
