@@ -627,6 +627,103 @@ export function buildAdminApp() {
     }
   });
 
+  app.post("/api/webhooks/delivery/shiprocket", asyncRoute(async (req, res) => {
+    const apiKey = req.headers["x-api-key"];
+    const expectedToken = process.env.DELIVERY_WEBHOOK_TOKEN || "godavari_ruchulu_secret_token";
+    
+    if (apiKey !== expectedToken) {
+      console.warn("[Shiprocket Webhook] Unauthorized request. Header x-api-key did not match.");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const payload = req.body;
+    console.log("[Shiprocket Webhook] Received status update:", JSON.stringify(payload, null, 2));
+
+    const trackingData = payload.tracking_data || payload;
+    const { shipment_id, order_id, shipment_status } = trackingData;
+
+    if (!shipment_id || !shipment_status) {
+      res.status(400).json({ error: "Missing shipment_id or shipment_status" });
+      return;
+    }
+
+    let internalStatus = "SEARCHING_RIDER";
+    const statusUpper = String(shipment_status).toUpperCase();
+
+    if (["DELIVERED"].includes(statusUpper)) {
+      internalStatus = "DELIVERED";
+    } else if (["OUT FOR DELIVERY"].includes(statusUpper)) {
+      internalStatus = "IN_TRANSIT";
+    } else if (["PICKED UP", "IN TRANSIT"].includes(statusUpper)) {
+      internalStatus = "PICKED_UP";
+    } else if (["AWB GENERATED", "PICKUP SCHEDULED", "OUT FOR PICKUP", "SHIPPED", "RIDER ASSIGNED", "ASSIGNED"].includes(statusUpper)) {
+      internalStatus = "COURIER_ASSIGNED";
+    } else if (["CANCELLED", "CANCELED"].includes(statusUpper)) {
+      internalStatus = "CANCELLED";
+    }
+
+    const dispatch = await prisma.deliveryDispatch.findFirst({
+      where: {
+        OR: [
+          { externalDeliveryId: `SR-${shipment_id}` },
+          { externalDeliveryId: String(shipment_id) },
+          { externalDeliveryId: `SR-${order_id}` },
+          { orderId: Number(order_id) }
+        ]
+      },
+      include: { order: { include: { customer: true } } }
+    });
+
+    if (!dispatch) {
+      console.warn(`[Shiprocket Webhook] No matching dispatch found for shipment ${shipment_id} / order ${order_id}`);
+      res.status(200).json({ ok: false, message: "No matching order found" });
+      return;
+    }
+
+    const riderName = trackingData.courier_name || trackingData.rider_name || null;
+    const riderPhone = trackingData.courier_phone || trackingData.rider_phone || null;
+    const vehicleNumber = trackingData.rider_vehicle || null;
+
+    await prisma.deliveryDispatch.update({
+      where: { id: dispatch.id },
+      data: {
+        status: internalStatus,
+        ...(riderName ? { riderName } : {}),
+        ...(riderPhone ? { riderPhone } : {}),
+        ...(vehicleNumber ? { riderVehicleNumber: vehicleNumber } : {})
+      }
+    });
+
+    if (internalStatus === "DELIVERED") {
+      await prisma.order.update({
+        where: { id: dispatch.orderId },
+        data: { status: "delivered" }
+      });
+    }
+
+    const session = botSessionManager.getSession(1);
+    if (session) {
+      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+      const trackingUrl = dispatch.externalDeliveryId ? `https://shiprocket.co/tracking/${dispatch.externalDeliveryId.replace("SR-", "")}` : null;
+      const notifMsg = deliveryStatusMsg(
+        dispatch.orderId,
+        internalStatus,
+        riderName,
+        riderPhone,
+        trackingUrl,
+        cfg?.restaurantName ?? "Godavari Ruchulu"
+      );
+
+      if (notifMsg) {
+        await session.sendText(dispatch.order.customer.phone, notifMsg);
+        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
+      }
+    }
+
+    res.status(200).json({ ok: true });
+  }));
+
   app.get("/api/ping", (_req, res) => res.json({ ok: true }));
   app.post("/api/auth/login", loginHandler);
   app.post("/api/auth/logout", logoutHandler);
