@@ -17,6 +17,14 @@ import {
   paymentUnavailableTemplate,
 } from "../ai/templates.js";
 import { DeliveryOrchestrator } from "../services/delivery/orchestrator.js";
+import {
+  renderCartSummary,
+  renderAddressPicker,
+  renderAddressPinPrompt,
+  renderDeliveryQuote,
+  renderPaymentLink,
+} from "./renderers.js";
+import { send, applyCartEdit, isLocked } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 
@@ -520,10 +528,10 @@ async function proceedToBilling(
   // number the customer was billed, instead of re-quoting and drifting.
   await prisma.pendingOrder.update({
     where: { id: pending.id },
-    data: { deliveryFee, type: "delivery" },
+    data: { deliveryFee, type: "delivery", stage: "QUOTE_GENERATED" },
   });
 
-  await adapter.sendText(phone, finalBillTemplate(subtotal, deliveryFee));
+  await send(adapter, phone, renderDeliveryQuote(subtotal, deliveryFee));
 
   const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
 
@@ -549,12 +557,14 @@ async function proceedToBilling(
     return;
   }
 
-  await adapter.sendInteractiveCtaUrl(
-    phone,
-    "Pay ayyaka order confirm avutundi.",
-    `💳 Pay ₹${grandTotal}`,
-    payUrl,
-  );
+  // Record the link against the cart so a later edit can void it, and mark the
+  // stage so routing knows the customer is holding a payable link.
+  await prisma.pendingOrder.update({
+    where: { id: pending.id },
+    data: { razorpayLinkUrl: payUrl, stage: "AWAITING_PAYMENT" },
+  });
+
+  await send(adapter, phone, renderPaymentLink(payUrl, grandTotal));
 }
 
 export class BotSessionManager {
@@ -788,6 +798,14 @@ export class BotSessionManager {
             total += price * l.qty;
           }
 
+          if (existing && isLocked(existing.stage)) {
+            await adapter.sendText(
+              msg.phone,
+              "Ee order already confirm ayyindi andi 🙏 Kotha order kosam *hi* pampandi.",
+            );
+            return;
+          }
+
           const CART_TTL_MS = 2 * 60 * 60 * 1000;
           const expiresAt = new Date(Date.now() + CART_TTL_MS);
           await prisma.pendingOrder.upsert({
@@ -796,16 +814,19 @@ export class BotSessionManager {
             update: { lines: JSON.stringify(validLines), expiresAt },
           });
 
-          const stagedMsg = orderStagedTemplate(labels, total, "delivery");
-          await adapter.sendInteractiveButtons(
+          // Rewind the stage and void any outstanding payment link — the cart the
+          // customer is holding a link for no longer exists. Keeps the address.
+          await applyCartEdit(cust.id, adapter, msg.phone);
+
+          const cart = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
+          await send(
+            adapter,
             msg.phone,
-            stagedMsg,
-            [
-              { id: "confirm_order_btn", title: "✅ Confirm Order" },
-              { id: "add_more_items_btn", title: "➕ Add More Items" }
-            ],
-            "🛒 Order Summary",
-            "Tap button to confirm or message to add items"
+            renderCartSummary({
+              items: labels,
+              subtotal: total,
+              stage: cart?.stage ?? "BUILDING_CART",
+            }),
           );
           return;
         }
@@ -872,6 +893,10 @@ export class BotSessionManager {
           await prisma.customer.update({
             where: { id: cust.id },
             data: { address: chosen },
+          });
+          await prisma.pendingOrder.updateMany({
+            where: { customerId: cust.id },
+            data: { stage: "ADDRESS_SELECTED" },
           });
           await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, chosen);
           return;

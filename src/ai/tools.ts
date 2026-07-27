@@ -1,6 +1,7 @@
 import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
+import { stageAfterCartEdit } from "../whatsapp/stage.js";
 import { createPaymentLink } from "../services/razorpay.js";
 import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate, paymentPendingTemplate } from "./templates.js";
 import { orderStatusMsg } from "../services/notifications.js";
@@ -59,7 +60,21 @@ async function getPendingCart(customerId: number): Promise<PendingCart | null> {
 }
 
 async function setPendingCart(customerId: number, _restaurantId: number, cart: PendingCart): Promise<void> {
+  // Rewind rather than restart. A cart edit invalidates the quote and any
+  // payment link, but not the address the customer already gave — asking for it
+  // again because they added a dish is the journey resetting under them.
+  const current = await prisma.pendingOrder.findUnique({
+    where: { customerId },
+    select: { stage: true },
+  });
+  const stage = cart.confirmedOrderId
+    ? ("ORDER_PLACED" as const)
+    : current
+      ? stageAfterCartEdit(current.stage)
+      : ("BUILDING_CART" as const);
+
   const data = {
+    stage,
     lines: JSON.stringify(cart.lines),
     type: cart.type,
     note: cart.note ?? null,
@@ -94,6 +109,10 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
     return sum + (v?.price ?? mi.price) * l.qty;
   }, 0);
 
+  // Reuse the existing link only while it still matches the cart. A cart edit
+  // clears these columns (see stage.applyCartEdit), so a surviving link is one
+  // issued for exactly this basket. Previously any stored link was returned
+  // regardless, quoting the new total beside a link charging the old one.
   if (cart.razorpayLinkId && cart.razorpayLinkUrl) {
     return {
       output: {

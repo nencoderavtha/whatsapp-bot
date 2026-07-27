@@ -256,7 +256,7 @@ export function buildAdminApp() {
 
       await prisma.pendingOrder.update({
         where: { customerId },
-        data: { confirmedOrderId: order.id },
+        data: { confirmedOrderId: order.id, stage: "ORDER_PLACED" },
       });
 
       const [customer, cfg] = await Promise.all([
