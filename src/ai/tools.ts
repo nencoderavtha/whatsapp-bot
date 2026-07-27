@@ -195,7 +195,16 @@ export async function runTool(
         });
         const hasPinnedAddress = existing?.deliveryLat != null && existing?.deliveryLng != null;
 
-        if (args.address && hasPinnedAddress) {
+        // A blank address is never an instruction to erase one. The model called
+        // this with address:"" while trying to start an address change, which
+        // would have destroyed a pinned delivery location mid-order.
+        const proposed = typeof args.address === "string" ? args.address.trim() : undefined;
+
+        if (args.address !== undefined && !proposed) {
+          console.warn(
+            `[save_customer_info] Refusing to clear the address for customer ${customerId} — empty value supplied.`,
+          );
+        } else if (proposed && hasPinnedAddress) {
           console.warn(
             `[save_customer_info] Ignoring model-supplied address for customer ${customerId} — a pinned location is already on file.`,
           );
@@ -203,7 +212,7 @@ export async function runTool(
 
         await updateCustomer(customerId, {
           name: args.name,
-          address: hasPinnedAddress ? undefined : args.address,
+          address: !proposed || hasPinnedAddress ? undefined : proposed,
           notes: args.notes,
         });
         return { output: { ok: true } };

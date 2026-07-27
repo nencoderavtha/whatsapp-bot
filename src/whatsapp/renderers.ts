@@ -140,17 +140,49 @@ export function renderAddressPinPrompt(mapUrl: string): Rendered {
 
 // ── Money ───────────────────────────────────────────────────────────────────
 
-export function renderDeliveryQuote(subtotal: number, deliveryFee: number): Rendered {
+/**
+ * The bill a customer approves before paying. It itemises and names the drop
+ * address — this is the last screen before money moves, so "Food Total: ₹350"
+ * with no indication of what or where was asking them to pay on trust.
+ */
+export function renderDeliveryQuote(input: {
+  items: string[];
+  subtotal: number;
+  deliveryFee: number;
+  address?: string | null;
+}): Rendered {
+  const lines = [
+    `🧾 *Final Bill*`,
+    ``,
+    ...input.items.map((i) => `• ${i}`),
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `Food Total: ₹${input.subtotal}`,
+    `Delivery Fee: ₹${input.deliveryFee}`,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `*Total Amount: ₹${input.subtotal + input.deliveryFee}*`,
+  ];
+
+  if (input.address) {
+    lines.push(``, `📍 *Delivering to:*`, input.address);
+  }
+
+  return { kind: "text", body: lines.join("\n") };
+}
+
+/**
+ * Answers "which address is this going to?" from stored state instead of
+ * letting the model guess. It previously replied that no address was set while
+ * one was on file and a payment link had already been issued.
+ */
+export function renderCurrentAddress(address: string): Rendered {
   return {
-    kind: "text",
-    body: [
-      `🧾 *Final Bill*`,
-      ``,
-      `Food Total: ₹${subtotal}`,
-      `Delivery Fee: ₹${deliveryFee}`,
-      `━━━━━━━━━━━━━━━━━━━━`,
-      `*Total Amount: ₹${subtotal + deliveryFee}*`,
-    ].join("\n"),
+    kind: "buttons",
+    header: "📦 Delivery Address",
+    body: `Ee address ki deliver chesthunnam andi:\n\n📍 ${address}`,
+    buttons: [
+      { id: "confirm_order_btn", title: "✅ Correct" },
+      { id: "pin_new_location_btn", title: "🗺️ Change Address" },
+    ],
   };
 }
 

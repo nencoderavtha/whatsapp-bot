@@ -24,6 +24,7 @@ import {
   renderAddressPinPrompt,
   renderDeliveryQuote,
   renderPaymentLink,
+  renderCurrentAddress,
 } from "./renderers.js";
 import { getCached } from "../services/cache.js";
 import { send, applyCartEdit, isLocked } from "./stage.js";
@@ -480,15 +481,20 @@ async function proceedToBilling(
   });
   const byId = new Map(menuItems.map((m) => [m.id, m]));
   let subtotal = 0;
+  const itemLabels: string[] = [];
   for (const l of lines) {
     const mi = byId.get(l.menuItemId);
     if (!mi) continue;
     let p = mi.price;
+    let variantName: string | undefined;
     if (l.variantId) {
       const v = mi.variants.find((v) => v.id === l.variantId);
-      if (v) p = v.price;
+      if (v) { p = v.price; variantName = v.name; }
     }
     subtotal += p * l.qty;
+    itemLabels.push(
+      `${l.qty}x ${mi.name}${variantName ? ` (${variantName})` : ""} ₹${p * l.qty}`,
+    );
   }
 
   // Live quote rather than a flat rate, so the fee matches the actual distance.
@@ -538,7 +544,11 @@ async function proceedToBilling(
     data: { deliveryFee, type: "delivery", stage: "QUOTE_GENERATED" },
   });
 
-  await send(adapter, phone, renderDeliveryQuote(subtotal, deliveryFee));
+  await send(
+    adapter,
+    phone,
+    renderDeliveryQuote({ items: itemLabels, subtotal, deliveryFee, address }),
+  );
 
   const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
 
@@ -952,6 +962,37 @@ export class BotSessionManager {
         // into the address, so this only made the customer type it all twice —
         // and it appended whatever they said next to their saved address, which
         // is how one record ended up as "<address> — already add chesa".
+
+        // ── Direct Action: "which address?" ───────────────────────────────────
+        // Answered from stored state. Left to the model this replied "meeru inka
+        // delivery address set cheyaledu" while an address was on file and a
+        // payment link had already been issued, then offered a change_address
+        // button it had invented, which called save_customer_info with an empty
+        // address and tried to wipe the record.
+        const asksAddress =
+          rawText === "change_address" ||
+          /\b(address|adress)\b/i.test(cleanText) ||
+          cleanText.includes("ekkada deliver") ||
+          cleanText.includes("ey address");
+
+        if (asksAddress) {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+
+          if (rawText === "change_address") {
+            const saved = await savedAddressesFor(cust.id, cust.address);
+            if (saved.length > 0) await sendAddressPickerList(adapter, msg.phone, saved);
+            else await sendPinLocationPrompt(adapter, msg.phone);
+            return;
+          }
+
+          if (cust.address) {
+            await send(adapter, msg.phone, renderCurrentAddress(cust.address));
+            return;
+          }
+
+          await sendPinLocationPrompt(adapter, msg.phone);
+          return;
+        }
 
         // ── Direct Action: Text-based order confirmation ──────────────────────
         // If the customer types "confirm", "yes", "haan" etc. AND has a staged
