@@ -195,15 +195,30 @@ function renderActions(o) {
   if (!flow) return "";
   const pmt = o.payment;
   const needsPay = pmt && pmt.status !== "paid";
-  const spinner = `<svg class="animate-spin w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`;
 
-  return `
-    <div class="flex items-center gap-2 pt-3 border-t border-slate-900/60 mt-2">
-      <button id="action-btn-${o.id}"
+  // Once a courier holds a delivery order, its progress belongs to the rider,
+  // not the counter. Marking it delivered by hand would tell the customer their
+  // food arrived while it is still on a bike. The rider's own updates arrive on
+  // the provider webhook; the override below exists only for when they don't.
+  const courierOwnsIt =
+    o.type === "delivery" && o.status === "ready" && o.deliveryDispatch;
+
+  const primary = courierOwnsIt
+    ? `<div class="flex-1 h-10 px-3 text-[11px] font-semibold rounded-xl bg-slate-900 border border-slate-800 text-slate-400 flex items-center justify-center gap-1.5">
+         🛵 Rider updates this order
+       </div>
+       <button onclick="window.setOrderStatus(${o.id}, 'delivered')"
+         class="h-10 px-2.5 text-[10px] font-bold text-slate-400 border border-slate-700 rounded-xl hover:bg-slate-800 transition-all flex-shrink-0"
+         title="Override: mark delivered manually if the rider update never arrives">Override</button>`
+    : `<button id="action-btn-${o.id}"
         onclick="window.setOrderStatus(${o.id}, '${flow.next}')"
         class="flex-1 h-10 px-3 text-[12px] font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${flow.cls}">
         ${flow.icon} ${flow.label}
-      </button>
+      </button>`;
+
+  return `
+    <div class="flex items-center gap-2 pt-3 border-t border-slate-900/60 mt-2">
+      ${primary}
       ${needsPay
         ? `<button onclick="window.markPaid(${o.id})"
             class="h-10 px-3 text-[11px] font-bold text-emerald-400 border border-emerald-500/30 rounded-xl hover:bg-emerald-950/60 transition-all"

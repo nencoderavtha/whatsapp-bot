@@ -51,6 +51,30 @@ export function isLocked(stage: OrderStage): boolean {
 }
 
 /**
+ * Clear a finished or expired cart so the customer can order again.
+ *
+ * PendingOrder is unique per customer, so the same row is reused for every
+ * order. Once one completed, the row sat at ORDER_PLACED and isLocked refused
+ * every subsequent edit — the customer was permanently unable to start another
+ * order. A settled or expired cart is not a live cart and must be cleared
+ * before the next one begins.
+ */
+export async function clearFinishedCart(customerId: number): Promise<boolean> {
+  const cart = await prisma.pendingOrder.findUnique({ where: { customerId } });
+  if (!cart) return false;
+
+  const settled = isLocked(cart.stage) || Boolean(cart.confirmedOrderId);
+  const expired = cart.expiresAt <= new Date();
+  if (!settled && !expired) return false;
+
+  await prisma.pendingOrder.delete({ where: { customerId } });
+  console.log(
+    `[Stage] Cleared ${settled ? "completed" : "expired"} cart for customer ${customerId} (was ${cart.stage}).`,
+  );
+  return true;
+}
+
+/**
  * Apply a cart edit: rewind the stage and cancel any outstanding payment link so
  * a stale amount cannot be paid. The customer is told, because they are holding
  * a link that looks live.

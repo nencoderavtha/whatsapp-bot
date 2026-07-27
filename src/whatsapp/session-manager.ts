@@ -27,7 +27,7 @@ import {
   renderCurrentAddress,
 } from "./renderers.js";
 import { getCached } from "../services/cache.js";
-import { send, applyCartEdit, isLocked } from "./stage.js";
+import { send, applyCartEdit, isLocked, clearFinishedCart } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 import { getExactServiceDeliveryFee, UnserviceableLocationError } from "../services/delivery-fee.js";
@@ -59,17 +59,39 @@ async function sendMenuVisual(
   bodyText: string,
   webMenuUrl?: string,
 ): Promise<void> {
-  const sections = await menuAsInteractiveListSections(restaurantId);
-  if (sections.length > 0) {
-    try {
-      await adapter.sendInteractiveList(phone, bodyText, "📋 View Today's Menu", sections);
-    } catch (e: any) {
-      console.warn("[Interactive List Failed]", e.response?.data || e.message || e);
+  // Photo carousel first, text list as the fallback. The carousel was dropped
+  // while resolving a merge conflict about address routing rather than by
+  // decision — the giveaway was menuAsInteractiveCarouselCards staying imported
+  // with nothing calling it. Customers pick a dish far better from a photo.
+  let sent = false;
+
+  try {
+    const cards = await menuAsInteractiveCarouselCards(restaurantId);
+    // Meta requires at least two cards for a carousel.
+    if (cards.length >= 2) {
+      await adapter.sendInteractiveCarousel(phone, bodyText, cards);
+      sent = true;
+    }
+  } catch (e: any) {
+    console.warn("[Carousel Failed, falling back to list]", e?.response?.data || e?.message || e);
+  }
+
+  if (!sent) {
+    const sections = await menuAsInteractiveListSections(restaurantId);
+    if (sections.length > 0) {
+      try {
+        await adapter.sendInteractiveList(phone, bodyText, "📋 View Today's Menu", sections);
+        sent = true;
+      } catch (e: any) {
+        console.warn("[Interactive List Failed]", e.response?.data || e.message || e);
+      }
     }
   }
 
   if (webMenuUrl) {
-    await new Promise((r) => setTimeout(r, 600));
+    // Give Meta a moment to process the carousel images, otherwise the link can
+    // arrive above them in the chat.
+    if (sent) await new Promise((r) => setTimeout(r, 1200));
     await adapter.sendInteractiveCtaUrl(phone, "Full menu photos & details web lo chudandi 👇", "📋 Full Web Menu", webMenuUrl);
   }
 }
@@ -665,9 +687,13 @@ export class BotSessionManager {
         if (isGreeting) {
           const greetName = msg.name?.trim() ? `${msg.name.trim()} garu` : "andi";
           await send(adapter, msg.phone, renderWelcome(greetName, rName));
-          // Keep the profile/history write off the critical path.
+          // Keep the profile/history write off the critical path, and retire any
+          // finished or expired cart so a greeting genuinely starts a new order.
           void getOrCreateCustomer(msg.phone, msg.name)
-            .then((c) => logMessage(c.id, "user", msg.text))
+            .then(async (c) => {
+              await clearFinishedCart(c.id);
+              await logMessage(c.id, "user", msg.text);
+            })
             .catch((e) => console.error("[Greeting] background persist failed:", e));
           return;
         }
@@ -809,12 +835,15 @@ export class BotSessionManager {
             total += price * l.qty;
           }
 
-          if (existing && isLocked(existing.stage)) {
-            await adapter.sendText(
-              msg.phone,
-              "Ee order already confirm ayyindi andi 🙏 Kotha order kosam *hi* pampandi.",
-            );
-            return;
+          // A settled or expired cart is retired here rather than refusing the
+          // tap. PendingOrder is unique per customer, so a completed order left
+          // the row at ORDER_PLACED and locked the customer out of ever ordering
+          // again — adding an item is a clear signal they want a new order.
+          if (existing && (isLocked(existing.stage) || existing.expiresAt <= new Date())) {
+            await clearFinishedCart(cust.id);
+            currentLines = [];
+            validLines.length = 0;
+            validLines.push({ menuItemId: itemId, qty: 1, ...(pickedVariantId ? { variantId: pickedVariantId } : {}) });
           }
 
           const CART_TTL_MS = 2 * 60 * 60 * 1000;

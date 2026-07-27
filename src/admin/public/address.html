@@ -11,11 +11,44 @@
     #map { height: 100vh; width: 100vw; position: absolute; inset: 0; z-index: 0; }
     .glass-card { background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(20px); }
     .slide-up { transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
-    .pac-container { z-index: 10000 !important; background-color: #0f172a !important; border: 1px solid #1e293b !important; border-radius: 1rem !important; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5) !important; color: #fff !important; font-family: inherit !important; }
-    .pac-item { padding: 10px 14px !important; color: #cbd5e1 !important; border-top: 1px solid #1e293b !important; cursor: pointer !important; }
+    /* Google sizes the suggestions dropdown to the search input, which sits in a
+       narrow flex row, and its default .pac-item is a single nowrap line with an
+       ellipsis. Full Hyderabad addresses were clipped to a sliver. Widen it to
+       the viewport and let each suggestion wrap onto as many lines as it needs. */
+    .pac-container {
+      z-index: 10000 !important;
+      background-color: #0f172a !important;
+      border: 1px solid #1e293b !important;
+      border-radius: 1rem !important;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5) !important;
+      color: #fff !important;
+      font-family: inherit !important;
+      width: auto !important;
+      min-width: min(calc(100vw - 2rem), 28rem) !important;
+      max-width: calc(100vw - 2rem) !important;
+      max-height: 60vh !important;
+      overflow-y: auto !important;
+      margin-top: 0.5rem !important;
+      padding: 0.25rem !important;
+    }
+    .pac-item {
+      padding: 12px 14px !important;
+      color: #cbd5e1 !important;
+      border-top: 1px solid #1e293b !important;
+      cursor: pointer !important;
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      line-height: 1.5 !important;
+      font-size: 12.5px !important;
+      border-radius: 0.75rem !important;
+    }
+    .pac-item:first-of-type { border-top: none !important; }
     .pac-item:hover, .pac-item-selected { background-color: #1e293b !important; color: #ffffff !important; }
-    .pac-item-query { font-size: 13px !important; color: #ffffff !important; font-weight: bold !important; }
+    /* The matched place name goes on its own line above the rest of the address. */
+    .pac-item-query { display: block !important; font-size: 13.5px !important; color: #ffffff !important; font-weight: 700 !important; margin-bottom: 2px !important; }
     .pac-matched { color: #f43f5e !important; }
+    .pac-icon { margin-top: 4px !important; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans relative overflow-hidden">
