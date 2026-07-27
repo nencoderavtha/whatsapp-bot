@@ -2,6 +2,7 @@ import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
 import { stageAfterCartEdit } from "../whatsapp/stage.js";
+import { cartSummaryText } from "../whatsapp/renderers.js";
 import { createPaymentLink } from "../services/razorpay.js";
 import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate, paymentPendingTemplate } from "./templates.js";
 import { orderStatusMsg } from "../services/notifications.js";
@@ -307,6 +308,14 @@ export async function runTool(
           note: args.note,
         });
 
+        // Read back the stage setPendingCart rewound to, so the summary reflects
+        // where the customer actually is rather than assuming a fresh cart.
+        const stagedRow = await prisma.pendingOrder.findUnique({
+          where: { customerId },
+          select: { stage: true },
+        });
+        const stageNow = stagedRow?.stage ?? "BUILDING_CART";
+
         const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const razorpayReady = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
         const requiresPayment = true;
@@ -354,7 +363,11 @@ export async function runTool(
             paymentMethods: paymentPath === "manual" ? restaurant?.paymentMethods : undefined,
             note: paymentNote,
           },
-          templateReply: orderStagedTemplate(labels, total, args.type ?? "pickup", args.note),
+          // Render through the same stage-aware summary the button path uses.
+          // orderStagedTemplate hardcoded the BUILDING_CART hint, so editing a
+          // cart by chat told the customer to pin a location they had already
+          // pinned, and implied the journey had restarted.
+          templateReply: cartSummaryText(labels, total, stageNow, args.note),
         };
       }
 

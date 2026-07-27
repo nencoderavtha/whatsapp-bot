@@ -74,20 +74,33 @@ function cartHint(stage: OrderStage): string {
   }
 }
 
+/**
+ * The cart summary body on its own, for callers that supply their own buttons
+ * (the AI tool path returns a templateReply string rather than a descriptor).
+ */
+export function cartSummaryText(
+  items: string[],
+  subtotal: number,
+  stage: OrderStage,
+  note?: string,
+): string {
+  const hint = cartHint(stage);
+  return [
+    items.map((i) => `• ${i}`).join("\n"),
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `📦 *Type:* 🛵 Delivery`,
+    `💰 *Items Total:* ₹${subtotal}${note ? `\n📝 Note: ${note}` : ""}`,
+    ...(hint ? ["", hint] : []),
+  ].join("\n");
+}
+
 export function renderCartSummary(input: {
   items: string[];
   subtotal: number;
   stage: OrderStage;
   note?: string;
 }): Rendered {
-  const hint = cartHint(input.stage);
-  const body = [
-    input.items.map((i) => `• ${i}`).join("\n"),
-    `━━━━━━━━━━━━━━━━━━━━`,
-    `📦 *Type:* 🛵 Delivery`,
-    `💰 *Items Total:* ₹${input.subtotal}${input.note ? `\n📝 Note: ${input.note}` : ""}`,
-    ...(hint ? ["", hint] : []),
-  ].join("\n");
+  const body = cartSummaryText(input.items, input.subtotal, input.stage, input.note);
 
   return {
     kind: "buttons",

@@ -873,9 +873,17 @@ export class BotSessionManager {
             return;
           }
 
-          // Every order is a delivery order and the location is never assumed —
-          // each order re-offers the known addresses or a fresh pin, because
-          // customers order to home, office and elsewhere on different days.
+          // This cart already has a location chosen for it, so go straight to the
+          // bill. Re-asking after every cart edit made the journey restart under
+          // the customer: pick address, edit cart, pick the same address again.
+          // A new order starts at BUILDING_CART, so it still gets the picker.
+          if (pending.stage !== "BUILDING_CART" && cust.address) {
+            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, cust.address);
+            return;
+          }
+
+          // Location is never assumed for a fresh order — customers order to home,
+          // office and elsewhere on different days.
           const savedAddresses = await savedAddressesFor(cust.id, cust.address);
 
           if (savedAddresses.length > 0) {
