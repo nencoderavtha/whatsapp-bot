@@ -127,6 +127,19 @@
     let gGeocoder = null;
     let gAutocomplete = null;
 
+    let lMap = null;
+    let lMarker = null;
+    let searchDebounce = null;
+
+    // Check if Google Maps API key exists and dynamically load script
+    window.gm_authFailure = function() {
+      console.warn("[Maps] Google Maps auth/activation error. Falling back to OpenStreetMap Leaflet engine.");
+      const container = document.getElementById("map");
+      if (container) container.innerHTML = "";
+      mapEngine = "leaflet";
+      initLeafletEngine();
+    };
+
     const googleApiKey = window.GOOGLE_MAPS_API_KEY || "";
 
     function showMapError(msg) {
@@ -136,18 +149,26 @@
     }
 
     if (googleApiKey) {
-      window.initGoogleMaps = function () {
-        initGoogleEngine();
-        // GPS is requested only after the map exists. Previously locateGPS() ran
-        // at parse time, before the async Maps script had loaded, so its success
-        // handler had no map or marker to move.
+      window.initGoogleMaps = function() {
+        mapEngine = "google";
+        try {
+          initGoogleEngine();
+        } catch (e) {
+          console.warn("[Maps] initGoogleEngine failed, falling back to Leaflet", e);
+          const container = document.getElementById("map");
+          if (container) container.innerHTML = "";
+          initLeafletEngine();
+        }
         locateGPS();
       };
       const script = document.createElement("script");
       script.src = `https://maps.googleapis.com/maps/api/js?key=${googleApiKey}&libraries=places&callback=initGoogleMaps`;
       script.async = true;
-      script.onerror = function () {
-        showMapError("Map failed to load. Please check your connection and reload.");
+      script.onerror = function() {
+        console.warn("Google Maps script load failed, falling back to Leaflet.");
+        const container = document.getElementById("map");
+        if (container) container.innerHTML = "";
+        initLeafletEngine();
       };
       document.head.appendChild(script);
     } else {
@@ -184,11 +205,14 @@
         updateCoords(e.latLng.lat(), e.latLng.lng());
       });
 
+      // Direct Google Places Autocomplete Search
+
       const searchInput = document.getElementById("search-input");
       gAutocomplete = new google.maps.places.Autocomplete(searchInput, {
         componentRestrictions: { country: "in" },
         fields: ["geometry", "formatted_address", "name"],
       });
+      gAutocomplete.bindTo("bounds", gMap);
 
       gAutocomplete.addListener("place_changed", function () {
         const place = gAutocomplete.getPlace();
@@ -240,46 +264,151 @@
     function locateGPS() {
       const btn = document.getElementById("btn-gps");
       btn.textContent = "⏳ Locating...";
+      btn.disabled = true;
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            curLat = pos.coords.latitude;
+            curLng = pos.coords.longitude;
 
-      if (!navigator.geolocation) {
+            if (mapEngine === "google" && gMap && gMarker) {
+              gMap.setCenter({ lat: curLat, lng: curLng });
+              gMap.setZoom(17);
+              gMarker.setPosition({ lat: curLat, lng: curLng });
+            } else if (lMap && lMarker) {
+              lMap.setView([curLat, curLng], 17);
+              lMarker.setLatLng([curLat, curLng]);
+            }
+
+            updateCoords(curLat, curLng);
+            btn.textContent = "🎯 Locate Me";
+            btn.disabled = false;
+          },
+          (err) => {
+            let errorMsg = "Could not fetch GPS location. Please tap your location on the map.";
+            if (err.code === 1) {
+              errorMsg = "Location permission denied. Please allow location access in browser settings or tap location on map.";
+            } else if (err.code === 2) {
+              errorMsg = "GPS signal unavailable. Please tap your location on the map.";
+            } else if (err.code === 3) {
+              errorMsg = "GPS request timed out. Please tap 'Locate Me' again or tap location on map.";
+            }
+            alert(errorMsg);
+            btn.textContent = "🎯 Locate Me";
+            btn.disabled = false;
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      } else {
+        alert("Geolocation is not supported by your browser. Please tap your location on map.");
         btn.textContent = "🎯 Locate Me";
+        btn.disabled = false;
+      }
+    }
+
+    locateGPS();
+
+    function handleSearchInput(e) {
+      const q = e.target.value.trim();
+      const clearBtn = document.getElementById("btn-clear");
+      const resultsDiv = document.getElementById("search-results");
+
+      if (q.length > 0) clearBtn.classList.remove("hidden");
+      else clearBtn.classList.add("hidden");
+
+      if (q.length < 2) {
+        resultsDiv.classList.add("hidden");
         return;
       }
 
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          curLat = pos.coords.latitude;
-          curLng = pos.coords.longitude;
-
-          if (gMap && gMarker) {
-            gMap.setCenter({ lat: curLat, lng: curLng });
-            gMap.setZoom(17);
-            gMarker.setPosition({ lat: curLat, lng: curLng });
-          }
-
-          updateCoords(curLat, curLng);
-          btn.textContent = "🎯 Locate Me";
-        },
-        () => {
-          // Keep the default pin — the customer can drag or search instead. No
-          // alert here: it fired on page load and blocked the whole form.
-          btn.textContent = "🎯 Locate Me";
-        },
-        { enableHighAccuracy: true },
-      );
-    }
-
-    // Google Places Autocomplete drives the search box itself; these two just
-    // manage the clear button, which the markup wires to oninput/onclick.
-    function handleSearchInput(e) {
-      const clearBtn = document.getElementById("btn-clear");
-      if (e.target.value.trim().length > 0) clearBtn.classList.remove("hidden");
-      else clearBtn.classList.add("hidden");
+      if (searchDebounce) clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(() => searchLocationUnified(q), 300);
     }
 
     function clearSearch() {
       document.getElementById("search-input").value = "";
       document.getElementById("btn-clear").classList.add("hidden");
+      document.getElementById("search-results").classList.add("hidden");
+    }
+
+    async function searchLocationUnified(query) {
+      const resultsDiv = document.getElementById("search-results");
+      resultsDiv.innerHTML = `<div class="p-3 text-slate-400 text-center">Searching "${query}"...</div>`;
+      resultsDiv.classList.remove("hidden");
+
+      if (mapEngine === "google" && gGeocoder) {
+        try {
+          gGeocoder.geocode({ address: query + ", Telangana, India" }, (results, status) => {
+            if (status === "OK" && results && results.length > 0) {
+              resultsDiv.innerHTML = results.slice(0, 5).map((item) => {
+                const lat = item.geometry.location.lat();
+                const lng = item.geometry.location.lng();
+                const name = item.formatted_address.replace(/'/g, "\\'");
+                return `
+                  <div onclick="selectSearchResult(${lat}, ${lng}, '${name}')" class="p-3 hover:bg-slate-800/80 cursor-pointer transition-colors text-slate-200 flex items-center gap-2">
+                    <span>📍</span>
+                    <span class="truncate text-xs">${item.formatted_address}</span>
+                  </div>
+                `;
+              }).join("");
+              return;
+            }
+            searchLocationLeaflet(query);
+          });
+          return;
+        } catch (e) {
+          searchLocationLeaflet(query);
+          return;
+        }
+      }
+
+      searchLocationLeaflet(query);
+    }
+
+    async function searchLocationLeaflet(query) {
+      const resultsDiv = document.getElementById("search-results");
+
+      try {
+        const rawUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8`;
+        const res = await fetch(rawUrl);
+        const data = await res.json();
+
+        const qLower = query.toLowerCase().trim();
+        const matches = (data || []).filter((item) => {
+          const name = (item.display_name || "").toLowerCase();
+          return name.includes(qLower) || qLower.split(/\s+/).some(w => w.length > 2 && name.includes(w));
+        });
+
+        if (!matches || matches.length === 0) {
+          resultsDiv.innerHTML = `<div class="p-3 text-slate-400 text-center">No matching locations found for "${query}"</div>`;
+          return;
+        }
+
+        resultsDiv.innerHTML = matches.map((item) => `
+          <div onclick="selectSearchResult(${item.lat}, ${item.lon}, '${item.display_name.replace(/'/g, "\\'")}')" class="p-3 hover:bg-slate-800/80 cursor-pointer transition-colors text-slate-200 flex items-center gap-2">
+            <span>📍</span>
+            <span class="truncate text-xs">${item.display_name}</span>
+          </div>
+        `).join("");
+      } catch (err) {
+        resultsDiv.innerHTML = `<div class="p-3 text-rose-400 text-center">Search failed. Try dragging map.</div>`;
+      }
+    }
+
+    function selectSearchResult(lat, lng, displayName) {
+      const nLat = parseFloat(lat);
+      const nLng = parseFloat(lng);
+      if (mapEngine === "google" && gMap && gMarker) {
+        gMap.setCenter({ lat: nLat, lng: nLng });
+        gMap.setZoom(17);
+        gMarker.setPosition({ lat: nLat, lng: nLng });
+      } else if (lMap && lMarker) {
+        lMap.setView([nLat, nLng], 17);
+        lMarker.setLatLng([nLat, nLng]);
+      }
+      updateCoords(nLat, nLng);
+      document.getElementById("search-results").classList.add("hidden");
+      document.getElementById("search-input").value = displayName.split(",")[0];
     }
 
     function proceedToAddressForm() {

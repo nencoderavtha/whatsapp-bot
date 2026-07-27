@@ -34,6 +34,7 @@ import { transcribeAudio } from "../services/transcription.js";
 import { fetchMetaMedia } from "../whatsapp/media.js";
 import { VOICE_NOTE_SENTINEL, type InboundMessage } from "../whatsapp/adapter.js";
 import { DeliveryManager } from "../services/delivery/delivery-manager.js";
+import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -431,14 +432,86 @@ export function buildAdminApp() {
       });
     }
 
-    // After the customer pins their location, ask for flat/door number and
-    // landmark details before proceeding to billing.
+    let subtotal = 0;
+    const labels: string[] = [];
+    if (pending && pending.lines) {
+      let lines: any[] = [];
+      try { lines = JSON.parse(pending.lines); } catch {}
+      const menuItems = await prisma.menuItem.findMany({
+        where: { id: { in: lines.map((l: any) => l.menuItemId) } },
+        include: { variants: true },
+      });
+      const byId = new Map(menuItems.map((m) => [m.id, m]));
+      for (const l of lines) {
+        const mi = byId.get(l.menuItemId);
+        if (!mi) continue;
+        let p = mi.price;
+        let vName: string | undefined;
+        if (l.variantId) {
+          const v = mi.variants.find((v: any) => v.id === l.variantId);
+          if (v) { p = v.price; vName = v.name; }
+        }
+        const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
+        labels.push(`${label} ₹${p * l.qty}`);
+        subtotal += p * l.qty;
+      }
+    }
+
     const session = botSessionManager.getSession(1);
+    let deliveryFee = 45;
+    try {
+      deliveryFee = await getExactServiceDeliveryFee(address);
+    } catch (err) {
+      if (session) {
+        await session.sendInteractiveButtons(
+          phone,
+          `❌ *Delivery Location Not Serviceable*\n\nSorry, this delivery location is currently not serviceable by our delivery partners. Please pick another location or pin a location nearby!`,
+          [
+            { id: "pin_new_location_btn", title: "🗺️ Pin New Location" },
+            { id: "use_saved_address_btn", title: "📍 Select Address" }
+          ],
+          "📦 Delivery Location",
+        );
+      }
+      res.json({ ok: false, error: "Delivery location not serviceable" });
+      return;
+    }
+
+    const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+    const grandTotal = subtotal + deliveryFee;
+    const summaryMsg = orderStagedTemplate(labels, subtotal, "delivery", pending?.note ?? undefined, deliveryFee, address);
+
+    let payUrl: string | null = null;
+    if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
+      const payRes = await createPaymentLink({
+        restaurantId: 1,
+        customerId: customer.id,
+        amount: grandTotal,
+        customerPhone: phone,
+        restaurantName: botConfig.restaurantName,
+      });
+      if (payRes?.url) payUrl = payRes.url;
+    }
+
     if (session) {
-      await session.sendText(
-        phone,
-        `📍 *Location vachindi andi!*\n\nMee flat/door number, building name and landmark cheppandi.`,
-      );
+      if (payUrl) {
+        await session.sendInteractiveCtaUrl(
+          phone,
+          summaryMsg,
+          `💳 Confirm & Pay ₹${grandTotal}`,
+          payUrl,
+        );
+      } else {
+        await session.sendInteractiveButtons(
+          phone,
+          summaryMsg,
+          [
+            { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+            { id: "add_more_items_btn", title: "➕ Add More Items" },
+          ],
+          "🛍️ Order Summary",
+        );
+      }
     }
 
     res.json({ ok: true, address });

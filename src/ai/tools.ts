@@ -1,12 +1,13 @@
 import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
-import { createPaymentLink } from "../services/razorpay.js";
-import { orderStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate, paymentPendingTemplate } from "./templates.js";
+import { createPaymentLink, cancelPaymentLink } from "../services/razorpay.js";
+import { orderStagedTemplate, cartStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate, paymentPendingTemplate } from "./templates.js";
 import { orderStatusMsg } from "../services/notifications.js";
 import { logActivity } from "../services/activity.js";
 import { getCached } from "../services/cache.js";
 import { notifyAdminOfEvent } from "../services/events.js";
+import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 export interface PendingCart {
@@ -58,7 +59,12 @@ async function getPendingCart(customerId: number): Promise<PendingCart | null> {
   };
 }
 
-async function setPendingCart(customerId: number, _restaurantId: number, cart: PendingCart): Promise<void> {
+async function setPendingCart(customerId: number, restaurantId: number, cart: PendingCart): Promise<void> {
+  const existing = await prisma.pendingOrder.findUnique({ where: { customerId } });
+  if (existing?.razorpayLinkId && existing.razorpayLinkId !== cart.razorpayLinkId) {
+    void cancelPaymentLink(existing.razorpayLinkId, restaurantId);
+  }
+
   const data = {
     lines: JSON.stringify(cart.lines),
     type: cart.type,
@@ -320,22 +326,40 @@ export async function runTool(
             `Once they say YES — call confirm_order directly. Do NOT call it before they confirm.`;
         }
 
+        const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+        const isDelivery = (args.type ?? "pickup") === "delivery";
+
+        let liveDeliveryFee = 45;
+        let isUnserviceable = false;
+
+        if (isDelivery && customer?.address) {
+          try {
+            liveDeliveryFee = await getExactServiceDeliveryFee(customer.address);
+          } catch (e) {
+            isUnserviceable = true;
+          }
+        }
+
+        const stagedTemplateReply = cartStagedTemplate(labels, total, args.note);
+
         return {
           output: {
             ok: true,
             staged: true,
             type: args.type ?? "pickup",
             items: labels,
-            total,
+            total: isDelivery ? total + liveDeliveryFee : total,
             rejected: rejected.length > 0 ? rejected : undefined,
             paymentPath,
             razorpayEnabled: razorpayReady,
             upiPayLink,
             upiId: paymentPath === "manual" ? restaurant?.upiId : undefined,
             paymentMethods: paymentPath === "manual" ? restaurant?.paymentMethods : undefined,
-            note: paymentNote,
+            note: isDelivery && !customer?.address
+              ? "Ask the customer for their delivery location first."
+              : paymentNote,
           },
-          templateReply: orderStagedTemplate(labels, total, args.type ?? "pickup", args.note),
+          templateReply: stagedTemplateReply,
         };
       }
 

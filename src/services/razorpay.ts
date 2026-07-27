@@ -21,6 +21,20 @@ async function getClient(_restaurantId?: number): Promise<Razorpay | null> {
   return new Razorpay({ key_id: cfg.razorpayKeyId, key_secret: cfg.razorpayKeySecret });
 }
 
+export async function cancelPaymentLink(linkId: string, restaurantId?: number): Promise<boolean> {
+  if (!linkId) return false;
+  const client = await getClient(restaurantId);
+  if (!client) return false;
+  try {
+    await client.paymentLink.cancel(linkId);
+    console.log(`[Razorpay] Cancelled old payment link: ${linkId}`);
+    return true;
+  } catch (e: any) {
+    console.warn(`[Razorpay] Could not cancel payment link ${linkId}:`, rzpError(e));
+    return false;
+  }
+}
+
 export async function createPaymentLink(params: {
   restaurantId?: number;
   customerId: number;
@@ -30,6 +44,12 @@ export async function createPaymentLink(params: {
 }): Promise<{ id: string; url: string } | null> {
   const client = await getClient(params.restaurantId);
   if (!client) return null;
+
+  // 1. Cancel any existing active payment link for this customer so ONLY ONE link is active!
+  const pending = await prisma.pendingOrder.findUnique({ where: { customerId: params.customerId } });
+  if (pending?.razorpayLinkId) {
+    await cancelPaymentLink(pending.razorpayLinkId, params.restaurantId);
+  }
 
   const contactRaw = params.customerPhone.startsWith("+")
     ? params.customerPhone
@@ -50,8 +70,19 @@ export async function createPaymentLink(params: {
       },
     } as any);
 
-    console.log(`[Razorpay] Payment link created — ${(link as any).short_url}`);
-    return { id: (link as any).id, url: (link as any).short_url };
+    const linkId = (link as any).id;
+    const shortUrl = (link as any).short_url;
+
+    // 2. Save new active payment link ID on PendingOrder
+    if (pending) {
+      await prisma.pendingOrder.update({
+        where: { customerId: params.customerId },
+        data: { razorpayLinkId: linkId, razorpayLinkUrl: shortUrl },
+      }).catch(() => {});
+    }
+
+    console.log(`[Razorpay] New payment link created — ${shortUrl}`);
+    return { id: linkId, url: shortUrl };
   } catch (e: any) {
     console.error("[Razorpay] createPaymentLink failed —", rzpError(e));
     throw new Error(`Razorpay: ${rzpError(e)}`);

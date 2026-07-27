@@ -20,6 +20,26 @@ const TYPE_LABEL: Record<string, string> = {
   "dine-in": "Dine-in",
 };
 
+// ── Sent when items are added to cart (Step 2: Show Cart) ────────────────────
+
+export function cartStagedTemplate(
+  items: string[],
+  subtotal: number,
+  note?: string,
+): string {
+  const noteLine = note ? `\n📝 Note: ${note}` : "";
+  const itemList = items.length > 0 ? items.map((i) => `• ${i}`).join("\n") : "• Items in cart";
+
+  return [
+    `🛒 *Your Cart:*`,
+    itemList,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `💰 *Subtotal:* ₹${subtotal}${noteLine}`,
+    ``,
+    `How would you like your order? Tap a button below 👇`,
+  ].join("\n");
+}
+
 // ── Sent after propose_order stages the cart ────────────────────────────────
 
 export function orderStagedTemplate(
@@ -28,22 +48,26 @@ export function orderStagedTemplate(
   type: string,
   note?: string,
   deliveryFee = 45,
+  address?: string,
 ): string {
   const noteLine = note ? `\n📝 Note: ${note}` : "";
-  const itemList = items.map((i) => `• ${i}`).join("\n");
+  const itemList = items.length > 0 ? items.map((i) => `• ${i}`).join("\n") : "• Items in cart";
+  const isDelivery = type === "delivery";
+  const grandTotal = isDelivery ? subtotal + deliveryFee : subtotal;
+  const typeLabel = TYPE_LABEL[type] ?? type;
 
-  // Every order is a delivery order. The fee isn't known until the customer
-  // pins a location, so the cart shows the items total and the final bill
-  // adds delivery once we have somewhere to quote to.
+  const costBreakdown = isDelivery
+    ? `\n🍲 Items Subtotal: ₹${subtotal}\n🛵 Delivery Charge: ₹${deliveryFee}\n━━━━━━━━━━━━━━━━━━━━\n💰 Grand Total: ₹${grandTotal}`
+    : `\n💰 Grand Total: ₹${subtotal}`;
+
+  const locationBlock = isDelivery && address ? `\n\n📍 *Delivery Location:*\n${address}` : "";
+
   return [
     itemList,
     `━━━━━━━━━━━━━━━━━━━━`,
-    `📦 *Type:* 🛵 Delivery`,
-    `💰 *Items Total:* ₹${subtotal}${noteLine}`,
+    `📦 *Type:* ${typeLabel}${costBreakdown}${noteLine}${locationBlock}`,
     ``,
-    `_Delivery fee location pin chesaka add avutundi._`,
-    ``,
-    `Tap *✅ Confirm Order* to continue.`,
+    `Tap button below to pay & place your order 👇`,
   ].join("\n");
 }
 
