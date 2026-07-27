@@ -1,6 +1,8 @@
 import { prisma } from "../db.js";
 import { createOrder, findRecentDuplicate, getOrder } from "../services/order.js";
 import { updateCustomer } from "../services/customer.js";
+import { stageAfterCartEdit } from "../whatsapp/stage.js";
+import { cartSummaryText } from "../whatsapp/renderers.js";
 import { createPaymentLink, cancelPaymentLink } from "../services/razorpay.js";
 import { orderStagedTemplate, cartStagedTemplate, paymentLinkTemplate, orderConfirmedTemplate, humanHandoffTemplate, orderCancelledTemplate, paymentPendingTemplate } from "./templates.js";
 import { orderStatusMsg } from "../services/notifications.js";
@@ -65,7 +67,17 @@ async function setPendingCart(customerId: number, restaurantId: number, cart: Pe
     void cancelPaymentLink(existing.razorpayLinkId, restaurantId);
   }
 
+  // Rewind rather than restart. A cart edit invalidates the quote and any
+  // payment link, but not the address the customer already gave — asking for it
+  // again because they added a dish is the journey resetting under them.
+  const stage = cart.confirmedOrderId
+    ? ("ORDER_PLACED" as const)
+    : existing
+      ? stageAfterCartEdit(existing.stage)
+      : ("BUILDING_CART" as const);
+
   const data = {
+    stage,
     lines: JSON.stringify(cart.lines),
     type: cart.type,
     note: cart.note ?? null,
@@ -100,6 +112,10 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
     return sum + (v?.price ?? mi.price) * l.qty;
   }, 0);
 
+  // Reuse the existing link only while it still matches the cart. A cart edit
+  // clears these columns (see stage.applyCartEdit), so a surviving link is one
+  // issued for exactly this basket. Previously any stored link was returned
+  // regardless, quoting the new total beside a link charging the old one.
   if (cart.razorpayLinkId && cart.razorpayLinkUrl) {
     return {
       output: {
@@ -181,7 +197,16 @@ export async function runTool(
         });
         const hasPinnedAddress = existing?.deliveryLat != null && existing?.deliveryLng != null;
 
-        if (args.address && hasPinnedAddress) {
+        // A blank address is never an instruction to erase one. The model called
+        // this with address:"" while trying to start an address change, which
+        // would have destroyed a pinned delivery location mid-order.
+        const proposed = typeof args.address === "string" ? args.address.trim() : undefined;
+
+        if (args.address !== undefined && !proposed) {
+          console.warn(
+            `[save_customer_info] Refusing to clear the address for customer ${customerId} — empty value supplied.`,
+          );
+        } else if (proposed && hasPinnedAddress) {
           console.warn(
             `[save_customer_info] Ignoring model-supplied address for customer ${customerId} — a pinned location is already on file.`,
           );
@@ -189,7 +214,7 @@ export async function runTool(
 
         await updateCustomer(customerId, {
           name: args.name,
-          address: hasPinnedAddress ? undefined : args.address,
+          address: !proposed || hasPinnedAddress ? undefined : proposed,
           notes: args.notes,
         });
         return { output: { ok: true } };
@@ -294,6 +319,14 @@ export async function runTool(
           note: args.note,
         });
 
+        // Read back the stage setPendingCart rewound to, so the summary reflects
+        // where the customer actually is rather than assuming a fresh cart.
+        const stagedRow = await prisma.pendingOrder.findUnique({
+          where: { customerId },
+          select: { stage: true },
+        });
+        const stageNow = stagedRow?.stage ?? "BUILDING_CART";
+
         const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
         const razorpayReady = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
         const requiresPayment = true;
@@ -359,7 +392,11 @@ export async function runTool(
               ? "Ask the customer for their delivery location first."
               : paymentNote,
           },
-          templateReply: stagedTemplateReply,
+          // Render through the same stage-aware summary the button path uses.
+          // orderStagedTemplate hardcoded the BUILDING_CART hint, so editing a
+          // cart by chat told the customer to pin a location they had already
+          // pinned, and implied the journey had restarted.
+          templateReply: cartSummaryText(labels, total, stageNow, args.note),
         };
       }
 

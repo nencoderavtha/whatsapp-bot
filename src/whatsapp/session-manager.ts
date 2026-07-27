@@ -17,6 +17,17 @@ import {
   paymentUnavailableTemplate,
 } from "../ai/templates.js";
 import { DeliveryOrchestrator } from "../services/delivery/orchestrator.js";
+import {
+  renderWelcome,
+  renderCartSummary,
+  renderAddressPicker,
+  renderAddressPinPrompt,
+  renderDeliveryQuote,
+  renderPaymentLink,
+  renderCurrentAddress,
+} from "./renderers.js";
+import { getCached } from "../services/cache.js";
+import { send, applyCartEdit, isLocked } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 import { getExactServiceDeliveryFee, UnserviceableLocationError } from "../services/delivery-fee.js";
@@ -147,10 +158,15 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
     }
 
     // 2. Intercept cart staged summary → native WhatsApp interactive buttons (Confirm Order / Add More)
+    // Match against text with WhatsApp markup stripped. Bolding the total as
+    // "*Items Total:* ₹350" put an asterisk between the colon and the ₹, which
+    // silently stopped this matching and took the Confirm / Add More buttons
+    // with it — a formatting change should not be able to remove a button.
+    const plain = lower.replace(/[*_~`]/g, "");
     const isCartSummary =
-      (lower.includes("total: ₹") || lower.includes("here's your order") || lower.includes("order summary") || lower.includes("order breakdown")) &&
-      !lower.includes("payment details") &&
-      !lower.includes("order #");
+      (plain.includes("total: ₹") || plain.includes("here's your order") || plain.includes("order summary") || plain.includes("order breakdown")) &&
+      !plain.includes("payment details") &&
+      !plain.includes("order #");
 
     if (isCartSummary) {
       try {
@@ -170,42 +186,11 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
       }
     }
 
-    // 3. Intercept payment option requests -> multiple payment method buttons
-    const isPaymentPrompt =
-      lower.includes("how would you like to pay") ||
-      lower.includes("choose your payment method") ||
-      lower.includes("select a payment option");
-
-    if (isPaymentPrompt) {
-      try {
-        const botCfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
-        const methods = (botCfg?.paymentMethods ?? "cash,upi").split(",").map(s => s.trim().toLowerCase());
-
-          const buttons: { id: string; title: string }[] = [];
-          if (methods.includes("upi") && botCfg?.upiId) {
-            buttons.push({ id: "pay_method_upi", title: "📱 Instant UPI" });
-          }
-          if (methods.includes("razorpay") && botCfg?.razorpayEnabled) {
-            buttons.push({ id: "pay_method_razorpay", title: "💳 Pay Online" });
-          }
-          if (methods.includes("cash")) {
-            buttons.push({ id: "pay_method_cash", title: "💵 Pay on Delivery" });
-          }
-
-          if (buttons.length > 0) {
-            await adapter.sendInteractiveButtons(
-              phone,
-              `${bubble}\n\nPlease select your preferred payment method below:`,
-              buttons.slice(0, 3),
-              "💳 Select Payment Method",
-              "Safe & Secure Payment Options"
-            );
-            continue;
-          }
-        } catch (err) {
-          console.error("[Kapso] Payment buttons failed:", err);
-        }
-      }
+    // The payment-method picker that lived here is gone. It offered Cash on
+    // Delivery and UPI buttons, which the handler now refuses outright with
+    // "payment antha online ne andi" — the bot was presenting choices it would
+    // not honour. Payment is Razorpay only, sent as a CTA button by
+    // proceedToBilling once the final bill is agreed.
 
       // 4. Intercept UPI payment links → native WhatsApp button message (no browser redirect)
       if (bubble.includes("upi://pay?")) {
@@ -247,45 +232,16 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
         }
       }
 
-      // 6. Intercept delivery address requests → native WhatsApp address collection sheet or saved address buttons
-      const isAddressRequest =
-        bubble.toLowerCase().includes("delivery address") ||
-        bubble.toLowerCase().includes("provide your address") ||
-        bubble.toLowerCase().includes("share your address") ||
-        bubble.toLowerCase().includes("address details") ||
-        bubble.toLowerCase().includes("where should we deliver");
-
-      if (isAddressRequest) {
-        try {
-          const customer = await prisma.customer.findFirst({
-            where: { phone },
-            select: { name: true, address: true }
-          });
-
-          if (customer?.address) {
-            await adapter.sendInteractiveButtons(
-              phone,
-              `🏠 We have your saved delivery address:\n*${customer.address}*\n\nWould you like to use this address or enter a new one?`,
-              [
-                { id: "use_saved_address", title: "🏠 Use Saved Address" },
-                { id: "change_address", title: "✏️ Enter New Address" }
-              ],
-              "📍 Delivery Address",
-              "Fast & Reliable Delivery"
-            );
-            continue;
-          } else {
-            await adapter.sendInteractiveAddress(
-              phone,
-              "🏠 Please tap below to enter your delivery address details securely.",
-              { name: customer?.name ?? undefined }
-            );
-            continue;
-          }
-        } catch (err) {
-          console.error("[Cloud] Failed to send address collection card:", err);
-        }
-      }
+      // The address interceptor that lived here is gone. It fired whenever the
+      // model's prose happened to contain "delivery address" and replaced it
+      // with a fourth address template, in English, whose button ids
+      // (use_saved_address / change_address) did not match the handlers, which
+      // check use_saved_address_btn. Taps therefore fell through to the agent,
+      // which turned them back into prose containing "delivery address", which
+      // re-fired this interceptor — the loop customers were stuck in.
+      //
+      // Address intents are now handled deterministically from stored state in
+      // the message handler, using the shared address renderers.
 
       // 7. General URL Interceptor → Convert ALL web links (menu, tracking, pay, general URLs)
       // into native Interactive CTA URL Buttons so they open directly inside WhatsApp's In-App Browser
@@ -512,15 +468,20 @@ async function proceedToBilling(
   });
   const byId = new Map(menuItems.map((m) => [m.id, m]));
   let subtotal = 0;
+  const itemLabels: string[] = [];
   for (const l of lines) {
     const mi = byId.get(l.menuItemId);
     if (!mi) continue;
     let p = mi.price;
+    let variantName: string | undefined;
     if (l.variantId) {
       const v = mi.variants.find((v) => v.id === l.variantId);
-      if (v) p = v.price;
+      if (v) { p = v.price; variantName = v.name; }
     }
     subtotal += p * l.qty;
+    itemLabels.push(
+      `${l.qty}x ${mi.name}${variantName ? ` (${variantName})` : ""} ₹${p * l.qty}`,
+    );
   }
 
   // Live quote rather than a flat rate, so the fee matches the actual distance.
@@ -567,10 +528,14 @@ async function proceedToBilling(
   // number the customer was billed, instead of re-quoting and drifting.
   await prisma.pendingOrder.update({
     where: { id: pending.id },
-    data: { deliveryFee, type: "delivery" },
+    data: { deliveryFee, type: "delivery", stage: "QUOTE_GENERATED" },
   });
 
-  await adapter.sendText(phone, finalBillTemplate(subtotal, deliveryFee));
+  await send(
+    adapter,
+    phone,
+    renderDeliveryQuote({ items: itemLabels, subtotal, deliveryFee, address }),
+  );
 
   const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
 
@@ -596,12 +561,14 @@ async function proceedToBilling(
     return;
   }
 
-  await adapter.sendInteractiveCtaUrl(
-    phone,
-    "Pay ayyaka order confirm avutundi.",
-    `💳 Pay ₹${grandTotal}`,
-    payUrl,
-  );
+  // Record the link against the cart so a later edit can void it, and mark the
+  // stage so routing knows the customer is holding a payable link.
+  await prisma.pendingOrder.update({
+    where: { id: pending.id },
+    data: { razorpayLinkUrl: payUrl, stage: "AWAITING_PAYMENT" },
+  });
+
+  await send(adapter, phone, renderPaymentLink(payUrl, grandTotal));
 }
 
 export class BotSessionManager {
@@ -661,15 +628,25 @@ export class BotSessionManager {
     adapter.onMessage(async (msg) => {
       console.log(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
       try {
-        const cfg = await prisma.restaurantConfig.findUnique({
-          where: { id: restaurantId },
-          select: {
-            restaurantName: true,
-            restaurantCity: true,
-            botPaused: true,
-            pauseMessage: true,
-          },
-        });
+        // The database lives in ap-northeast-2 while this runs in asia-south1, so
+        // every query costs a cross-region round trip. This row changes only when
+        // the owner edits the dashboard, and getCached already invalidates on
+        // config_updated, so reading it per message was pure latency.
+        const cfg = await getCached(
+          restaurantId,
+          "sessionConfig",
+          () =>
+            prisma.restaurantConfig.findUnique({
+              where: { id: restaurantId },
+              select: {
+                restaurantName: true,
+                restaurantCity: true,
+                botPaused: true,
+                pauseMessage: true,
+              },
+            }),
+          30_000,
+        );
         if (cfg?.botPaused) {
           const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
           await sendHumanly(adapter, msg.phone, [pauseMsg], restaurantId);
@@ -677,6 +654,23 @@ export class BotSessionManager {
         }
 
         const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
+
+        // Greet before touching the database. WhatsApp already gives us the
+        // customer's profile name, and the restaurant name is cached, so the
+        // welcome needs nothing else — it goes out while the customer row is
+        // still being fetched instead of after it.
+        const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"]
+          .includes(msg.text.trim().toLowerCase());
+
+        if (isGreeting) {
+          const greetName = msg.name?.trim() ? `${msg.name.trim()} garu` : "andi";
+          await send(adapter, msg.phone, renderWelcome(greetName, rName));
+          // Keep the profile/history write off the critical path.
+          void getOrCreateCustomer(msg.phone, msg.name)
+            .then((c) => logMessage(c.id, "user", msg.text))
+            .catch((e) => console.error("[Greeting] background persist failed:", e));
+          return;
+        }
 
         const customer = await getOrCreateCustomer(msg.phone, msg.name);
 
@@ -691,26 +685,6 @@ export class BotSessionManager {
         // ── Voice note (no speech-to-text yet) — ask for text or a call instead ──
         if (msg.text === VOICE_NOTE_SENTINEL) {
           await adapter.sendText(msg.phone, voiceNoteFallbackTemplate());
-          return;
-        }
-
-        const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
-
-        if (isGreeting) {
-          // Greet and let the customer choose. This used to push a hero image and
-          // then the full menu 1.2s later, so the welcome was buried and nobody
-          // got a say in what they saw next.
-          const nameStr = customer?.name ? `${customer.name} garu` : "andi";
-          const greetingName = cfg?.restaurantName ?? "Godavari Ruchulu";
-
-          await adapter.sendInteractiveButtons(
-            msg.phone,
-            `Namaskaram ${nameStr} 🙏\n\n${greetingName} ki welcome. Ee roju menu ready undi.`,
-            [
-              { id: "view_menu", title: "📋 Menu" },
-              { id: "location_info", title: "📍 Location & Hours" },
-            ],
-          );
           return;
         }
 
@@ -835,6 +809,14 @@ export class BotSessionManager {
             total += price * l.qty;
           }
 
+          if (existing && isLocked(existing.stage)) {
+            await adapter.sendText(
+              msg.phone,
+              "Ee order already confirm ayyindi andi 🙏 Kotha order kosam *hi* pampandi.",
+            );
+            return;
+          }
+
           const CART_TTL_MS = 2 * 60 * 60 * 1000;
           const expiresAt = new Date(Date.now() + CART_TTL_MS);
           await prisma.pendingOrder.upsert({
@@ -843,22 +825,27 @@ export class BotSessionManager {
             update: { lines: JSON.stringify(validLines), expiresAt },
           });
 
-          const stagedMsg = orderStagedTemplate(labels, total, "delivery");
-          await adapter.sendInteractiveButtons(
+          // Rewind the stage and void any outstanding payment link — the cart the
+          // customer is holding a link for no longer exists. Keeps the address.
+          await applyCartEdit(cust.id, adapter, msg.phone);
+
+          const cart = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
+          await send(
+            adapter,
             msg.phone,
-            stagedMsg,
-            [
-              { id: "order_type_delivery", title: "🛵 Delivery" },
-              { id: "order_type_pickup", title: "🛍️ Pickup" },
-              { id: "add_more_items_btn", title: "➕ Add More" }
-            ],
-            "🛒 Your Cart",
-            "Choose order type to continue"
+            renderCartSummary({
+              items: labels,
+              subtotal: total,
+              stage: cart?.stage ?? "BUILDING_CART",
+            }),
           );
           return;
         }
 
-        // ── Direct Action 4b: Saved Address Modal Sheet & Map Pin ──────────────
+        // ── Direct Action 4b: Use Saved Address vs Pin New Location ──────────────
+        // Both id spellings are accepted — older messages in customers' chat
+        // history still carry "use_saved_address", and a stale button must not
+        // fall through to the model.
         if (
           rawText.startsWith("saved_addr_") ||
           rawText === "use_saved_address_btn" ||
@@ -1163,9 +1150,17 @@ export class BotSessionManager {
             return;
           }
 
-          // Every order is a delivery order and the location is never assumed —
-          // each order re-offers the known addresses or a fresh pin, because
-          // customers order to home, office and elsewhere on different days.
+          // This cart already has a location chosen for it, so go straight to the
+          // bill. Re-asking after every cart edit made the journey restart under
+          // the customer: pick address, edit cart, pick the same address again.
+          // A new order starts at BUILDING_CART, so it still gets the picker.
+          if (pending.stage !== "BUILDING_CART" && cust.address) {
+            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, cust.address);
+            return;
+          }
+
+          // Location is never assumed for a fresh order — customers order to home,
+          // office and elsewhere on different days.
           const savedAddresses = await savedAddressesFor(cust.id, cust.address);
 
           if (savedAddresses.length > 0) {
@@ -1193,6 +1188,10 @@ export class BotSessionManager {
             where: { id: cust.id },
             data: { address: chosen },
           });
+          await prisma.pendingOrder.updateMany({
+            where: { customerId: cust.id },
+            data: { stage: "ADDRESS_SELECTED" },
+          });
           await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, chosen);
           return;
 
@@ -1207,9 +1206,12 @@ export class BotSessionManager {
 
         // Cash / pay-on-delivery is deliberately gone: every order is prepaid via
         // Razorpay, so an order must never be created before the webhook fires.
+        // Nothing emits these any more, but old buttons live on in customers'
+        // chat history and a stale tap must not reach the model.
         if (
           rawText === "pay_method_cash" ||
           rawText === "pay_method_upi" ||
+          rawText === "pay_method_razorpay" ||
           cleanText === "cash on pickup" ||
           cleanText === "pay cash"
         ) {
@@ -1220,36 +1222,41 @@ export class BotSessionManager {
           return;
         }
 
-        // ── Direct Action: Flat/Door number after Google Maps pin ────────────
-        // After the customer pins their location, the system asks for flat/door
-        // details. The pending order is marked "delivery_awaiting_details" so we
-        // know the next message is those details — append to address and bill.
-        {
+        // The flat/door follow-up that used to live here is gone. The map form
+        // already requires flat, building and landmark and posts them composed
+        // into the address, so this only made the customer type it all twice —
+        // and it appended whatever they said next to their saved address, which
+        // is how one record ended up as "<address> — already add chesa".
+
+        // ── Direct Action: "which address?" ───────────────────────────────────
+        // Answered from stored state. Left to the model this replied "meeru inka
+        // delivery address set cheyaledu" while an address was on file and a
+        // payment link had already been issued, then offered a change_address
+        // button it had invented, which called save_customer_info with an empty
+        // address and tried to wipe the record.
+        const asksAddress =
+          rawText === "change_address" ||
+          /\b(address|adress)\b/i.test(cleanText) ||
+          cleanText.includes("ekkada deliver") ||
+          cleanText.includes("ey address");
+
+        if (asksAddress) {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, type: "delivery_awaiting_details", expiresAt: { gt: new Date() } },
-          });
-          if (pending) {
-            // Append flat/door details to the GPS address
-            const currentAddr = cust.address ?? "";
-            const fullAddress = currentAddr
-              ? `${currentAddr} — ${rawText}`
-              : rawText;
 
-            await prisma.customer.update({
-              where: { id: cust.id },
-              data: { address: fullAddress },
-            });
-
-            // Mark as regular delivery so this handler doesn't fire again
-            await prisma.pendingOrder.update({
-              where: { id: pending.id },
-              data: { type: "delivery" },
-            });
-
-            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, fullAddress);
+          if (rawText === "change_address") {
+            const saved = await savedAddressesFor(cust.id, cust.address);
+            if (saved.length > 0) await sendAddressPickerList(adapter, msg.phone, saved);
+            else await sendPinLocationPrompt(adapter, msg.phone);
             return;
           }
+
+          if (cust.address) {
+            await send(adapter, msg.phone, renderCurrentAddress(cust.address));
+            return;
+          }
+
+          await sendPinLocationPrompt(adapter, msg.phone);
+          return;
         }
 
         // ── Direct Action: Text-based order confirmation ──────────────────────

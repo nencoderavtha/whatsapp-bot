@@ -26,7 +26,7 @@ import {
   meHandler,
 } from "./auth.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
-import { orderStagedTemplate } from "../ai/templates.js";
+import { cartSummaryText } from "../whatsapp/renderers.js";
 import { notifyAdminOfEvent, eventBus } from "../services/events.js";
 import { logActivity } from "../services/activity.js";
 import { createPaymentLink, verifyWebhookSignature } from "../services/razorpay.js";
@@ -35,6 +35,7 @@ import { fetchMetaMedia } from "../whatsapp/media.js";
 import { VOICE_NOTE_SENTINEL, type InboundMessage } from "../whatsapp/adapter.js";
 import { DeliveryManager } from "../services/delivery/delivery-manager.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
+import { orderStagedTemplate } from "../ai/templates.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -257,7 +258,7 @@ export function buildAdminApp() {
 
       await prisma.pendingOrder.update({
         where: { customerId },
-        data: { confirmedOrderId: order.id },
+        data: { confirmedOrderId: order.id, stage: "ORDER_PLACED" },
       });
 
       const [customer, cfg] = await Promise.all([
@@ -372,7 +373,14 @@ export function buildAdminApp() {
       const promptText = `I selected some items from the web menu: ${validLines.map(v => `${v.qty}x ${byId.get(v.menuItemId)?.name}`).join(", ")}`;
       await logMessage(customer.id, "user", promptText);
 
-      const stagedMsg = orderStagedTemplate(labels, total, "pickup");
+      // Same stage-aware summary as every other path. orderStagedTemplate ended
+      // with "Tap Confirm Order to continue", duplicating the button directly
+      // beneath it and repeating the pin-location hint after an address existed.
+      const cart = await prisma.pendingOrder.findUnique({
+        where: { customerId: customer.id },
+        select: { stage: true },
+      });
+      const stagedMsg = cartSummaryText(labels, total, cart?.stage ?? "BUILDING_CART");
       await session.sendInteractiveButtons(
         phone,
         stagedMsg,
@@ -428,10 +436,16 @@ export function buildAdminApp() {
     if (pending) {
       await prisma.pendingOrder.update({
         where: { id: pending.id },
-        data: { type: "delivery_awaiting_details" },
+        // "delivery_awaiting_details" is not a type checkout or order creation
+        // recognises — both expect "delivery" — so it left the cart in a state
+        // nothing downstream could bill.
+        data: { type: "delivery", stage: "ADDRESS_SELECTED" },
       });
     }
 
+    // The map form already requires flat/door number, building and landmark and
+    // sends them composed into `address`. Asking for them again over WhatsApp
+    // made the customer type everything twice.
     let subtotal = 0;
     const labels: string[] = [];
     if (pending && pending.lines) {
@@ -456,7 +470,6 @@ export function buildAdminApp() {
         subtotal += p * l.qty;
       }
     }
-
     const session = botSessionManager.getSession(1);
     let deliveryFee = 45;
     try {

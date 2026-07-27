@@ -221,9 +221,22 @@ model OrderItem {
 }
 
 // Persistent Draft Cart (Survives app restarts)
+/// Where a cart sits in the ordering journey. Routing reads this instead of
+/// inferring position from message text, and a cart edit rewinds to the last
+/// safe stage rather than restarting the journey.
+enum OrderStage {
+  BUILDING_CART
+  ADDRESS_SELECTED
+  QUOTE_GENERATED
+  AWAITING_PAYMENT
+  PAYMENT_RECEIVED
+  ORDER_PLACED
+}
+
 model PendingOrder {
-  id               Int      @id @default(autoincrement())
-  customerId       Int      @unique
+  id               Int        @id @default(autoincrement())
+  stage            OrderStage @default(BUILDING_CART)
+  customerId       Int        @unique
   customer         Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   lines            String   // JSON cart lines [{menuItemId, variantId, qty, note}]
   type             String   @default("delivery")
