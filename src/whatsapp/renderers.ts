@@ -35,6 +35,24 @@ export type Rendered =
   | { kind: "buttons"; body: string; buttons: Button[]; header?: string; footer?: string }
   | { kind: "cta"; body: string; buttonTitle: string; url: string };
 
+// ── Welcome ─────────────────────────────────────────────────────────────────
+
+/**
+ * Sent on a greeting, before any database work. Everything it needs is either
+ * on the inbound message (the WhatsApp profile name) or cached, so it can go
+ * out immediately rather than after a cross-region query.
+ */
+export function renderWelcome(greetName: string, restaurantName: string): Rendered {
+  return {
+    kind: "buttons",
+    body: `Namaskaram ${greetName} 🙏\n\n${restaurantName} ki welcome. Ee roju menu ready undi.`,
+    buttons: [
+      { id: "view_menu", title: "📋 Menu" },
+      { id: "location_info", title: "📍 Location & Hours" },
+    ],
+  };
+}
+
 // ── Cart ────────────────────────────────────────────────────────────────────
 
 /**

@@ -18,12 +18,14 @@ import {
 } from "../ai/templates.js";
 import { DeliveryOrchestrator } from "../services/delivery/orchestrator.js";
 import {
+  renderWelcome,
   renderCartSummary,
   renderAddressPicker,
   renderAddressPinPrompt,
   renderDeliveryQuote,
   renderPaymentLink,
 } from "./renderers.js";
+import { getCached } from "../services/cache.js";
 import { send, applyCartEdit, isLocked } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
@@ -624,15 +626,25 @@ export class BotSessionManager {
     adapter.onMessage(async (msg) => {
       console.log(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
       try {
-        const cfg = await prisma.restaurantConfig.findUnique({
-          where: { id: restaurantId },
-          select: {
-            restaurantName: true,
-            restaurantCity: true,
-            botPaused: true,
-            pauseMessage: true,
-          },
-        });
+        // The database lives in ap-northeast-2 while this runs in asia-south1, so
+        // every query costs a cross-region round trip. This row changes only when
+        // the owner edits the dashboard, and getCached already invalidates on
+        // config_updated, so reading it per message was pure latency.
+        const cfg = await getCached(
+          restaurantId,
+          "sessionConfig",
+          () =>
+            prisma.restaurantConfig.findUnique({
+              where: { id: restaurantId },
+              select: {
+                restaurantName: true,
+                restaurantCity: true,
+                botPaused: true,
+                pauseMessage: true,
+              },
+            }),
+          30_000,
+        );
         if (cfg?.botPaused) {
           const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
           await sendHumanly(adapter, msg.phone, [pauseMsg], restaurantId);
@@ -640,6 +652,23 @@ export class BotSessionManager {
         }
 
         const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
+
+        // Greet before touching the database. WhatsApp already gives us the
+        // customer's profile name, and the restaurant name is cached, so the
+        // welcome needs nothing else — it goes out while the customer row is
+        // still being fetched instead of after it.
+        const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"]
+          .includes(msg.text.trim().toLowerCase());
+
+        if (isGreeting) {
+          const greetName = msg.name?.trim() ? `${msg.name.trim()} garu` : "andi";
+          await send(adapter, msg.phone, renderWelcome(greetName, rName));
+          // Keep the profile/history write off the critical path.
+          void getOrCreateCustomer(msg.phone, msg.name)
+            .then((c) => logMessage(c.id, "user", msg.text))
+            .catch((e) => console.error("[Greeting] background persist failed:", e));
+          return;
+        }
 
         const customer = await getOrCreateCustomer(msg.phone, msg.name);
 
@@ -654,26 +683,6 @@ export class BotSessionManager {
         // ── Voice note (no speech-to-text yet) — ask for text or a call instead ──
         if (msg.text === VOICE_NOTE_SENTINEL) {
           await adapter.sendText(msg.phone, voiceNoteFallbackTemplate());
-          return;
-        }
-
-        const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"].includes(msg.text.trim().toLowerCase());
-
-        if (isGreeting) {
-          // Greet and let the customer choose. This used to push a hero image and
-          // then the full menu 1.2s later, so the welcome was buried and nobody
-          // got a say in what they saw next.
-          const nameStr = customer?.name ? `${customer.name} garu` : "andi";
-          const greetingName = cfg?.restaurantName ?? "Godavari Ruchulu";
-
-          await adapter.sendInteractiveButtons(
-            msg.phone,
-            `Namaskaram ${nameStr} 🙏\n\n${greetingName} ki welcome. Ee roju menu ready undi.`,
-            [
-              { id: "view_menu", title: "📋 Menu" },
-              { id: "location_info", title: "📍 Location & Hours" },
-            ],
-          );
           return;
         }
 
