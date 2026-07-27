@@ -12,6 +12,7 @@ export interface AgentResult {
   reply: string;
   placedOrderId?: number;
   humanHandoffRequested?: boolean;
+  mediaReply?: { imageUrl: string; caption?: string };
 }
 
 const customerLocks = new Map<string, Promise<void>>();
@@ -138,6 +139,7 @@ async function processIncoming(
   let placedOrderId: number | undefined;
   let humanHandoffRequested = false;
   let templateReply: string | undefined;
+  let mediaReply: { imageUrl: string; caption?: string } | undefined;
   let finalText = "";
 
   const startedAt = Date.now();
@@ -171,11 +173,12 @@ async function processIncoming(
       }
 
       console.log(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
-      const { output, orderId, templateReply: tr, humanHandoff } = await runTool(customer.id, restaurantId, tc.function.name, args);
+      const { output, orderId, templateReply: tr, humanHandoff, mediaReply: mr } = await runTool(customer.id, restaurantId, tc.function.name, args);
       console.log(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
       if (orderId) placedOrderId = orderId;
       if (humanHandoff) humanHandoffRequested = true;
       if (tr) templateReply = tr;
+      if (mr) mediaReply = mr;
 
       messages.push({
         role: "tool",

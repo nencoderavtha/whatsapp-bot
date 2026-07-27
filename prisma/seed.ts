@@ -141,6 +141,18 @@ const TOOLS: Array<{
     parameters: { type: "object", properties: {} },
     sortOrder: 6,
   },
+  {
+    name: "send_item_photo",
+    description: "Send a photo of a specific dish/menu item to the customer. Use this when the customer asks to see a picture of an item.",
+    parameters: {
+      type: "object",
+      properties: {
+        itemName: { type: "string", description: "The name of the menu item to send a photo of." }
+      },
+      required: ["itemName"]
+    },
+    sortOrder: 10,
+  },
 ];
 
 async function main() {

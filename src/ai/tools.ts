@@ -182,7 +182,7 @@ export async function runTool(
   restaurantId: number,
   name: string,
   args: Record<string, any>,
-): Promise<{ output: unknown; orderId?: number; templateReply?: string; humanHandoff?: boolean }> {
+): Promise<{ output: unknown; orderId?: number; templateReply?: string; humanHandoff?: boolean; mediaReply?: { imageUrl: string; caption?: string } }> {
   try {
     switch (name) {
       case "save_customer_info": {
@@ -622,6 +622,37 @@ export async function runTool(
           output: { ok: true, note: "Human handoff requested. The customer will now be handled by staff." },
           templateReply: humanHandoffTemplate(),
           humanHandoff: true,
+        };
+      }
+
+      case "send_item_photo": {
+        if (!args.itemName) {
+          return { output: { error: "itemName is required" } };
+        }
+        
+        // Find item ignoring case
+        const item = await prisma.menuItem.findFirst({
+          where: {
+            name: {
+              contains: args.itemName,
+              mode: 'insensitive'
+            }
+          }
+        });
+
+        if (!item) {
+          return { output: { error: `Item '${args.itemName}' not found in the menu. Tell the customer you couldn't find the photo.` } };
+        }
+        if (!item.imageUrl) {
+          return { output: { error: `No photo available for '${item.name}'. Apologize and say you don't have a picture of that right now.` } };
+        }
+
+        return {
+          output: { ok: true, note: "Photo sent via mediaReply. You don't need to describe it further." },
+          mediaReply: {
+            imageUrl: item.imageUrl,
+            caption: `${item.name} - ₹${item.price}`,
+          }
         };
       }
 

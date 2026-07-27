@@ -627,7 +627,7 @@ export class BotSessionManager {
   }
 
   /** Start (or restart) a single restaurant's WhatsApp session. */
-  async startSession(restaurantId: number, restaurantName: string) {
+  async startSession(restaurantId: number, restaurantName: string, customAdapter?: CloudAdapter) {
     if (this.sessions.has(restaurantId)) {
       console.log(`[r${restaurantId}] Session already running — skipping.`);
       return;
@@ -644,7 +644,7 @@ export class BotSessionManager {
       console.warn(`[r${restaurantId}] Cloud API not configured (missing phoneNumberId or token) — skipping.`);
       return;
     }
-    const adapter = new CloudAdapter(phoneNumberId, token);
+    const adapter = customAdapter || new CloudAdapter(phoneNumberId, token);
     this.phoneIdMap.set(phoneNumberId, restaurantId);
 
     adapter.onMessage(async (msg) => {
@@ -740,7 +740,7 @@ export class BotSessionManager {
         // ── Direct Action 2: Location & Hours ────────────────────────────────
         if (
           rawText !== "pin_new_location_btn" &&
-          (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("location") || lowerText.includes("opening hours"))
+          (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("where are you located") || lowerText.includes("restaurant location") || lowerText.includes("opening hours") || lowerText.includes("your location"))
         ) {
           const city = cfg?.restaurantCity ?? "Hyderabad";
           const locationMsg = `*${rName}*, ${city}\nEvening service 7:30 PM nunchi andi.`;
@@ -1311,8 +1311,12 @@ export class BotSessionManager {
           }
         }
 
-        const { reply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
+        const { reply, mediaReply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
         console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
+
+        if (mediaReply) {
+          await adapter.sendImage(msg.phone, mediaReply.imageUrl, mediaReply.caption);
+        }
 
         // If the reply is a cart-staged message, send it with Delivery/Pickup buttons instead of plain text
         if (reply.includes("🛒 *Your Cart:*") && reply.includes("How would you like your order?")) {
