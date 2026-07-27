@@ -110,23 +110,17 @@ export class ShiprocketDeliveryService {
           }
         }
       } catch (err) {
-        console.error("[Shiprocket API Error, using fallback]", err);
+        console.error("[Shiprocket API Error]", err);
       }
     }
 
-    // Fallback simulation mode if API credentials are not provided or API call fails
-    const distanceKm = Math.abs(params.deliveryPincode - params.pickupPincode) % 15 + 3;
-    const estimatedFee = Math.max(45, Math.round(35 + distanceKm * 6));
-    const estimatedMinutes = Math.min(45, 15 + distanceKm * 2);
-
     return {
-      provider: "Shiprocket Quick (Rapido Fleet)",
+      provider: "Shiprocket Quick",
       providerCode: "shiprocket",
-      quotedFee: estimatedFee,
-      estimatedMinutes: estimatedMinutes,
-      available: true,
+      quotedFee: 0,
+      estimatedMinutes: 0,
+      available: false,
       vehicleType: "2-Wheeler Hyperlocal",
-      underlyingCarrier: "Rapido Parcel Partner",
     };
   }
 

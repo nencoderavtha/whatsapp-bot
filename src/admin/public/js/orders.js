@@ -108,6 +108,7 @@ function renderDeliverySection(o) {
   const fee = o.deliveryFee || (dispatch ? dispatch.deliveryFee : 45);
 
   const statusLabels = {
+    PENDING_KITCHEN: "Cooking in Kitchen",
     SEARCHING_RIDER: "Searching for Rider",
     COURIER_ASSIGNED: "Courier Assigned",
     RIDER_ASSIGNED: "Courier Assigned",
@@ -115,10 +116,11 @@ function renderDeliverySection(o) {
     IN_TRANSIT: "Out for Delivery",
     DELIVERED: "Delivered",
     CANCELLED: "Dispatch Cancelled",
-    NOT_SCHEDULED: "Not Dispatched",
+    NOT_SCHEDULED: "Cooking in Kitchen",
   };
 
   const statusBadges = {
+    PENDING_KITCHEN: "bg-amber-950/70 text-amber-400 border-amber-500/30",
     SEARCHING_RIDER: "bg-amber-950/70 text-amber-400 border-amber-500/30",
     COURIER_ASSIGNED: "bg-blue-950/70 text-blue-400 border-blue-500/30",
     RIDER_ASSIGNED: "bg-blue-950/70 text-blue-400 border-blue-500/30",
@@ -126,7 +128,7 @@ function renderDeliverySection(o) {
     IN_TRANSIT: "bg-purple-950/70 text-purple-400 border-purple-500/30",
     DELIVERED: "bg-emerald-950/70 text-emerald-400 border-emerald-500/30",
     CANCELLED: "bg-rose-950/70 text-rose-400 border-rose-500/30",
-    NOT_SCHEDULED: "bg-slate-900 text-slate-400 border-slate-800",
+    NOT_SCHEDULED: "bg-amber-950/70 text-amber-400 border-amber-500/30",
   };
 
   const badgeCls = statusBadges[status] || "bg-blue-950/70 text-blue-400 border-blue-500/30";
@@ -136,7 +138,7 @@ function renderDeliverySection(o) {
     ? `<div class="text-[11px] text-slate-200 mt-1 font-medium flex items-center gap-1">👤 Rider: ${esc(dispatch.riderName)} ${dispatch.riderPhone ? `<a href="tel:${esc(dispatch.riderPhone)}" class="text-rose-400 underline font-mono">(${esc(dispatch.riderPhone)})</a>` : ""}</div>`
     : "";
 
-  const trackId = dispatch?.externalDeliveryId;
+  const trackId = dispatch?.externalDeliveryId && dispatch.externalDeliveryId !== "NOT_DISPATCHED_YET" ? dispatch.externalDeliveryId : null;
   const isTestTrack = trackId && (trackId.startsWith("329") || trackId.startsWith("29"));
   const trackingUrl = trackId
     ? (isTestTrack
@@ -148,7 +150,7 @@ function renderDeliverySection(o) {
     ? `<a href="${trackingUrl}" target="_blank" class="text-[11px] text-rose-400 hover:underline flex items-center gap-1 mt-1 font-mono font-bold">🔗 Track Delivery Courier (${esc(trackId)})</a>`
     : "";
 
-  const isDispatchActive = dispatch && !["NOT_SCHEDULED", "CANCELLED"].includes(status);
+  const isDispatchActive = dispatch && !["NOT_SCHEDULED", "PENDING_KITCHEN", "CANCELLED"].includes(status);
 
   if (isDispatchActive) {
     return `
@@ -163,30 +165,17 @@ function renderDeliverySection(o) {
         </div>
         ${riderInfo}
         ${trackingLink}
-        <div class="pt-1 flex items-center justify-between">
-          <details class="text-[10px] w-full">
-            <summary class="cursor-pointer text-slate-400 hover:text-slate-200 transition-colors font-medium">🔄 Change Partner / Re-dispatch</summary>
-            <div class="flex gap-1.5 mt-2 pt-1.5 border-t border-slate-800">
-              <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 px-2 py-1 bg-blue-950 text-blue-300 border border-blue-500/40 rounded-md font-bold">
-                Switch Borzo
-              </button>
-              <button onclick="window.dispatchOrderDelivery(${o.id}, 'shadowfax')" class="flex-1 px-2 py-1 bg-slate-800 text-slate-300 border border-slate-700 rounded-md font-bold">
-                Switch Shadowfax
-              </button>
-            </div>
-          </details>
-        </div>
       </div>`;
   }
 
   return `
-    <div class="bg-slate-900/60 rounded-xl p-3 mb-2 border border-slate-800 space-y-2">
+    <div class="bg-slate-900/60 rounded-xl p-3 mb-2 border border-slate-800 space-y-1">
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-1.5">
           <span class="text-xs">🛵</span>
           <span class="font-bold text-xs text-slate-300">Delivery (+₹${fee})</span>
         </div>
-        <span class="text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">${displayStatus}</span>
+        <span class="text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">🍳 Cooking in Kitchen</span>
       </div>
       <div class="flex gap-2 pt-1">
         <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">

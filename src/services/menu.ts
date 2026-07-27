@@ -110,6 +110,26 @@ export async function findItems(query: string, _restaurantId?: number) {
   );
 }
 
+const DEFAULT_FOOD_IMAGES: Record<string, string> = {
+  biryani: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800&auto=format&fit=crop&q=80",
+  starter: "https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?w=800&auto=format&fit=crop&q=80",
+  chicken: "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=800&auto=format&fit=crop&q=80",
+  mutton: "https://images.unsplash.com/photo-1544025162-d76694265947?w=800&auto=format&fit=crop&q=80",
+  paneer: "https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=800&auto=format&fit=crop&q=80",
+  default: "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=800&auto=format&fit=crop&q=80",
+};
+
+function getFoodImage(name: string, catName: string, existingUrl?: string | null): string {
+  if (existingUrl && existingUrl.trim().length > 5) return existingUrl.trim();
+  const n = (name + " " + catName).toLowerCase();
+  if (n.includes("biryani")) return DEFAULT_FOOD_IMAGES.biryani;
+  if (n.includes("starter") || n.includes("fry") || n.includes("65")) return DEFAULT_FOOD_IMAGES.starter;
+  if (n.includes("chicken")) return DEFAULT_FOOD_IMAGES.chicken;
+  if (n.includes("mutton")) return DEFAULT_FOOD_IMAGES.mutton;
+  if (n.includes("paneer")) return DEFAULT_FOOD_IMAGES.paneer;
+  return DEFAULT_FOOD_IMAGES.default;
+}
+
 export async function menuAsInteractiveCarouselCards(_restaurantId?: number) {
   const categories = await getMenu();
   const cards: Array<{ title: string; desc: string; imageUrl: string; buttonId: string; buttonTitle: string }> = [];
@@ -117,7 +137,7 @@ export async function menuAsInteractiveCarouselCards(_restaurantId?: number) {
   for (const cat of categories) {
     for (const item of cat.items) {
       if (cards.length >= 10) break;
-      if (!item.imageUrl) continue;
+      const imageUrl = getFoodImage(item.name, cat.name, item.imageUrl);
 
       let price = "";
       if (item.variants.length > 0) {
@@ -133,7 +153,7 @@ export async function menuAsInteractiveCarouselCards(_restaurantId?: number) {
       cards.push({
         title: item.name.length > 60 ? item.name.slice(0, 57) + "…" : item.name,
         desc: descParts.length > 72 ? descParts.slice(0, 69) + "…" : descParts,
-        imageUrl: item.imageUrl,
+        imageUrl,
         buttonId: `menu_item_${item.id}`,
         buttonTitle: "Add",
       });

@@ -30,6 +30,7 @@ import { getCached } from "../services/cache.js";
 import { send, applyCartEdit, isLocked } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
+import { getExactServiceDeliveryFee, UnserviceableLocationError } from "../services/delivery-fee.js";
 
 
 
@@ -58,23 +59,69 @@ async function sendMenuVisual(
   bodyText: string,
   webMenuUrl?: string,
 ): Promise<void> {
-  const cards = await menuAsInteractiveCarouselCards(restaurantId);
-  let sentCarousel = false;
-  // Meta requires 2-10 cards for a carousel — fall back to the list otherwise.
-  if (cards.length >= 2) {
-    await adapter.sendInteractiveCarousel(phone, bodyText, cards);
-    sentCarousel = true;
-  } else {
-    const sections = await menuAsInteractiveListSections(restaurantId);
-    if (sections.length > 0) {
-      await adapter.sendInteractiveList(phone, bodyText, "📋 Menu", sections);
-      sentCarousel = true;
+  const sections = await menuAsInteractiveListSections(restaurantId);
+  if (sections.length > 0) {
+    try {
+      await adapter.sendInteractiveList(phone, bodyText, "📋 View Today's Menu", sections);
+    } catch (e: any) {
+      console.warn("[Interactive List Failed]", e.response?.data || e.message || e);
     }
   }
+
   if (webMenuUrl) {
-    if (sentCarousel) await new Promise((r) => setTimeout(r, 1500));
-    await adapter.sendInteractiveCtaUrl(phone, "Full menu photos tho web lo chudandi 👇", "📋 Full Menu", webMenuUrl);
+    await new Promise((r) => setTimeout(r, 600));
+    await adapter.sendInteractiveCtaUrl(phone, "Full menu photos & details web lo chudandi 👇", "📋 Full Web Menu", webMenuUrl);
   }
+}
+
+async function sendDeliveryLocationOptions(
+  adapter: CloudAdapter,
+  phone: string,
+  cust: any,
+  addressList: string[],
+  mapFormUrl: string,
+): Promise<void> {
+  if (cust.address) {
+    await adapter.sendInteractiveButtons(
+      phone,
+      `📍 *Delivery Location Preview:*\n🏠 *${cust.address}*\n\nTap *📍 Deliver Here* below to use this address for your order:`,
+      [{ id: "confirm_delivery_addr_btn", title: "📍 Deliver Here" }],
+      "📦 Delivery Location",
+    );
+  }
+
+  if (addressList.length > 0) {
+    const rows = addressList.map((addr, idx) => ({
+      id: `saved_addr_${idx}`,
+      title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
+      description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
+    }));
+
+    rows.push({
+      id: "pin_new_location_btn",
+      title: "🗺️ Pin New Location",
+      description: "Open Google Maps to pin a new delivery location",
+    });
+
+    try {
+      await adapter.sendInteractiveList(
+        phone,
+        "📍 *Saved Delivery Locations*\n\nTap below to choose another saved address from your previous orders:",
+        "📍 Select Address",
+        [{ title: "Saved Delivery Locations", rows }],
+        "📦 Saved Addresses",
+      );
+    } catch (e) {
+      console.warn("[Interactive Address List Failed]", e);
+    }
+  }
+
+  await adapter.sendInteractiveCtaUrl(
+    phone,
+    "📍 Tap below to open Google Maps & pin a new delivery address 👇",
+    "🗺️ Pin Location on Map",
+    mapFormUrl,
+  );
 }
 
 function splitBubbles(text: string): string[] {
@@ -127,7 +174,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
           phone,
           bubble,
           [
-            { id: "confirm_order_btn", title: "✅ Confirm Order" },
+            { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
             { id: "add_more_items_btn", title: "➕ Add More Items" }
           ],
           "🛒 Order Summary",
@@ -460,12 +507,12 @@ async function proceedToBilling(
       pickupPincode: PICKUP_PINCODE,
       deliveryPincode: pincodeFromAddress(address) ?? PICKUP_PINCODE,
       pickupAddress,
-      pickupLat: restaurant?.restaurantLat,
-      pickupLng: restaurant?.restaurantLng,
+      pickupLat: restaurant?.restaurantLat ?? undefined,
+      pickupLng: restaurant?.restaurantLng ?? undefined,
       pickupPhone: ownerPhone,
       deliveryAddress: address,
-      deliveryLat: customerRow?.deliveryLat,
-      deliveryLng: customerRow?.deliveryLng,
+      deliveryLat: customerRow?.deliveryLat ?? undefined,
+      deliveryLng: customerRow?.deliveryLng ?? undefined,
       deliveryPhone: phone,
     });
     if (quotes?.cheapest?.quotedFee != null) {
@@ -666,7 +713,7 @@ export class BotSessionManager {
 
         // ── Direct Action 2: Location & Hours ────────────────────────────────
         if (
-          rawText !== "pin_new_location_btn" && 
+          rawText !== "pin_new_location_btn" &&
           (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("location") || lowerText.includes("opening hours"))
         ) {
           const city = cfg?.restaurantCity ?? "Hyderabad";
@@ -800,18 +847,140 @@ export class BotSessionManager {
         // history still carry "use_saved_address", and a stale button must not
         // fall through to the model.
         if (
+          rawText.startsWith("saved_addr_") ||
           rawText === "use_saved_address_btn" ||
-          rawText === "use_saved_address" ||
-          cleanText.includes("use saved address")
+          rawText.includes("use_saved_address") ||
+          cleanText.includes("use saved address") ||
+          cleanText.includes("saved address") ||
+          cleanText === "use saved address"
         ) {
           const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const saved = (await savedAddressesFor(cust.id, cust.address))[0];
-          if (saved) {
-            await prisma.customer.update({
-              where: { id: cust.id },
-              data: { address: saved },
+          const prevOrders = await prisma.order.findMany({
+            where: { customerId: cust.id, deliveryAddress: { not: null } },
+            orderBy: { createdAt: "desc" },
+            take: 10,
+          });
+
+          const addressesSet = new Set<string>();
+          if (cust.address) addressesSet.add(cust.address);
+          for (const o of prevOrders) {
+            if (o.deliveryAddress) addressesSet.add(o.deliveryAddress);
+          }
+          const addressList = Array.from(addressesSet);
+
+          // If specific row selected from list:
+          if (rawText.startsWith("saved_addr_")) {
+            const idx = parseInt(rawText.replace("saved_addr_", ""), 10);
+            const selectedAddr = addressList[idx];
+            if (selectedAddr) {
+              await prisma.customer.update({
+                where: { id: cust.id },
+                data: { address: selectedAddr },
+              });
+
+              const pending = await prisma.pendingOrder.findFirst({
+                where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+              });
+
+              let subtotal = 0;
+              const labels: string[] = [];
+              if (pending && pending.lines) {
+                let lines: any[] = [];
+                try { lines = JSON.parse(pending.lines); } catch {}
+                const menuItems = await prisma.menuItem.findMany({
+                  where: { id: { in: lines.map((l) => l.menuItemId) } },
+                  include: { variants: true }
+                });
+                const byId = new Map(menuItems.map((m) => [m.id, m]));
+                for (const l of lines) {
+                  const mi = byId.get(l.menuItemId);
+                  if (!mi) continue;
+                  let p = mi.price;
+                  let vName: string | undefined;
+                  if (l.variantId) {
+                    const v = mi.variants.find((v) => v.id === l.variantId);
+                    if (v) { p = v.price; vName = v.name; }
+                  }
+                  const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
+                  labels.push(`${label} ₹${p * l.qty}`);
+                  subtotal += p * l.qty;
+                }
+              }
+
+              let deliveryFee = 45;
+              try {
+                deliveryFee = await getExactServiceDeliveryFee(selectedAddr);
+              } catch (err) {
+                await adapter.sendInteractiveButtons(
+                  msg.phone,
+                  `❌ *Delivery Location Not Serviceable*\n\nSorry, this delivery location is currently not serviceable by our delivery partners. Please pick another location or pin a location nearby!`,
+                  [
+                    { id: "pin_new_location_btn", title: "🗺️ Pin New Location" },
+                    { id: "use_saved_address_btn", title: "📍 Select Address" }
+                  ],
+                  "📦 Delivery Location",
+                );
+                return;
+              }
+
+              const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+              const grandTotal = subtotal + deliveryFee;
+              const summaryMsg = orderStagedTemplate(labels, subtotal, "delivery", pending?.note ?? undefined, deliveryFee, selectedAddr);
+              let payUrl: string | null = null;
+              if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
+                const payRes = await createPaymentLink({
+                  restaurantId,
+                  customerId: cust.id,
+                  amount: grandTotal,
+                  customerPhone: msg.phone,
+                  restaurantName: botConfig.restaurantName,
+                });
+                if (payRes?.url) payUrl = payRes.url;
+              }
+
+              if (payUrl) {
+                await adapter.sendInteractiveCtaUrl(
+                  msg.phone,
+                  summaryMsg,
+                  `💳 Confirm & Pay ₹${grandTotal}`,
+                  payUrl,
+                );
+              } else {
+                await adapter.sendInteractiveButtons(
+                  msg.phone,
+                  summaryMsg,
+                  [
+                    { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+                    { id: "add_more_items_btn", title: "➕ Add More Items" },
+                  ],
+                  "🛒 Order Summary",
+                );
+              }
+              return;
+            }
+          }
+
+          // Otherwise open the Interactive List Modal Sheet of all saved addresses
+          if (addressList.length > 0) {
+            const rows = addressList.map((addr, idx) => ({
+              id: `saved_addr_${idx}`,
+              title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
+              description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
+            }));
+
+            rows.push({
+              id: "pin_new_location_btn",
+              title: "🗺️ Pin New Location",
+              description: "Open Google Maps to pin a new delivery location",
             });
-            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, saved);
+
+            await adapter.sendInteractiveList(
+              msg.phone,
+              "📍 *Select Delivery Address*\n\nSelect a saved location from your previous orders or pin a new map location below:",
+              "📍 Select Address",
+              [{ title: "Saved Delivery Locations", rows }],
+              "📦 Delivery Location",
+            );
             return;
           }
           await sendPinLocationPrompt(adapter, msg.phone);
@@ -820,6 +989,152 @@ export class BotSessionManager {
 
         if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location")) {
           await sendPinLocationPrompt(adapter, msg.phone);
+          return;
+        }
+
+        // ── Direct Action 4d: Order Type Selection (Pickup vs Delivery) ───────
+        if (rawText === "order_type_pickup" || cleanText === "pickup" || cleanText === "takeaway") {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const pending = await prisma.pendingOrder.findFirst({
+            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+          });
+
+          if (pending) {
+            await prisma.pendingOrder.update({
+              where: { id: pending.id },
+              data: { type: "pickup" }
+            });
+
+            let lines: any[] = [];
+            try { lines = JSON.parse(pending.lines); } catch {}
+            const menuItems = await prisma.menuItem.findMany({
+              where: { id: { in: lines.map((l) => l.menuItemId) } },
+              include: { variants: true }
+            });
+            const byId = new Map(menuItems.map((m) => [m.id, m]));
+            let subtotal = 0;
+            const labels: string[] = [];
+            for (const l of lines) {
+              const mi = byId.get(l.menuItemId);
+              if (!mi) continue;
+              let p = mi.price;
+              let vName: string | undefined;
+              if (l.variantId) {
+                const v = mi.variants.find((v) => v.id === l.variantId);
+                if (v) { p = v.price; vName = v.name; }
+              }
+              const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
+              labels.push(`${label} ₹${p * l.qty}`);
+              subtotal += p * l.qty;
+            }
+
+            const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+            const summaryMsg = orderStagedTemplate(labels, subtotal, "pickup", pending?.note ?? undefined);
+
+            let payUrl: string | null = null;
+            if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
+              const payRes = await createPaymentLink({
+                restaurantId,
+                customerId: cust.id,
+                amount: subtotal,
+                customerPhone: msg.phone,
+                restaurantName: botConfig.restaurantName,
+              });
+              if (payRes?.url) payUrl = payRes.url;
+            }
+
+            if (payUrl) {
+              await adapter.sendInteractiveCtaUrl(
+                msg.phone,
+                summaryMsg,
+                `💳 Confirm & Pay ₹${subtotal}`,
+                payUrl,
+              );
+            } else {
+              await adapter.sendInteractiveButtons(
+                msg.phone,
+                summaryMsg,
+                [
+                  { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+                  { id: "add_more_items_btn", title: "➕ Add More Items" }
+                ],
+                "🛒 Order Summary",
+              );
+            }
+            return;
+          }
+        }
+
+        if (rawText === "order_type_delivery" || cleanText === "delivery") {
+          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+          const pending = await prisma.pendingOrder.findFirst({
+            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+          });
+
+          if (pending) {
+            await prisma.pendingOrder.update({
+              where: { id: pending.id },
+              data: { type: "delivery" }
+            });
+
+            const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+            const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+
+            // Collect saved addresses
+            const prevOrders = await prisma.order.findMany({
+              where: { customerId: cust.id, deliveryAddress: { not: null } },
+              orderBy: { createdAt: "desc" },
+              take: 10,
+            });
+            const addressesSet = new Set<string>();
+            if (cust.address) addressesSet.add(cust.address);
+            for (const o of prevOrders) {
+              if (o.deliveryAddress) addressesSet.add(o.deliveryAddress);
+            }
+            const addressList = Array.from(addressesSet);
+
+            if (addressList.length > 0) {
+              // Directly open interactive list — no intermediate step
+              const rows = addressList.map((addr, idx) => ({
+                id: `saved_addr_${idx}`,
+                title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
+                description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
+              }));
+              rows.push({
+                id: "pin_new_location_btn",
+                title: "🗺️ Pin on Map",
+                description: "Open Google Maps to pin a new address",
+              });
+              await adapter.sendInteractiveList(
+                msg.phone,
+                "📦 *Delivery Location*\n\nSelect a saved address or pin a new location on the map:",
+                "📍 Choose Address",
+                [{ title: "Saved Addresses", rows }],
+                "📦 Delivery Location",
+              );
+            } else {
+              // No saved addresses — directly open the map link
+              await adapter.sendInteractiveCtaUrl(
+                msg.phone,
+                "📦 *Delivery Location Required*\n\nTap below to open Google Maps and pin your delivery address 👇",
+                "🗺️ Pin Location on Map",
+                mapFormUrl,
+              );
+            }
+            return;
+          }
+        }
+
+        if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location") || cleanText.includes("enter new address")) {
+          const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+          const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+
+          await adapter.sendInteractiveCtaUrl(
+            msg.phone,
+            "📍 Tap the button below to open Google Maps & pin your delivery address 👇",
+            "🗺️ Pin Location on Map",
+            mapFormUrl,
+          );
           return;
         }
 
@@ -969,7 +1284,23 @@ export class BotSessionManager {
 
         const { reply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
         console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
-        await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
+
+        // If the reply is a cart-staged message, send it with Delivery/Pickup buttons instead of plain text
+        if (reply.includes("🛒 *Your Cart:*") && reply.includes("How would you like your order?")) {
+          await adapter.sendInteractiveButtons(
+            msg.phone,
+            reply,
+            [
+              { id: "order_type_delivery", title: "🛵 Delivery" },
+              { id: "order_type_pickup", title: "🛍️ Pickup" },
+              { id: "add_more_items_btn", title: "➕ Add More" },
+            ],
+            "🛒 Your Cart",
+            "Choose order type to continue",
+          );
+        } else {
+          await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
+        }
         if (placedOrderId) {
           // Send formatted receipt to customer + notify owner in parallel
           await Promise.all([

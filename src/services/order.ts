@@ -1,5 +1,7 @@
 import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
+import { getExactServiceDeliveryFee } from "./delivery-fee.js";
+import { DeliveryManager } from "./delivery/delivery-manager.js";
 
 export interface OrderLineInput {
   menuItemId: number;
@@ -57,7 +59,19 @@ export async function createOrder(params: {
   });
 
   const isDelivery = params.type === "delivery";
-  const deliveryFee = isDelivery ? (params.deliveryFee ?? 45) : 0;
+  let deliveryFee = 0;
+  if (isDelivery) {
+    if (params.deliveryFee !== undefined && params.deliveryFee !== null) {
+      deliveryFee = params.deliveryFee;
+    } else {
+      try {
+        const customer = await prisma.customer.findUnique({ where: { id: params.customerId } });
+        deliveryFee = await getExactServiceDeliveryFee(params.deliveryAddress || customer?.address);
+      } catch (e) {
+        deliveryFee = 45;
+      }
+    }
+  }
   const grandTotal = subtotal + deliveryFee;
 
   const order = await prisma.order.create({
@@ -91,8 +105,8 @@ export async function createOrder(params: {
               create: {
                 providerCode: "borzo",
                 deliveryFee: deliveryFee,
-                status: "SEARCHING_RIDER",
-                externalDeliveryId: `BRZ-${Date.now().toString().slice(-7)}`,
+                status: "PENDING_KITCHEN",
+                externalDeliveryId: "NOT_DISPATCHED_YET",
               },
             },
           }
@@ -159,7 +173,7 @@ export async function listOrders(_restaurantId?: number, status?: string) {
 }
 
 export async function setOrderStatus(id: number, status: string) {
-  const updated = await prisma.order.update({
+  let updated = await prisma.order.update({
     where: { id },
     data: { status },
     include: {
@@ -170,6 +184,28 @@ export async function setOrderStatus(id: number, status: string) {
       deliveryQuotes: true,
     },
   });
+
+  // When marked as ready for delivery orders -> auto-dispatch rider via algorithm!
+  if (status === "ready" && updated.type === "delivery") {
+    try {
+      console.log(`\n👩‍🍳 [Order Marked Ready] Auto-dispatching delivery rider for Order #${id}...`);
+      await DeliveryManager.dispatchOrder(id);
+      const refreshed = await prisma.order.findUnique({
+        where: { id },
+        include: {
+          items: true,
+          customer: true,
+          payment: true,
+          deliveryDispatch: true,
+          deliveryQuotes: true,
+        },
+      });
+      if (refreshed) updated = refreshed;
+    } catch (err) {
+      console.error(`[Delivery Dispatch Error for Order #${id}]:`, err);
+    }
+  }
+
   await notifyAdminOfEvent("order_updated", updated);
   return updated;
 }

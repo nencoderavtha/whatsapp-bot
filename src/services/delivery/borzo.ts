@@ -160,7 +160,7 @@ export class BorzoDeliveryService {
           }
         }
       } catch (err) {
-        console.error("[Borzo API Error, using fallback]", err);
+        console.error("[Borzo API Error]", err);
       }
     }
 

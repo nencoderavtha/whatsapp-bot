@@ -91,6 +91,7 @@ export class CloudAdapter implements WhatsAppAdapter {
     if (!resp.ok) {
       const err = await resp.text();
       console.error(`[Cloud ${this.phoneNumberId}] sendInteractive (${interactive.type}) failed (${resp.status}):`, err);
+      throw new Error(`Meta Cloud API sendInteractive (${interactive.type}) failed (${resp.status}): ${err}`);
     }
   }
 
@@ -279,7 +280,6 @@ export class CloudAdapter implements WhatsAppAdapter {
           const bodyLine = `*${c.title}*\n${c.desc ?? ""}`.slice(0, 160);
           return {
             card_index: idx,
-            type: "button",
             header: { type: "image", image: { link: c.imageUrl } },
             body: { text: bodyLine },
             action: {

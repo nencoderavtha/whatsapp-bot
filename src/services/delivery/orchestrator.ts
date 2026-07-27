@@ -1,18 +1,18 @@
 /**
  * Unified Delivery Orchestrator Service
- * 
- * Aggregates quotes and handles dispatch dispatches across:
+ *
+ * Aggregates quotes and handles dispatch across:
  *   - Shiprocket Quick (aggregating Rapido Parcel)
  *   - Shadowfax Hyperlocal
  *   - Borzo Express
- * 
- * Features parallel query fan-out, sorting by fee/ETA, and seamless failovers.
+ *
+ * Features: parallel fan-out, sort by fee/ETA, graceful failovers.
  */
 
 import { prisma } from "../../db.js";
-import { ShiprocketDeliveryService, ShiprocketQuoteResponse } from "./shiprocket.js";
-import { ShadowfaxDeliveryService, ShadowfaxQuoteResponse } from "./shadowfax.js";
-import { BorzoDeliveryService, BorzoQuoteResponse } from "./borzo.js";
+import { ShiprocketDeliveryService } from "./shiprocket.js";
+import { ShadowfaxDeliveryService, ShadowfaxQuoteParams } from "./shadowfax.js";
+import { BorzoDeliveryService } from "./borzo.js";
 
 export type DeliveryProviderCode = "rapido" | "shiprocket" | "shadowfax" | "borzo" | "porter";
 
@@ -24,6 +24,21 @@ export interface UnifiedQuote {
   available: boolean;
   vehicleType: string;
   underlyingCarrier?: string;
+}
+
+export interface QuoteParams {
+  pickupPincode: number;
+  deliveryPincode: number;
+  weightKg?: number;
+  /** Optional lat/lng for improved Shadowfax geo-accuracy */
+  pickupLat?: number | null;
+  pickupLng?: number | null;
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
+  pickupAddress?: string;
+  pickupPhone?: string;
+  deliveryAddress?: string;
+  deliveryPhone?: string;
 }
 
 export interface DispatchRequest {
@@ -48,23 +63,9 @@ export class DeliveryOrchestrator {
   private borzo = new BorzoDeliveryService();
 
   /**
-   * Fetch quotes from all active providers concurrently
+   * Fetch quotes from all active providers concurrently and return sorted results.
    */
-  async getAllQuotes(params: {
-    pickupPincode: number;
-    deliveryPincode: number;
-    weightKg?: number;
-    // Optional precise routing — Borzo prices on these when supplied, instead of
-    // geocoding a pincode to its centroid and under-quoting the real distance.
-    pickupAddress?: string;
-    pickupLat?: number | null;
-    pickupLng?: number | null;
-    pickupPhone?: string;
-    deliveryAddress?: string;
-    deliveryLat?: number | null;
-    deliveryLng?: number | null;
-    deliveryPhone?: string;
-  }): Promise<{
+  async getAllQuotes(params: QuoteParams): Promise<{
     ok: boolean;
     pickupPincode: number;
     deliveryPincode: number;
@@ -73,7 +74,7 @@ export class DeliveryOrchestrator {
     fastest: UnifiedQuote;
   }> {
     // Only ask providers that actually have credentials. Unconfigured providers
-    // used to return invented "simulation" fees marked available, and since the
+    // used to return invented simulation fees marked available, and since the
     // cheapest quote wins, a made-up number would routinely undercut the one
     // real quote and become the fee charged to the customer.
     const pending: Array<Promise<UnifiedQuote | null>> = [];
@@ -81,7 +82,17 @@ export class DeliveryOrchestrator {
       pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
     }
     if (process.env.SHADOWFAX_API_KEY) {
-      pending.push(this.shadowfax.getQuote(params) as Promise<UnifiedQuote | null>);
+      // Build Shadowfax-specific params including optional lat/lng
+      const sfxParams: ShadowfaxQuoteParams = {
+        pickupPincode: params.pickupPincode,
+        deliveryPincode: params.deliveryPincode,
+        weightKg: params.weightKg,
+        pickupLat: params.pickupLat ?? undefined,
+        pickupLng: params.pickupLng ?? undefined,
+        deliveryLat: params.deliveryLat ?? undefined,
+        deliveryLng: params.deliveryLng ?? undefined,
+      };
+      pending.push(this.shadowfax.getQuote(sfxParams) as Promise<UnifiedQuote | null>);
     }
     if (process.env.BORZO_API_TOKEN) {
       pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
@@ -101,9 +112,7 @@ export class DeliveryOrchestrator {
       throw new Error("No delivery partners available for the requested route.");
     }
 
-    // Sort by cheapest fee
     const sortedByFee = [...quotes].sort((a, b) => a.quotedFee - b.quotedFee);
-    // Sort by fastest ETA
     const sortedByEta = [...quotes].sort((a, b) => a.estimatedMinutes - b.estimatedMinutes);
 
     return {
@@ -117,19 +126,19 @@ export class DeliveryOrchestrator {
   }
 
   /**
-   * Dispatch delivery order to target provider
+   * Dispatch delivery order to the selected provider.
    */
   async dispatchOrder(request: DispatchRequest) {
     switch (request.providerCode) {
-      case "shiprocket":
-        return this.shiprocket.dispatchOrder(request);
       case "shadowfax":
         return this.shadowfax.dispatchOrder(request);
       case "borzo":
         return this.borzo.dispatchOrder(request);
+      case "shiprocket":
+        return this.shiprocket.dispatchOrder(request);
       case "rapido":
-        // Rapido dispatch via Shiprocket Quick / Direct Partner route
-        return this.shiprocket.dispatchOrder({ ...request });
+        // Rapido routed via Shiprocket Quick until direct Rapido partner API is live
+        return this.shiprocket.dispatchOrder(request);
       default:
         return this.shiprocket.dispatchOrder(request);
     }
