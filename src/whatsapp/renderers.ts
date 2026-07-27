@@ -20,6 +20,7 @@ export enum MessageType {
   DELIVERY_QUOTE = "DELIVERY_QUOTE",
   PAYMENT_LINK = "PAYMENT_LINK",
   PAYMENT_LINK_VOIDED = "PAYMENT_LINK_VOIDED",
+  PAYMENT_FAILED = "PAYMENT_FAILED",
   FAQ_REPLY = "FAQ_REPLY",
   ERROR = "ERROR",
 }
@@ -203,6 +204,25 @@ export function renderPaymentLinkVoided(): Rendered {
   return {
     kind: "text",
     body: "Cart change chesaru kabatti mundu pampina payment link cancel ayyindi andi 🙏 Kotha link ippude pampistham.",
+  };
+}
+
+/**
+ * Sent when Razorpay reports the link cancelled or expired.
+ *
+ * Silence here is what stranded customers: their link stopped working, the cart
+ * still existed, and nothing in the chat said so or offered a way forward. The
+ * cart is untouched, so the button retries payment on the same order.
+ */
+export function renderPaymentFailed(): Rendered {
+  return {
+    kind: "buttons",
+    header: "💳 Payment Incomplete",
+    body: "Payment complete kaledu andi 🙏 Mee cart intact ga undi — malli try cheyyochu.",
+    buttons: [
+      { id: "confirm_order_btn", title: "🔁 Retry Payment" },
+      { id: "add_more_items_btn", title: "✏️ Edit Order" },
+    ],
   };
 }
 

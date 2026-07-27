@@ -53,3 +53,45 @@ export async function recentMessages(customerId: number, limit = 20) {
   });
   return rows.reverse();
 }
+
+/**
+ * A gap this long means the customer walked away and came back. What they say
+ * next starts a new conversation, not a continuation of the old one.
+ */
+const IDLE_GAP_MS = 15 * 60 * 1000;
+
+/**
+ * Recent messages, cut at the last long silence.
+ *
+ * The model needs a conversation that starts somewhere sensible — feeding it
+ * yesterday's order makes it answer about dishes nobody mentioned today. The old
+ * way to get that was to `deleteMany` the customer's messages whenever the
+ * conversation looked stale, which threw away the record permanently: the CRM,
+ * the admin live-chat view and every future analysis lost the history, and a
+ * misfire took the live cart with it.
+ *
+ * Trimming the window instead gives the model the same fresh context and keeps
+ * the rows.
+ */
+export async function conversationWindow(customerId: number, limit = 20) {
+  return sliceAtIdleGap(await recentMessages(customerId, limit));
+}
+
+/**
+ * Drop everything before the most recent long silence.
+ *
+ * Split out from the query so the cut itself is testable without a database.
+ * `rows` must be oldest-first, as `recentMessages` returns them.
+ */
+export function sliceAtIdleGap<T extends { createdAt: Date }>(
+  rows: T[],
+  idleGapMs: number = IDLE_GAP_MS,
+): T[] {
+  // Walk back from the newest message and stop at the first gap. Anything older
+  // belongs to a previous visit.
+  for (let i = rows.length - 1; i > 0; i--) {
+    const gap = rows[i].createdAt.getTime() - rows[i - 1].createdAt.getTime();
+    if (gap > idleGapMs) return rows.slice(i);
+  }
+  return rows;
+}

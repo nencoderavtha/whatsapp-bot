@@ -1,6 +1,7 @@
 import { prisma } from "../db.js";
 import { menuAsText } from "../services/menu.js";
 import { getCached } from "../services/cache.js";
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 
 function isLegacyTemplate(content: string): boolean {
   return /\{\{\s*(menu|restaurantName|restaurantCity|customerGreeting)\s*\}\}/.test(content);
@@ -8,14 +9,14 @@ function isLegacyTemplate(content: string): boolean {
 
 export async function buildSystemPrompt(
   customerName: string | undefined,
-  restaurantId = 1,
+  restaurantId = DEFAULT_RESTAURANT_ID,
   isFirstMessage = false,
   customerId?: number,
 ): Promise<string> {
   // 1. Cached Static System Prompt (Identity, Scope, Voice, Menu, Formatting, Notes)
   const staticPrompt = await getCached(restaurantId, "staticSystemPrompt", async () => {
     const [botConfig, menuText, notesRow] = await Promise.all([
-      prisma.restaurantConfig.findFirst({ where: { id: 1 } }),
+      prisma.restaurantConfig.findFirst({ where: { id: DEFAULT_RESTAURANT_ID } }),
       menuAsText(restaurantId),
       prisma.promptTemplate.findFirst({ where: { id: 1 } }),
     ]);

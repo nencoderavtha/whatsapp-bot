@@ -15,6 +15,7 @@
 
 import { prisma } from "../db.js";
 import { DeliveryOrchestrator } from "./delivery/orchestrator.js";
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 
 export class UnserviceableLocationError extends Error {
   constructor(message: string) {
@@ -61,7 +62,7 @@ export async function getExactServiceDeliveryFee(address?: string | null): Promi
   const cached = feeCache.get(drop);
   if (cached && cached.expires > Date.now()) return cached.fee;
 
-  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   const ownerPhone = (restaurant?.ownerNumbers ?? "")
     .split(",")
     .map((s) => s.trim())

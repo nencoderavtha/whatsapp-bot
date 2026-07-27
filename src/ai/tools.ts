@@ -11,6 +11,7 @@ import { getCached } from "../services/cache.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 
 export interface PendingCart {
   lines: { menuItemId: number; variantId?: number; qty: number; note?: string }[];
@@ -25,7 +26,7 @@ export interface PendingCart {
 
 const CART_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-export async function getEnabledTools(restaurantId = 1): Promise<ChatCompletionTool[]> {
+export async function getEnabledTools(restaurantId = DEFAULT_RESTAURANT_ID): Promise<ChatCompletionTool[]> {
   return getCached(restaurantId, "enabledTools", async () => {
     const defs = await prisma.toolDefinition.findMany({
       where: { isEnabled: true },
@@ -129,7 +130,7 @@ async function handleGeneratePaymentLink(customerId: number, restaurantId: numbe
   }
 
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
 
   const link = await createPaymentLink({
     restaurantId,
@@ -327,7 +328,7 @@ export async function runTool(
         });
         const stageNow = stagedRow?.stage ?? "BUILDING_CART";
 
-        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
         const razorpayReady = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
         const requiresPayment = true;
 
@@ -411,7 +412,7 @@ export async function runTool(
           };
         }
 
-        const rpRestaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+        const rpRestaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
         const razorpayConfigured = !!(rpRestaurant?.razorpayKeyId && rpRestaurant.razorpayKeySecret);
         if (razorpayConfigured) {
           if (cart.confirmedOrderId) {
@@ -463,7 +464,7 @@ export async function runTool(
           };
         }
 
-        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
         const razorpayConfigured = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
 
         // When Razorpay is configured, order confirmation is handled by the
@@ -552,7 +553,7 @@ export async function runTool(
       }
 
       case "check_order_status": {
-        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
         const restaurantName = restaurant?.restaurantName ?? "our restaurant";
 
         const order = args.orderId

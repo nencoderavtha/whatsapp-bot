@@ -31,6 +31,7 @@ import { send, applyCartEdit, isLocked, clearFinishedCart } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 import { getExactServiceDeliveryFee, UnserviceableLocationError } from "../services/delivery-fee.js";
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 
 
 
@@ -288,7 +289,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
 
 async function notifyOwner(adapter: CloudAdapter, _restaurantId: number, orderId: number) {
   const [cfg, order] = await Promise.all([
-    prisma.restaurantConfig.findUnique({ where: { id: 1 } }),
+    prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } }),
     getOrder(orderId),
   ]);
   if (!order) return;
@@ -311,7 +312,7 @@ async function notifyOwnerOfHandoff(
   customer: { name?: string | null; phone: string },
   lastMessage: string,
 ) {
-  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const text = ownerHandoffMsg(customer, lastMessage);
   for (const num of ownerNumbers) {
@@ -327,7 +328,7 @@ async function sendOrderReceipt(adapter: CloudAdapter, phone: string, _restauran
   try {
     const [order, cfg] = await Promise.all([
       getOrder(orderId),
-      prisma.restaurantConfig.findUnique({ where: { id: 1 } }),
+      prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } }),
     ]);
     if (!order || !cfg) return;
     await adapter.sendText(phone, orderConfirmationMsg(order, cfg.restaurantName));
@@ -446,7 +447,7 @@ async function notifyOwnerOfPaymentIssue(
   phone: string,
   amount: number,
 ) {
-  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const text = `⚠️ *Payment link failed!*\n\n👤 Customer: ${phone}\n💰 Amount: ₹${amount}\n\nRazorpay did not return a link. Please contact the customer.`;
   for (const num of ownerNumbers) {
@@ -510,7 +511,7 @@ async function proceedToBilling(
   // Send the pinned address and coordinates, not just a pincode — Borzo geocodes
   // whatever it is given, and a bare pincode resolves to the area centroid, which
   // under-quotes the real route and leaves the restaurant covering the shortfall.
-  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   const customerRow = await prisma.customer.findUnique({ where: { id: customerId } });
   const ownerPhone = (restaurant?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean)[0];
 
@@ -559,7 +560,7 @@ async function proceedToBilling(
     renderDeliveryQuote({ items: itemLabels, subtotal, deliveryFee, address }),
   );
 
-  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
 
   let payUrl: string | null = null;
   if (cfg?.razorpayEnabled && cfg.razorpayKeyId && cfg.razorpayKeySecret) {
@@ -952,7 +953,7 @@ export class BotSessionManager {
                 return;
               }
 
-              const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+              const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
               const grandTotal = subtotal + deliveryFee;
               const summaryMsg = orderStagedTemplate(labels, subtotal, "delivery", pending?.note ?? undefined, deliveryFee, selectedAddr);
               let payUrl: string | null = null;
@@ -1057,7 +1058,7 @@ export class BotSessionManager {
               subtotal += p * l.qty;
             }
 
-            const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+            const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
             const summaryMsg = orderStagedTemplate(labels, subtotal, "pickup", pending?.note ?? undefined);
 
             let payUrl: string | null = null;

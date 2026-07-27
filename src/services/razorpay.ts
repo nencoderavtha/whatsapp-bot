@@ -1,6 +1,7 @@
 import Razorpay from "razorpay";
 import { createHmac } from "node:crypto";
 import { prisma } from "../db.js";
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 
 function rzpError(e: any): string {
   return (
@@ -13,7 +14,7 @@ function rzpError(e: any): string {
 }
 
 async function getClient(_restaurantId?: number): Promise<Razorpay | null> {
-  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   if (!cfg?.razorpayKeyId || !cfg.razorpayKeySecret) {
     console.warn("[Razorpay] Keys not configured in RestaurantConfig");
     return null;
@@ -65,7 +66,7 @@ export async function createPaymentLink(params: {
       notify: { sms: false, email: false },
       reminder_enable: false,
       notes: {
-        restaurantId: String(params.restaurantId ?? 1),
+        restaurantId: String(params.restaurantId ?? DEFAULT_RESTAURANT_ID),
         customerId: String(params.customerId),
       },
     } as any);
@@ -94,7 +95,7 @@ export async function verifyWebhookSignature(
   signature: string,
   _restaurantId?: number,
 ): Promise<boolean> {
-  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   if (!cfg?.razorpayWebhookSecret) {
     // Fail closed. This used to return true, so with no secret configured ANY
     // unsigned POST to /webhook/razorpay could mark an order paid — fine behind an

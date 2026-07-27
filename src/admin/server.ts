@@ -26,7 +26,9 @@ import {
   meHandler,
 } from "./auth.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
-import { cartSummaryText } from "../whatsapp/renderers.js";
+import { cartSummaryText, renderPaymentFailed } from "../whatsapp/renderers.js";
+import { send } from "../whatsapp/stage.js";
+import { DEFAULT_RESTAURANT_ID, resolveRestaurantId } from "../tenancy.js";
 import { notifyAdminOfEvent, eventBus } from "../services/events.js";
 import { logActivity } from "../services/activity.js";
 import { createPaymentLink, verifyWebhookSignature } from "../services/razorpay.js";
@@ -145,9 +147,9 @@ export function buildAdminApp() {
           if (["PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(mappedStatus)) {
             const order = await getOrder(existing.orderId);
             if (order && order.customer?.phone) {
-              const session = botSessionManager.getSession(1);
+              const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
               if (session) {
-                const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+                const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
                 const msgText = deliveryStatusMsg(
                   existing.orderId,
                   mappedStatus,
@@ -197,13 +199,19 @@ export function buildAdminApp() {
         return;
       }
 
-      if (event.event !== "payment_link.paid") {
+      // A link that is cancelled or expires leaves the cart at AWAITING_PAYMENT,
+      // where it refuses edits and offers no way to pay — the customer is stuck
+      // holding a dead link until the two-hour TTL quietly bins their order.
+      const isFailure =
+        event.event === "payment_link.cancelled" || event.event === "payment_link.expired";
+
+      if (event.event !== "payment_link.paid" && !isFailure) {
         res.json({ ok: true });
         return;
       }
 
       const notes = event.payload?.payment_link?.entity?.notes ?? {};
-      const restaurantId = parseInt(notes.restaurantId ?? "1");
+      const restaurantId = resolveRestaurantId(notes.restaurantId);
       const customerId   = parseInt(notes.customerId   ?? "0");
       if (!customerId) {
         res.status(400).json({ error: "missing customerId in notes" });
@@ -223,6 +231,35 @@ export function buildAdminApp() {
       }
 
       if (pendingRow.confirmedOrderId) {
+        res.json({ ok: true });
+        return;
+      }
+
+      if (isFailure) {
+        // Issuing a new link cancels the previous one, which fires this same
+        // event for the superseded link. Acting on that would mark a live
+        // payment failed the instant a fresh link was sent, so only the link the
+        // cart is actually waiting on counts.
+        const linkId = event.payload?.payment_link?.entity?.id;
+        const isCurrentLink = Boolean(linkId) && linkId === pendingRow.razorpayLinkId;
+
+        if (isCurrentLink && pendingRow.stage === "AWAITING_PAYMENT") {
+          await prisma.pendingOrder.update({
+            where: { customerId },
+            data: { stage: "PAYMENT_FAILED", razorpayLinkId: null, razorpayLinkUrl: null },
+          });
+
+          const failedCustomer = await prisma.customer.findUnique({ where: { id: customerId } });
+          const session = botSessionManager.getSession(restaurantId);
+          if (failedCustomer && session) {
+            try {
+              await send(session, failedCustomer.phone, renderPaymentFailed());
+            } catch (e) {
+              console.error("[Razorpay] Could not tell the customer payment failed:", e);
+            }
+          }
+        }
+
         res.json({ ok: true });
         return;
       }
@@ -263,7 +300,7 @@ export function buildAdminApp() {
 
       const [customer, cfg] = await Promise.all([
         prisma.customer.findUnique({ where: { id: customerId } }),
-        prisma.restaurantConfig.findUnique({ where: { id: 1 } }),
+        prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } }),
       ]);
       const session = botSessionManager.getSession(restaurantId);
       if (customer && session) {
@@ -297,7 +334,7 @@ export function buildAdminApp() {
 
   app.get("/public/api/menu/:restaurantId", asyncRoute(async (_req, res) => {
     const restaurant = await prisma.restaurantConfig.findUnique({
-      where: { id: 1 },
+      where: { id: DEFAULT_RESTAURANT_ID },
       select: { id: true, restaurantName: true, restaurantCity: true, whatsappPhone: true },
     });
     if (!restaurant) {
@@ -368,7 +405,7 @@ export function buildAdminApp() {
       },
     });
 
-    const session = botSessionManager.getSession(1);
+    const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
     if (session) {
       const promptText = `I selected some items from the web menu: ${validLines.map(v => `${v.qty}x ${byId.get(v.menuItemId)?.name}`).join(", ")}`;
       await logMessage(customer.id, "user", promptText);
@@ -470,7 +507,7 @@ export function buildAdminApp() {
         subtotal += p * l.qty;
       }
     }
-    const session = botSessionManager.getSession(1);
+    const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
     let deliveryFee = 45;
     try {
       deliveryFee = await getExactServiceDeliveryFee(address);
@@ -490,14 +527,14 @@ export function buildAdminApp() {
       return;
     }
 
-    const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+    const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
     const grandTotal = subtotal + deliveryFee;
     const summaryMsg = orderStagedTemplate(labels, subtotal, "delivery", pending?.note ?? undefined, deliveryFee, address);
 
     let payUrl: string | null = null;
     if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
       const payRes = await createPaymentLink({
-        restaurantId: 1,
+        restaurantId: DEFAULT_RESTAURANT_ID,
         customerId: customer.id,
         amount: grandTotal,
         customerPhone: phone,
@@ -568,7 +605,7 @@ export function buildAdminApp() {
 
           if (!text && msg.type === "audio" && msg.audio?.id) {
             try {
-              const cfg = await prisma.restaurantConfig.findFirst({ where: { id: 1 } });
+              const cfg = await prisma.restaurantConfig.findFirst({ where: { id: DEFAULT_RESTAURANT_ID } });
               const token = cfg?.cloudToken || config.cloud.token;
               const { buffer, mimeType } = await fetchMetaMedia(msg.audio.id, token);
               text = await transcribeAudio(buffer, mimeType);
@@ -702,9 +739,9 @@ export function buildAdminApp() {
       });
     }
 
-    const session = botSessionManager.getSession(1);
+    const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
     if (session) {
-      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
       const trackingUrl = dispatch.externalDeliveryId ? `https://shiprocket.co/tracking/${dispatch.externalDeliveryId.replace("SR-", "")}` : null;
       const notifMsg = deliveryStatusMsg(
         dispatch.orderId,
@@ -743,7 +780,7 @@ export function buildAdminApp() {
   });
 
   founder.get("/restaurants/:id", async (_req, res) => {
-    const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+    const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
     if (!cfg) { res.status(404).json({ error: "not found" }); return; }
     res.json(cfg);
   });
@@ -760,7 +797,7 @@ export function buildAdminApp() {
     for (const key of allowed) {
       if (req.body[key] !== undefined) data[key] = req.body[key];
     }
-    const cfg = await prisma.restaurantConfig.update({ where: { id: 1 }, data });
+    const cfg = await prisma.restaurantConfig.update({ where: { id: DEFAULT_RESTAURANT_ID }, data });
     res.json(cfg);
   });
 
@@ -780,7 +817,7 @@ export function buildAdminApp() {
       const result = existing
         ? await prisma.promptTemplate.update({ where: { id: existing.id }, data: { content } })
         : await prisma.promptTemplate.create({ data: { content } });
-      await notifyAdminOfEvent("config_updated", { restaurantId: 1 });
+      await notifyAdminOfEvent("config_updated", { restaurantId: DEFAULT_RESTAURANT_ID });
       res.json(result);
     } catch (e: any) {
       console.error("[founder] prompt save failed:", e);
@@ -950,10 +987,10 @@ export function buildAdminApp() {
     const { status } = req.body;
     if (["preparing", "ready", "delivered", "cancelled"].includes(status)) {
       try {
-        const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+        const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
         const msg = orderStatusMsg(order, status, cfg?.restaurantName ?? "");
         if (msg) {
-          const session = botSessionManager.getSession(1);
+          const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
           if (session) await session.sendText(order.customer.phone, msg);
         }
       } catch (e) {
@@ -978,9 +1015,9 @@ export function buildAdminApp() {
         // in the system will chase it.
         console.error(`[Auto-Dispatch Failed] Order #${orderId}:`, e?.message ?? e);
         try {
-          const cfg = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+          const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
           const owners = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-          const session = botSessionManager.getSession(1);
+          const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
           const text = `⚠️ *Rider booking failed — Order #${orderId}*\n\n${e?.message ?? "Unknown error"}\n\nFood is ready but no courier is booked. Use *Call Rider* in the dashboard to retry.`;
           for (const num of owners) {
             if (session) await session.sendText(num, text);
@@ -1021,7 +1058,7 @@ export function buildAdminApp() {
   api.put("/bot/pause", async (req, res) => {
     const { paused, message } = req.body;
     const cfg = await prisma.restaurantConfig.update({
-      where: { id: 1 },
+      where: { id: DEFAULT_RESTAURANT_ID },
       data: {
         botPaused: !!paused,
         ...(message !== undefined ? { pauseMessage: message || null } : {}),
@@ -1031,7 +1068,7 @@ export function buildAdminApp() {
   });
 
   api.get("/config", async (_req, res) => {
-    res.json(await prisma.restaurantConfig.findUnique({ where: { id: 1 } }) ?? {});
+    res.json(await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } }) ?? {});
   });
 
   api.put("/config", async (req, res) => {
@@ -1062,8 +1099,8 @@ export function buildAdminApp() {
     if (cloudPhoneNumberId !== undefined) data.cloudPhoneNumberId = cloudPhoneNumberId || null;
     if (cloudToken !== undefined && cloudToken) data.cloudToken = cloudToken;
 
-    const updated = await prisma.restaurantConfig.update({ where: { id: 1 }, data });
-    await notifyAdminOfEvent("config_updated", { restaurantId: 1 });
+    const updated = await prisma.restaurantConfig.update({ where: { id: DEFAULT_RESTAURANT_ID }, data });
+    await notifyAdminOfEvent("config_updated", { restaurantId: DEFAULT_RESTAURANT_ID });
     res.json(updated);
   });
 
@@ -1077,7 +1114,7 @@ export function buildAdminApp() {
     const result = existing
       ? await prisma.promptTemplate.update({ where: { id: existing.id }, data: { content } })
       : await prisma.promptTemplate.create({ data: { content } });
-    await notifyAdminOfEvent("config_updated", { restaurantId: 1 });
+    await notifyAdminOfEvent("config_updated", { restaurantId: DEFAULT_RESTAURANT_ID });
     res.json(result);
   });
 
@@ -1095,7 +1132,7 @@ export function buildAdminApp() {
     if (description !== undefined) data.description = description;
     if (parametersSchema !== undefined) data.parametersSchema = parametersSchema;
     const result = await prisma.toolDefinition.update({ where: { id }, data });
-    await notifyAdminOfEvent("config_updated", { restaurantId: 1 });
+    await notifyAdminOfEvent("config_updated", { restaurantId: DEFAULT_RESTAURANT_ID });
     res.json(result);
   });
 

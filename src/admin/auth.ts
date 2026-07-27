@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 
 declare global {
   namespace Express {
@@ -98,7 +99,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  let restaurantId = 1;
+  let restaurantId = DEFAULT_RESTAURANT_ID;
   let isMaster = false;
 
   try {
@@ -138,8 +139,8 @@ export function logoutHandler(_req: Request, res: Response): void {
 
 export async function meHandler(req: Request, res: Response): Promise<void> {
   try {
-    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
-    res.json({ restaurantId: 1, restaurantName: restaurant?.restaurantName });
+    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
+    res.json({ restaurantId: DEFAULT_RESTAURANT_ID, restaurantName: restaurant?.restaurantName });
   } catch (e) {
     console.error("[auth] me DB error:", e);
     res.status(503).json({ error: "Service temporarily unavailable" });
@@ -154,7 +155,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   }
   try {
     const payload = verifyToken(token);
-    req.restaurantId = payload.restaurantId ?? 1;
+    req.restaurantId = payload.restaurantId ?? DEFAULT_RESTAURANT_ID;
     next();
   } catch {
     res.clearCookie(COOKIE);

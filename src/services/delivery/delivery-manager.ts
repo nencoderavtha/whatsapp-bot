@@ -9,6 +9,7 @@
 import { prisma } from "../../db.js";
 import { DeliveryOrchestrator, DeliveryProviderCode } from "./orchestrator.js";
 import { notifyAdminOfEvent } from "../events.js";
+import { DEFAULT_RESTAURANT_ID } from "../../tenancy.js";
 
 const orchestrator = new DeliveryOrchestrator();
 
@@ -108,7 +109,7 @@ export class DeliveryManager {
     // Step 2: Trigger dispatch via selected provider
     console.log(`🚀 [Dispatching Rider] Booking rider on ${selectedProviderCode.toUpperCase()} API...`);
 
-    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: 1 } });
+    const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
     const ownerPhone = (restaurant?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean)[0];
     const PLACEHOLDER_ADDRESS = "Plot 12, Main Road, Gachibowli, Hyderabad";
     const pickupAddress = restaurant?.restaurantAddress && restaurant.restaurantAddress !== PLACEHOLDER_ADDRESS

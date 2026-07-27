@@ -38,6 +38,10 @@ export function stageAfterCartEdit(current: OrderStage): OrderStage {
     case "ADDRESS_SELECTED":
     case "QUOTE_GENERATED":
     case "AWAITING_PAYMENT":
+    // A failed payment does not cost the customer their address. Editing the
+    // cart after one is the ordinary recovery path — they change something and
+    // try again — so it rewinds exactly like an edit during payment.
+    case "PAYMENT_FAILED":
       // Address survives; the quote and any payment link do not.
       return "ADDRESS_SELECTED";
     default:
@@ -45,9 +49,17 @@ export function stageAfterCartEdit(current: OrderStage): OrderStage {
   }
 }
 
-/** Stages where the cart is settled and must not be edited. */
+/**
+ * Stages a cart cannot be edited out of.
+ *
+ * Two different reasons land here: the order is paid for and placed, or the cart
+ * was abandoned. Neither is a live cart, so both are retired by
+ * `clearFinishedCart` before the customer's next order rather than edited.
+ *
+ * `PAYMENT_FAILED` is deliberately absent — that cart is very much still live.
+ */
 export function isLocked(stage: OrderStage): boolean {
-  return stage === "PAYMENT_RECEIVED" || stage === "ORDER_PLACED";
+  return stage === "PAYMENT_RECEIVED" || stage === "ORDER_PLACED" || stage === "CANCELLED";
 }
 
 /**

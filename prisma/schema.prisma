@@ -231,6 +231,12 @@ enum OrderStage {
   AWAITING_PAYMENT
   PAYMENT_RECEIVED
   ORDER_PLACED
+  /// Razorpay reported the link cancelled or the payment failed. The cart is
+  /// intact and re-payable — without this the row sat at AWAITING_PAYMENT until
+  /// the two-hour TTL, refusing edits the whole time because it looked live.
+  PAYMENT_FAILED
+  /// The customer abandoned this cart. Terminal, and cleared on the next order.
+  CANCELLED
 }
 
 model PendingOrder {
@@ -484,4 +490,42 @@ model ToolDefinition {
   isEnabled        Boolean  @default(true)
   sortOrder        Int      @default(0)
   updatedAt        DateTime @updatedAt
+}
+
+// ============================================================================
+// 12. CROSS-INSTANCE TURN SERIALIZATION
+// ============================================================================
+
+/// One row per conversation currently being answered, so only one turn runs for
+/// a customer at a time.
+///
+/// This used to be an in-process Map, which held only as long as the bot ran on
+/// exactly one instance. On a second Cloud Run instance two messages from the
+/// same customer would be answered concurrently — two agent loops mutating the
+/// same cart, and two payment links for one order.
+///
+/// The lock is a lease, not a latch: `expiresAt` lets the next message take over
+/// if the holder crashed mid-turn, so a dead instance cannot wedge a customer
+/// out of the bot permanently.
+model ConversationLock {
+  key       String   @id // `${restaurantId}:${phone}`
+  holder    String // Unique per acquisition, so a stale holder cannot release a lease it lost.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+/// Messages that arrived while another instance was mid-turn for the customer.
+///
+/// The lock holder drains these when its turn ends and answers everything as one
+/// turn, which is what makes burst-typed orders ("2 biryani" / "1 parotta" /
+/// "deliver home") read as a single order rather than three.
+model QueuedMessage {
+  id        Int      @id @default(autoincrement())
+  lockKey   String
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([lockKey, createdAt])
 }

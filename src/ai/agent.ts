@@ -1,34 +1,20 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 import { buildSystemPrompt } from "./prompt.js";
-import { getOrCreateCustomer, logMessage, recentMessages } from "../services/customer.js";
+import { getOrCreateCustomer, logMessage, conversationWindow } from "../services/customer.js";
 import { getEnabledTools, runTool } from "./tools.js";
 import { completeChat } from "./llm.js";
 import { prisma } from "../db.js";
 import { fallbackTemplate } from "./templates.js";
 import { logActivity } from "../services/activity.js";
+import { acquire, enqueue, drain } from "../services/conversation-lock.js";
+import { clearFinishedCart } from "../whatsapp/stage.js";
 
 export interface AgentResult {
   reply: string;
   placedOrderId?: number;
   humanHandoffRequested?: boolean;
   mediaReply?: { imageUrl: string; caption?: string };
-}
-
-const customerLocks = new Map<string, Promise<void>>();
-
-function withCustomerLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = customerLocks.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const myLock = new Promise<void>((res) => { release = res; });
-  customerLocks.set(key, myLock);
-
-  return prev
-    .then(() => fn())
-    .finally(() => {
-      release();
-      if (customerLocks.get(key) === myLock) customerLocks.delete(key);
-    });
 }
 
 function looksLikeToolGarbage(s: string): boolean {
@@ -84,41 +70,23 @@ async function processIncoming(
   // address loop formed. Those ids are handled deterministically before the
   // agent is reached; anything still arriving here is genuine free text.
 
-  const checkHistory = await recentMessages(customer.id, 5);
-  const isGreeting = ["hi", "hello", "hey", "namaste", "start", "menu", "yo", "hola", "namaskar", "namaskaram"].includes(userText.trim().toLowerCase());
-  
-  let shouldReset = false;
-  if (checkHistory.length > 0) {
-    const lastMsg = checkHistory[checkHistory.length - 1];
-    const diffMs = new Date().getTime() - new Date(lastMsg.createdAt).getTime();
-    const isOld = diffMs > 15 * 60 * 1000;
-
-    const hasConfirmedInHistory = checkHistory.some(m => {
-      if (m.role !== "assistant") return false;
-      const content = m.content.toLowerCase();
-      return (
-        content.includes("order confirmed") ||
-        content.includes("confirmed!") ||
-        content.includes("being prepared") ||
-        content.includes("ready in")
-      );
-    });
-
-    if (isGreeting || isOld || hasConfirmedInHistory) {
-      shouldReset = true;
-    }
-  }
-
-  if (shouldReset) {
-    await prisma.$transaction([
-      prisma.message.deleteMany({ where: { customerId: customer.id } }),
-      prisma.pendingOrder.deleteMany({ where: { customerId: customer.id } }),
-    ]);
-  }
+  // Retire a cart that is genuinely finished — settled, or past its TTL. The
+  // decision comes from the stage on the row, not from what the conversation
+  // looks like.
+  //
+  // What used to be here read the last five messages and wiped every message
+  // *and* the pending cart if the customer said "menu", if fifteen minutes had
+  // passed, or if any assistant reply contained "order confirmed" / "ready in".
+  // All three misfire on a live order: the bot says "ready in 30 mins" while a
+  // cart is still being built, and the cart — address, quote, payment link —
+  // vanishes mid-order. That is the workflow restart this platform is not
+  // allowed to do. Staleness is now handled where it belongs, by trimming the
+  // model's context window rather than deleting the customer's history.
+  await clearFinishedCart(customer.id);
 
   await logMessage(customer.id, "user", userText);
 
-  const history = await recentMessages(customer.id, 6);
+  const history = await conversationWindow(customer.id, 6);
   const isFirstMessage = history.length === 1;
 
   const [system, tools] = await Promise.all([
@@ -205,15 +173,6 @@ async function processIncoming(
 }
 
 /**
- * Messages that arrived for a customer while their previous turn was still
- * being answered. Keyed the same way as the lock.
- */
-const pendingFollowUps = new Map<string, string[]>();
-
-/** Turns that have been superseded by a newer message and must not reply. */
-const supersededTurns = new Set<string>();
-
-/**
  * Coalesce messages a customer sends in quick succession into one turn.
  *
  * People type an order across several lines — "2 biryani", "1 parotta",
@@ -226,6 +185,11 @@ const supersededTurns = new Set<string>();
  * single message waits exactly as long as before — deliberately, since a blanket
  * debounce would have roughly doubled the median response time to fix a case
  * that only affects burst typers.
+ *
+ * The lock and the queue live in Postgres rather than in this module. Both used
+ * to be process-local, which quietly stopped serializing anything the moment
+ * Cloud Run ran a second instance: two messages from one customer would land on
+ * two instances, both see no lock, and run two agent loops over the same cart.
  */
 export async function handleIncoming(
   phone: string,
@@ -234,36 +198,38 @@ export async function handleIncoming(
 ): Promise<AgentResult> {
   const lockKey = `${restaurantId}:${phone}`;
 
-  // A turn is already running for this customer: hand them our text and let
-  // that turn deliver the combined answer, so this message produces no reply
-  // of its own.
-  if (customerLocks.has(lockKey)) {
-    const queued = pendingFollowUps.get(lockKey) ?? [];
-    queued.push(userText);
-    pendingFollowUps.set(lockKey, queued);
-    supersededTurns.add(lockKey);
+  const lease = await acquire(lockKey);
+
+  // A turn is already running for this customer, here or on another instance.
+  // Hand our text to whoever holds the lease and stay silent — that turn
+  // delivers one answer covering this message too.
+  if (!lease) {
+    await enqueue(lockKey, userText);
     console.log(`[agent] Coalescing follow-up for ${lockKey}: "${userText.slice(0, 60)}"`);
     return { reply: "" };
   }
 
-  return withCustomerLock(lockKey, async () => {
-    let text = userText;
+  try {
+    // Anything already queued arrived either while a previous holder was working
+    // or while it was dying. Either way nobody has answered it, so it is part of
+    // this turn.
+    const stranded = await drain(lockKey);
+    if (stranded.length) {
+      console.log(`[agent] Picked up ${stranded.length} unanswered message(s) for ${lockKey}`);
+    }
+    let text = [...stranded, userText].join("\n");
 
     for (let round = 0; round < 3; round++) {
-      supersededTurns.delete(lockKey);
       const turnStart = new Date();
       const result = await processIncoming(phone, text, restaurantId);
 
-      const followUps = pendingFollowUps.get(lockKey);
-      if (!supersededTurns.has(lockKey) || !followUps?.length) {
-        return result;
-      }
+      const followUps = await drain(lockKey);
+      if (!followUps.length) return result;
 
       // Newer messages landed mid-turn. Drop this reply and answer once over
       // everything the customer actually said. The superseded exchange is
       // removed from history too — otherwise the re-run reads a reply that was
       // never sent, and the combined text would appear twice.
-      pendingFollowUps.delete(lockKey);
       try {
         const cust = await getOrCreateCustomer(phone, restaurantId);
         await prisma.message.deleteMany({
@@ -279,8 +245,8 @@ export async function handleIncoming(
 
     // Ran out of rounds — someone is typing faster than we can answer. Reply to
     // what we have rather than looping.
-    pendingFollowUps.delete(lockKey);
-    supersededTurns.delete(lockKey);
-    return processIncoming(phone, text, restaurantId);
-  });
+    return await processIncoming(phone, text, restaurantId);
+  } finally {
+    await lease.release();
+  }
 }
