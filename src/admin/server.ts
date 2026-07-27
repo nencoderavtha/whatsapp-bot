@@ -434,17 +434,26 @@ export function buildAdminApp() {
     if (pending) {
       await prisma.pendingOrder.update({
         where: { id: pending.id },
-        data: { type: "delivery_awaiting_details" },
+        // "delivery_awaiting_details" is not a type checkout or order creation
+        // recognises — both expect "delivery" — so it left the cart in a state
+        // nothing downstream could bill.
+        data: { type: "delivery", stage: "ADDRESS_SELECTED" },
       });
     }
 
-    // After the customer pins their location, ask for flat/door number and
-    // landmark details before proceeding to billing.
+    // The map form already requires flat/door number, building and landmark and
+    // sends them composed into `address`. Asking for them again over WhatsApp
+    // made the customer type everything twice.
     const session = botSessionManager.getSession(1);
     if (session) {
-      await session.sendText(
+      await session.sendInteractiveButtons(
         phone,
-        `📍 *Location vachindi andi!*\n\nMee flat/door number, building name and landmark cheppandi.`,
+        `📍 *Delivery Location Confirmed!*\n\n*Address:* ${address}\n\nTap *✅ Confirm Order* to see your final bill.`,
+        [
+          { id: "confirm_order_btn", title: "✅ Confirm Order" },
+          { id: "add_more_items_btn", title: "➕ Add More Items" },
+        ],
+        "📦 Delivery Address",
       );
     }
 

@@ -947,37 +947,11 @@ export class BotSessionManager {
           return;
         }
 
-        // ── Direct Action: Flat/Door number after Google Maps pin ────────────
-        // After the customer pins their location, the system asks for flat/door
-        // details. The pending order is marked "delivery_awaiting_details" so we
-        // know the next message is those details — append to address and bill.
-        {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, type: "delivery_awaiting_details", expiresAt: { gt: new Date() } },
-          });
-          if (pending) {
-            // Append flat/door details to the GPS address
-            const currentAddr = cust.address ?? "";
-            const fullAddress = currentAddr
-              ? `${currentAddr} — ${rawText}`
-              : rawText;
-
-            await prisma.customer.update({
-              where: { id: cust.id },
-              data: { address: fullAddress },
-            });
-
-            // Mark as regular delivery so this handler doesn't fire again
-            await prisma.pendingOrder.update({
-              where: { id: pending.id },
-              data: { type: "delivery" },
-            });
-
-            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, fullAddress);
-            return;
-          }
-        }
+        // The flat/door follow-up that used to live here is gone. The map form
+        // already requires flat, building and landmark and posts them composed
+        // into the address, so this only made the customer type it all twice —
+        // and it appended whatever they said next to their saved address, which
+        // is how one record ended up as "<address> — already add chesa".
 
         // ── Direct Action: Text-based order confirmation ──────────────────────
         // If the customer types "confirm", "yes", "haan" etc. AND has a staged
