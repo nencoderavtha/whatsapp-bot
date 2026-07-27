@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Shadowfax Hyperlocal Delivery Integration Service
  *
@@ -128,10 +129,10 @@ export class ShadowfaxDeliveryService {
         }
       } else {
         const errText = await res.text().catch(() => "");
-        console.error(`[Shadowfax Serviceability] HTTP ${res.status}:`, errText);
+        logger.error(`[Shadowfax Serviceability] HTTP ${res.status}:`, errText);
       }
     } catch (err) {
-      console.error("[Shadowfax API Error]", err);
+      logger.error("[Shadowfax API Error]", err);
     }
 
     return unavailable;
@@ -200,10 +201,10 @@ export class ShadowfaxDeliveryService {
           };
         } else {
           const errText = await res.text().catch(() => "");
-          console.error(`[Shadowfax Dispatch] HTTP ${res.status}:`, errText);
+          logger.error(`[Shadowfax Dispatch] HTTP ${res.status}:`, errText);
         }
       } catch (err) {
-        console.error("[Shadowfax Dispatch Error, using fallback]", err);
+        logger.error("[Shadowfax Dispatch Error, using fallback]", err);
       }
     }
 
@@ -267,7 +268,7 @@ export class ShadowfaxDeliveryService {
           };
         }
       } catch (err) {
-        console.error("[Shadowfax Tracking Error]", err);
+        logger.error("[Shadowfax Tracking Error]", err);
       }
     }
 

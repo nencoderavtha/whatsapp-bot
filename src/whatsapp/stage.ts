@@ -11,6 +11,7 @@ import type { OrderStage } from "@prisma/client";
 import { prisma } from "../db.js";
 import type { CloudAdapter } from "./cloud.js";
 import { renderPaymentLinkVoided, type Rendered } from "./renderers.js";
+import { logger } from '../services/logger.js';
 
 /** Send a rendered descriptor over whichever WhatsApp primitive it needs. */
 export async function send(adapter: CloudAdapter, phone: string, msg: Rendered): Promise<void> {
@@ -80,7 +81,7 @@ export async function clearFinishedCart(customerId: number): Promise<boolean> {
   if (!settled && !expired) return false;
 
   await prisma.pendingOrder.delete({ where: { customerId } });
-  console.log(
+  logger.info(
     `[Stage] Cleared ${settled ? "completed" : "expired"} cart for customer ${customerId} (was ${cart.stage}).`,
   );
   return true;
@@ -117,7 +118,7 @@ export async function applyCartEdit(
     try {
       await send(adapter, phone, renderPaymentLinkVoided());
     } catch (e) {
-      console.error("[Stage] Could not tell the customer their link was voided:", e);
+      logger.error("[Stage] Could not tell the customer their link was voided:", e);
     }
   }
 }

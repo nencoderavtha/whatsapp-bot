@@ -1,4 +1,5 @@
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
+import { logger } from '../services/logger.js';
 
 /**
  * Official Meta WhatsApp Cloud API adapter — one instance per restaurant.
@@ -20,7 +21,7 @@ export class CloudAdapter implements WhatsAppAdapter {
 
   // No socket to open — webhook is centralized.
   async start(): Promise<void> {
-    console.log(`✅ Cloud adapter ready (phoneNumberId=${this.phoneNumberId})`);
+    logger.info(`✅ Cloud adapter ready (phoneNumberId=${this.phoneNumberId})`);
   }
 
   // Called by botSessionManager.routeCloudMessage() when a webhook message arrives.
@@ -45,7 +46,7 @@ export class CloudAdapter implements WhatsAppAdapter {
     });
     if (!resp.ok) {
       const err = await resp.text();
-      console.error(`[Cloud ${this.phoneNumberId}] sendText failed (${resp.status}):`, err);
+      logger.error(`[Cloud ${this.phoneNumberId}] sendText failed (${resp.status}):`, err);
     }
   }
 
@@ -67,7 +68,7 @@ export class CloudAdapter implements WhatsAppAdapter {
     });
     if (!resp.ok) {
       const err = await resp.text();
-      console.error(`[Cloud ${this.phoneNumberId}] sendImage failed (${resp.status}):`, err);
+      logger.error(`[Cloud ${this.phoneNumberId}] sendImage failed (${resp.status}):`, err);
     }
   }
 
@@ -90,7 +91,7 @@ export class CloudAdapter implements WhatsAppAdapter {
     });
     if (!resp.ok) {
       const err = await resp.text();
-      console.error(`[Cloud ${this.phoneNumberId}] sendInteractive (${interactive.type}) failed (${resp.status}):`, err);
+      logger.error(`[Cloud ${this.phoneNumberId}] sendInteractive (${interactive.type}) failed (${resp.status}):`, err);
       throw new Error(`Meta Cloud API sendInteractive (${interactive.type}) failed (${resp.status}): ${err}`);
     }
   }

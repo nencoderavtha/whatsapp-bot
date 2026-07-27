@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 // Speech-to-text for WhatsApp voice notes via Sarvam AI's Saaras model —
 // purpose-built for Telugu/Hindi/English code-switched speech (customers
 // commonly mix all three mid-sentence), unlike general-purpose Whisper.
@@ -51,7 +52,7 @@ export async function transcribeAudio(buffer: Buffer, mimeType: string): Promise
   // Backstop: if translit somehow still returns Telugu script, log it so we
   // notice — the caller (session-manager) treats a voice note conservatively.
   if (TELUGU_SCRIPT.test(transcript)) {
-    console.warn(`[Voice] translit still returned Telugu script: "${transcript}"`);
+    logger.warn(`[Voice] translit still returned Telugu script: "${transcript}"`);
   }
   return transcript;
 }

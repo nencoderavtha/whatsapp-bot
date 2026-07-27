@@ -2,6 +2,7 @@ import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
 import { getExactServiceDeliveryFee } from "./delivery-fee.js";
 import { DeliveryManager } from "./delivery/delivery-manager.js";
+import { logger } from './logger.js';
 
 export interface OrderLineInput {
   menuItemId: number;
@@ -188,7 +189,7 @@ export async function setOrderStatus(id: number, status: string) {
   // When marked as ready for delivery orders -> auto-dispatch rider via algorithm!
   if (status === "ready" && updated.type === "delivery") {
     try {
-      console.log(`\n👩‍🍳 [Order Marked Ready] Auto-dispatching delivery rider for Order #${id}...`);
+      logger.info(`\n👩‍🍳 [Order Marked Ready] Auto-dispatching delivery rider for Order #${id}...`);
       await DeliveryManager.dispatchOrder(id);
       const refreshed = await prisma.order.findUnique({
         where: { id },
@@ -202,7 +203,7 @@ export async function setOrderStatus(id: number, status: string) {
       });
       if (refreshed) updated = refreshed;
     } catch (err) {
-      console.error(`[Delivery Dispatch Error for Order #${id}]:`, err);
+      logger.error(`[Delivery Dispatch Error for Order #${id}]:`, err);
     }
   }
 

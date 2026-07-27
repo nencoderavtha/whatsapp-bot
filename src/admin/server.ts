@@ -38,6 +38,7 @@ import { VOICE_NOTE_SENTINEL, type InboundMessage } from "../whatsapp/adapter.js
 import { DeliveryManager } from "../services/delivery/delivery-manager.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import { orderStagedTemplate } from "../ai/templates.js";
+import { logger } from '../services/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,12 +64,12 @@ export function buildAdminApp() {
     const incomingToken = req.header("X-DV-Auth-Token") || req.header("X-DV-Callback-Token");
 
     if (callbackToken && incomingToken && incomingToken !== callbackToken) {
-      console.warn("⚠️ [Borzo Webhook] Unauthorized callback attempt — token mismatch.");
+      logger.warn("⚠️ [Borzo Webhook] Unauthorized callback attempt — token mismatch.");
       res.status(401).json({ error: "Unauthorized callback token" });
       return;
     }
 
-    console.log("🚚 [Borzo Webhook Event Received]:", JSON.stringify(req.body, null, 2));
+    logger.info("🚚 [Borzo Webhook Event Received]:", JSON.stringify(req.body, null, 2));
 
     const body = req.body;
     const orderData = body?.order || (body?.delivery ? { order_id: body.delivery.order_id, status: body.delivery.status, courier: body.delivery.courier, points: [] } : null);
@@ -118,7 +119,7 @@ export function buildAdminApp() {
         DELIVERED: `🎉 [Delivery Completed] Borzo Order #${borzoOrderId}: Parcel delivered successfully!`,
       };
 
-      console.log(logStatusMessages[mappedStatus] || `📦 [Borzo Status Update] Order #${borzoOrderId} -> ${mappedStatus}`);
+      logger.info(logStatusMessages[mappedStatus] || `📦 [Borzo Status Update] Order #${borzoOrderId} -> ${mappedStatus}`);
 
       try {
         // Find dispatch record by externalDeliveryId (e.g. BRZ-329268 or 329268) or by orderId
@@ -160,7 +161,7 @@ export function buildAdminApp() {
                 );
                 if (msgText) {
                   await session.sendText(order.customer.phone, msgText);
-                  console.log(`📱 [WhatsApp Sent to Customer ${order.customer.phone}] Delivery Status: ${mappedStatus}`);
+                  logger.info(`📱 [WhatsApp Sent to Customer ${order.customer.phone}] Delivery Status: ${mappedStatus}`);
                 }
               }
             }
@@ -179,7 +180,7 @@ export function buildAdminApp() {
           }
         }
       } catch (err) {
-        console.error("⚠️ [Borzo Webhook DB Error]", err);
+        logger.error("⚠️ [Borzo Webhook DB Error]", err);
       }
     }
 
@@ -255,7 +256,7 @@ export function buildAdminApp() {
             try {
               await send(session, failedCustomer.phone, renderPaymentFailed());
             } catch (e) {
-              console.error("[Razorpay] Could not tell the customer payment failed:", e);
+              logger.error("[Razorpay] Could not tell the customer payment failed:", e);
             }
           }
         }
@@ -309,13 +310,13 @@ export function buildAdminApp() {
         try {
           await session.sendText(customer.phone, orderConfirmationMsg(fullOrder, restaurantName));
         } catch (e) {
-          console.error("[Receipt Send] Customer receipt failed:", e);
+          logger.error("[Receipt Send] Customer receipt failed:", e);
         }
         const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s: string) => s.trim()).filter(Boolean);
         const ownerMsg = ownerNewOrderMsg(fullOrder);
         for (const num of ownerNumbers) {
           session.sendText(num, ownerMsg).catch((e: any) =>
-            console.error("[Owner Notify] Owner notify failed for num:", e)
+            logger.error("[Owner Notify] Owner notify failed for num:", e)
           );
         }
       }
@@ -610,7 +611,7 @@ export function buildAdminApp() {
               const { buffer, mimeType } = await fetchMetaMedia(msg.audio.id, token);
               text = await transcribeAudio(buffer, mimeType);
             } catch (e) {
-              console.error("[Voice] Transcription failed, falling back:", e);
+              logger.error("[Voice] Transcription failed, falling back:", e);
               text = VOICE_NOTE_SENTINEL;
             }
           }
@@ -644,7 +645,7 @@ export function buildAdminApp() {
 
               text = "confirm order";
             } catch (e) {
-              console.error("[Location Webhook Error]", e);
+              logger.error("[Location Webhook Error]", e);
               text = locAddr;
             }
           }
@@ -660,7 +661,7 @@ export function buildAdminApp() {
         }
       }
     } catch (e) {
-      console.error("[Webhook]", e);
+      logger.error("[Webhook]", e);
     }
   });
 
@@ -669,13 +670,13 @@ export function buildAdminApp() {
     const expectedToken = process.env.DELIVERY_WEBHOOK_TOKEN || "godavari_ruchulu_secret_token";
     
     if (apiKey !== expectedToken) {
-      console.warn("[Shiprocket Webhook] Unauthorized request. Header x-api-key did not match.");
+      logger.warn("[Shiprocket Webhook] Unauthorized request. Header x-api-key did not match.");
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
 
     const payload = req.body;
-    console.log("[Shiprocket Webhook] Received status update:", JSON.stringify(payload, null, 2));
+    logger.info("[Shiprocket Webhook] Received status update:", JSON.stringify(payload, null, 2));
 
     const trackingData = payload.tracking_data || payload;
     const { shipment_id, order_id, shipment_status } = trackingData;
@@ -713,7 +714,7 @@ export function buildAdminApp() {
     });
 
     if (!dispatch) {
-      console.warn(`[Shiprocket Webhook] No matching dispatch found for shipment ${shipment_id} / order ${order_id}`);
+      logger.warn(`[Shiprocket Webhook] No matching dispatch found for shipment ${shipment_id} / order ${order_id}`);
       res.status(200).json({ ok: false, message: "No matching order found" });
       return;
     }
@@ -820,7 +821,7 @@ export function buildAdminApp() {
       await notifyAdminOfEvent("config_updated", { restaurantId: DEFAULT_RESTAURANT_ID });
       res.json(result);
     } catch (e: any) {
-      console.error("[founder] prompt save failed:", e);
+      logger.error("[founder] prompt save failed:", e);
       res.status(500).json({ error: e?.message ?? "save failed" });
     }
   });
@@ -994,7 +995,7 @@ export function buildAdminApp() {
           if (session) await session.sendText(order.customer.phone, msg);
         }
       } catch (e) {
-        console.error("[Status Notify] Failed:", e);
+        logger.error("[Status Notify] Failed:", e);
       }
     }
 
@@ -1005,7 +1006,7 @@ export function buildAdminApp() {
     if (status === "ready" && order.type === "delivery") {
       try {
         const result: any = await DeliveryManager.dispatchOrder(orderId, "borzo");
-        console.log(
+        logger.info(
           result?.alreadyDispatched
             ? `[Auto-Dispatch] Order #${orderId} already had a courier booked.`
             : `[Auto-Dispatch] Courier booked for order #${orderId}.`,
@@ -1013,7 +1014,7 @@ export function buildAdminApp() {
       } catch (e: any) {
         // Hot food and no courier — the owner has to know, because nothing else
         // in the system will chase it.
-        console.error(`[Auto-Dispatch Failed] Order #${orderId}:`, e?.message ?? e);
+        logger.error(`[Auto-Dispatch Failed] Order #${orderId}:`, e?.message ?? e);
         try {
           const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
           const owners = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -1023,7 +1024,7 @@ export function buildAdminApp() {
             if (session) await session.sendText(num, text);
           }
         } catch (notifyErr) {
-          console.error("[Auto-Dispatch] Owner alert failed:", notifyErr);
+          logger.error("[Auto-Dispatch] Owner alert failed:", notifyErr);
         }
       }
     }
@@ -1036,7 +1037,7 @@ export function buildAdminApp() {
       const result = await DeliveryManager.dispatchOrder(orderId, providerCode);
       res.json(result);
     } catch (e: any) {
-      console.error("[Manual Dispatch Failed]", e);
+      logger.error("[Manual Dispatch Failed]", e);
       res.status(500).json({ error: e?.message ?? "Dispatch failed" });
     }
   });

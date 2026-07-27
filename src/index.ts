@@ -1,12 +1,13 @@
 import { config } from "./config.js";
 import { buildAdminApp } from "./admin/server.js";
 import { runBot } from "./whatsapp/run.js";
+import { logger } from './services/logger.js';
 
 // Prevent transient DB errors (e.g. Supabase pooler timeout) from crashing the process.
 // Express 4 async route handlers that throw become unhandled rejections without explicit
 // try/catch — this is the safety net so the bot stays alive.
 process.on("unhandledRejection", (reason) => {
-  console.error("⚠️  Unhandled rejection (process continues):", reason);
+  logger.error("⚠️  Unhandled rejection (process continues):", reason);
 });
 
 async function main() {
@@ -15,11 +16,11 @@ async function main() {
     // 0.0.0.0 is the bind address, not somewhere you can browse to. On Cloud Run
     // the reachable address is SERVER_URL, so log that when it's set.
     const portalUrl = process.env.SERVER_URL ?? `http://localhost:${config.adminPort}`;
-    console.log(`🛠️  Admin portal listening on :${config.adminPort} — ${portalUrl}`);
+    logger.info(`🛠️  Admin portal listening on :${config.adminPort} — ${portalUrl}`);
   });
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      console.error(
+      logger.error(
         `\n❌ Port ${config.adminPort} is already in use — the bot is probably already running in another terminal.\n` +
           `   Close that one, or change ADMIN_PORT in .env, then try again.\n`,
       );
@@ -34,7 +35,7 @@ async function main() {
   try {
     await runBot();
   } catch (e) {
-    console.error(
+    logger.error(
       "❌ Bot failed to start — admin portal stays up so config can be fixed:",
       e,
     );
@@ -42,6 +43,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("Fatal:", e);
+  logger.error("Fatal:", e);
   process.exit(1);
 });

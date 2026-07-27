@@ -10,6 +10,7 @@ import { prisma } from "../../db.js";
 import { DeliveryOrchestrator, DeliveryProviderCode } from "./orchestrator.js";
 import { notifyAdminOfEvent } from "../events.js";
 import { DEFAULT_RESTAURANT_ID } from "../../tenancy.js";
+import { logger } from '../logger.js';
 
 const orchestrator = new DeliveryOrchestrator();
 
@@ -31,7 +32,7 @@ export class DeliveryManager {
     pickupPincode = 500033,
     deliveryPincode = 500081,
   ): Promise<DeliveryQuoteResult> {
-    console.log(`\n📊 [Delivery Rate Comparison] Querying live quotes for Order #${orderId} (${pickupPincode} ➔ ${deliveryPincode})...`);
+    logger.info(`\n📊 [Delivery Rate Comparison] Querying live quotes for Order #${orderId} (${pickupPincode} ➔ ${deliveryPincode})...`);
 
     const quotesData = await orchestrator.getAllQuotes({
       pickupPincode,
@@ -39,10 +40,10 @@ export class DeliveryManager {
     });
 
     for (const q of quotesData.quotes) {
-      console.log(`   • ${q.provider}: ₹${q.quotedFee} (${q.estimatedMinutes} mins) — ${q.available ? "Available ✅" : "Unavailable ❌"}`);
+      logger.info(`   • ${q.provider}: ₹${q.quotedFee} (${q.estimatedMinutes} mins) — ${q.available ? "Available ✅" : "Unavailable ❌"}`);
     }
 
-    console.log(`🏆 [Selected Best Rate]: ${quotesData.cheapest.provider.toUpperCase()} (₹${quotesData.cheapest.quotedFee}, ${quotesData.cheapest.estimatedMinutes} mins)\n`);
+    logger.info(`🏆 [Selected Best Rate]: ${quotesData.cheapest.provider.toUpperCase()} (₹${quotesData.cheapest.quotedFee}, ${quotesData.cheapest.estimatedMinutes} mins)\n`);
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min expiry
 
@@ -78,7 +79,7 @@ export class DeliveryManager {
     orderId: number,
     preferredProviderCode?: DeliveryProviderCode,
   ) {
-    console.log(`\n🛵 [Delivery Dispatch Triggered] Processing Order #${orderId}...`);
+    logger.info(`\n🛵 [Delivery Dispatch Triggered] Processing Order #${orderId}...`);
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -87,11 +88,11 @@ export class DeliveryManager {
 
     if (!order) throw new Error(`Order #${orderId} not found`);
 
-    console.log(`👤 [Customer Details] Name: ${order.customer.name || "Customer"} | Phone: ${order.customer.phone}`);
-    console.log(`📍 [Drop Address] ${order.deliveryAddress || "Jubilee Hills, Hyderabad"}`);
+    logger.info(`👤 [Customer Details] Name: ${order.customer.name || "Customer"} | Phone: ${order.customer.phone}`);
+    logger.info(`📍 [Drop Address] ${order.deliveryAddress || "Jubilee Hills, Hyderabad"}`);
 
     if (order.deliveryDispatch && order.deliveryDispatch.externalDeliveryId) {
-      console.log(
+      logger.info(
         `↩️  [Already Dispatched] Order #${orderId} → ${order.deliveryDispatch.externalDeliveryId}. Not booking a second courier.`,
       );
       return { ok: true, dispatch: order.deliveryDispatch, result: null, alreadyDispatched: true };
@@ -104,10 +105,10 @@ export class DeliveryManager {
     const selectedProviderCode = preferredProviderCode ?? "borzo";
     const billedFee = order.deliveryFee || 45;
 
-    console.log(`🏆 [Delivery Partner]: ${selectedProviderCode.toUpperCase()} | Customer was billed ₹${billedFee}`);
+    logger.info(`🏆 [Delivery Partner]: ${selectedProviderCode.toUpperCase()} | Customer was billed ₹${billedFee}`);
 
     // Step 2: Trigger dispatch via selected provider
-    console.log(`🚀 [Dispatching Rider] Booking rider on ${selectedProviderCode.toUpperCase()} API...`);
+    logger.info(`🚀 [Dispatching Rider] Booking rider on ${selectedProviderCode.toUpperCase()} API...`);
 
     const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
     const ownerPhone = (restaurant?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean)[0];
@@ -134,13 +135,13 @@ export class DeliveryManager {
     // id and status SEARCHING_RIDER, and moved the order to out_for_delivery — so
     // the dashboard showed a rider en route when Borzo had booked nobody.
     if (!result.ok || !result.dispatchId) {
-      console.error(
+      logger.error(
         `❌ [Dispatch Failed] Order #${orderId}: ${result.message ?? "provider returned no booking"}`,
       );
       throw new Error(result.message ?? `Could not book a rider for order #${orderId}`);
     }
 
-    console.log(`🔍 [Rider Search Active] Booking ID: ${result.dispatchId} | Initial Status: ${result.status || "SEARCHING_RIDER"}`);
+    logger.info(`🔍 [Rider Search Active] Booking ID: ${result.dispatchId} | Initial Status: ${result.status || "SEARCHING_RIDER"}`);
 
     const dispatch = await prisma.deliveryDispatch.upsert({
       where: { orderId },
@@ -162,7 +163,7 @@ export class DeliveryManager {
     // The order stays "ready" until the courier actually collects it. Borzo's
     // PICKED_UP webhook moves it to out_for_delivery, so the status reflects
     // where the food is rather than when we sent an API call.
-    console.log(`✅ [Order #${orderId}] Rider booked on ${result.providerCode.toUpperCase()} — awaiting pickup\n`);
+    logger.info(`✅ [Order #${orderId}] Rider booked on ${result.providerCode.toUpperCase()} — awaiting pickup\n`);
 
     await notifyAdminOfEvent("order_updated", { ...order, deliveryDispatch: dispatch });
     return { ok: true, dispatch, result };

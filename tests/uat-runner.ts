@@ -2,6 +2,7 @@ import { CloudAdapter } from "../src/whatsapp/cloud.js";
 import { botSessionManager } from "../src/whatsapp/session-manager.js";
 import type { InboundMessage } from "../src/whatsapp/adapter.js";
 import { prisma } from "../src/db.js";
+import { logger } from '../src/services/logger.js';
 
 export class MockWhatsAppAdapter extends CloudAdapter {
   public outboundLog: any[] = [];
@@ -105,7 +106,7 @@ export class UatTestRunner {
 
   async send(text: string): Promise<any[]> {
     this.adapter.clearLog();
-    console.log(`\n👨‍🦱 [USER]: ${text}`);
+    logger.info(`\n👨‍🦱 [USER]: ${text}`);
     
     const msg: InboundMessage = {
       phone: this.phone,
@@ -122,7 +123,7 @@ export class UatTestRunner {
     
     const responses = [...this.adapter.outboundLog];
     for (const r of responses) {
-      console.log(`🤖 [BOT ]: [${r.type.toUpperCase()}] ${r.text || r.bodyText || r.caption}`);
+      logger.info(`🤖 [BOT ]: [${r.type.toUpperCase()}] ${r.text || r.bodyText || r.caption}`);
     }
     
     return responses;

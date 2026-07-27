@@ -16,6 +16,7 @@
 import { prisma } from "../db.js";
 import { DeliveryOrchestrator } from "./delivery/orchestrator.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { logger } from './logger.js';
 
 export class UnserviceableLocationError extends Error {
   constructor(message: string) {
@@ -91,7 +92,7 @@ export async function getExactServiceDeliveryFee(address?: string | null): Promi
     // quote. That covers both a genuinely unserviceable address and a provider
     // being unreachable; the log line is the only way to tell them apart, so
     // keep the original message.
-    console.warn(`[DeliveryFee] No quote for "${drop}":`, (e as Error)?.message ?? e);
+    logger.warn(`[DeliveryFee] No quote for "${drop}":`, (e as Error)?.message ?? e);
     throw new UnserviceableLocationError(
       `No delivery partner covers this location: ${drop}`,
     );
@@ -104,7 +105,7 @@ export async function getExactServiceDeliveryFee(address?: string | null): Promi
   const rounded = Math.round(fee);
 
   if (rounded > MAX_SERVICEABLE_FEE) {
-    console.warn(
+    logger.warn(
       `[DeliveryFee] ₹${rounded} exceeds the ₹${MAX_SERVICEABLE_FEE} ceiling for "${drop}" — treating as out of range.`,
     );
     throw new UnserviceableLocationError(

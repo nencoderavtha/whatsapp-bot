@@ -1,12 +1,14 @@
 import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
+import { logger } from "./logger.js";
 
 export type ActivityType =
   | "response_time"
   | "tool_error"
   | "fallback"
   | "human_handoff"
-  | "handoff_resolved";
+  | "handoff_resolved"
+  | "intent_shadow";
 
 export async function logActivity(
   _restaurantId: number,
@@ -26,6 +28,6 @@ export async function logActivity(
     });
     await notifyAdminOfEvent("activity_logged", row);
   } catch (e) {
-    console.error("[activity] logActivity failed:", e);
+    logger.error("[activity] logActivity failed:", e);
   }
 }

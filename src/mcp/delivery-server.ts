@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { DeliveryOrchestrator, DeliveryProviderCode } from "../services/delivery/orchestrator.js";
 import { ShadowfaxDeliveryService } from "../services/delivery/shadowfax.js";
+import { logger } from '../services/logger.js';
 
 // ─── Singletons ────────────────────────────────────────────────────────────────
 const orchestrator = new DeliveryOrchestrator();
@@ -195,11 +196,11 @@ server.tool(
 async function startServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("🚀 Delivery MCP Server v1.1.0 active over Stdio transport!");
-  console.error("   Tools: get_delivery_quotes | check_shadowfax_serviceability | dispatch_delivery_order | get_delivery_tracking_status");
+  logger.error("🚀 Delivery MCP Server v1.1.0 active over Stdio transport!");
+  logger.error("   Tools: get_delivery_quotes | check_shadowfax_serviceability | dispatch_delivery_order | get_delivery_tracking_status");
 }
 
 startServer().catch((err) => {
-  console.error("Fatal error starting Delivery MCP Server:", err);
+  logger.error("Fatal error starting Delivery MCP Server:", err);
   process.exit(1);
 });

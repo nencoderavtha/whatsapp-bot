@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Shiprocket Quick Delivery Integration Service
  * 
@@ -110,7 +111,7 @@ export class ShiprocketDeliveryService {
           }
         }
       } catch (err) {
-        console.error("[Shiprocket API Error]", err);
+        logger.error("[Shiprocket API Error]", err);
       }
     }
 
@@ -169,7 +170,7 @@ export class ShiprocketDeliveryService {
           };
         }
       } catch (err) {
-        console.error("[Shiprocket Dispatch Error, using fallback]", err);
+        logger.error("[Shiprocket Dispatch Error, using fallback]", err);
       }
     }
 

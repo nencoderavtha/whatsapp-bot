@@ -9,6 +9,9 @@ import { fallbackTemplate } from "./templates.js";
 import { logActivity } from "../services/activity.js";
 import { acquire, enqueue, drain } from "../services/conversation-lock.js";
 import { clearFinishedCart } from "../whatsapp/stage.js";
+import { logger } from '../services/logger.js';
+import { menuAsText } from "../services/menu.js";
+import { classifyIntent } from "./intent.js";
 
 export interface AgentResult {
   reply: string;
@@ -89,10 +92,17 @@ async function processIncoming(
   const history = await conversationWindow(customer.id, 6);
   const isFirstMessage = history.length === 1;
 
-  const [system, tools] = await Promise.all([
+  const [system, tools, menuText] = await Promise.all([
     buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage, customer.id),
     getEnabledTools(restaurantId),
+    menuAsText(restaurantId),
   ]);
+
+  const intentPromise = classifyIntent(
+    history.map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
+    userText,
+    menuText
+  );
 
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: system },
@@ -109,6 +119,7 @@ async function processIncoming(
   let templateReply: string | undefined;
   let mediaReply: { imageUrl: string; caption?: string } | undefined;
   let finalText = "";
+  const executedTools: string[] = [];
 
   const startedAt = Date.now();
 
@@ -140,9 +151,10 @@ async function processIncoming(
         args = {};
       }
 
-      console.log(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
+      logger.info(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
+      executedTools.push(tc.function.name);
       const { output, orderId, templateReply: tr, humanHandoff, mediaReply: mr } = await runTool(customer.id, restaurantId, tc.function.name, args);
-      console.log(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
+      logger.info(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
       if (orderId) placedOrderId = orderId;
       if (humanHandoff) humanHandoffRequested = true;
       if (tr) templateReply = tr;
@@ -166,6 +178,19 @@ async function processIncoming(
   void logActivity(restaurantId, "response_time", `Reply in ${elapsedMs}ms`, { elapsedMs }, customer.id);
   if (usedFallback) {
     void logActivity(restaurantId, "fallback", `Fell back to generic reply for: ${userText.slice(0, 80)}`, undefined, customer.id);
+  }
+
+  try {
+    const intentResult = await intentPromise;
+    void logActivity(
+      restaurantId,
+      "intent_shadow",
+      `Intent: ${intentResult.intent} vs Tools: ${executedTools.length ? executedTools.join(", ") : "none"}`,
+      { intent: intentResult, executedTools, userText },
+      customer.id
+    );
+  } catch (e) {
+    logger.error("[agent] Intent classification failed:", e);
   }
 
   await logMessage(customer.id, "assistant", finalText);

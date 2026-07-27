@@ -32,6 +32,7 @@ import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
 import { getExactServiceDeliveryFee, UnserviceableLocationError } from "../services/delivery-fee.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { logger, runWithContext } from '../services/logger.js';
 
 
 
@@ -74,7 +75,7 @@ async function sendMenuVisual(
       sent = true;
     }
   } catch (e: any) {
-    console.warn("[Carousel Failed, falling back to list]", e?.response?.data || e?.message || e);
+    logger.warn("[Carousel Failed, falling back to list]", e?.response?.data || e?.message || e);
   }
 
   if (!sent) {
@@ -84,7 +85,7 @@ async function sendMenuVisual(
         await adapter.sendInteractiveList(phone, bodyText, "📋 View Today's Menu", sections);
         sent = true;
       } catch (e: any) {
-        console.warn("[Interactive List Failed]", e.response?.data || e.message || e);
+        logger.warn("[Interactive List Failed]", e.response?.data || e.message || e);
       }
     }
   }
@@ -135,7 +136,7 @@ async function sendDeliveryLocationOptions(
         "📦 Saved Addresses",
       );
     } catch (e) {
-      console.warn("[Interactive Address List Failed]", e);
+      logger.warn("[Interactive Address List Failed]", e);
     }
   }
 
@@ -176,7 +177,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
         await sendMenuVisual(adapter, phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
         continue;
       } catch (err) {
-        console.error("[Cloud] Failed to build menu view:", err);
+        logger.error("[Cloud] Failed to build menu view:", err);
       }
     }
 
@@ -205,7 +206,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
         );
         continue;
       } catch (err) {
-        console.error("[Cloud] Cart summary buttons failed:", err);
+        logger.error("[Cloud] Cart summary buttons failed:", err);
       }
     }
 
@@ -233,7 +234,7 @@ async function sendHumanly(adapter: CloudAdapter, phone: string, bubbles: string
             await adapter.sendPaymentDetails(phone, pa, pn, am, tn, orderId);
             continue;
           } catch (err) {
-            console.error("Failed to parse UPI link for Kapso payment card:", err);
+            logger.error("Failed to parse UPI link for Kapso payment card:", err);
           }
         }
       }
@@ -301,7 +302,7 @@ async function notifyOwner(adapter: CloudAdapter, _restaurantId: number, orderId
     try {
       await adapter.sendText(num, text);
     } catch (e) {
-      console.error("[Owner Notify] Send failed:", e);
+      logger.error("[Owner Notify] Send failed:", e);
     }
   }
 }
@@ -319,7 +320,7 @@ async function notifyOwnerOfHandoff(
     try {
       await adapter.sendText(num, text);
     } catch (e) {
-      console.error("[Owner Handoff] Send failed:", e);
+      logger.error("[Owner Handoff] Send failed:", e);
     }
   }
 }
@@ -333,7 +334,7 @@ async function sendOrderReceipt(adapter: CloudAdapter, phone: string, _restauran
     if (!order || !cfg) return;
     await adapter.sendText(phone, orderConfirmationMsg(order, cfg.restaurantName));
   } catch (e) {
-    console.error("[Receipt Send] Failed:", e);
+    logger.error("[Receipt Send] Failed:", e);
   }
 }
 
@@ -385,7 +386,7 @@ async function sendPinLocationPrompt(adapter: CloudAdapter, phone: string): Prom
       "📍 Delivery address kavali andi. Mee location share cheyandi, leda kinda button tap chesi map lo pin drop cheyandi.",
     );
   } catch (e) {
-    console.warn("[Location Request Failed, sending CTA URL]", e);
+    logger.warn("[Location Request Failed, sending CTA URL]", e);
   }
 
   await adapter.sendInteractiveCtaUrl(
@@ -454,7 +455,7 @@ async function notifyOwnerOfPaymentIssue(
     try {
       await adapter.sendText(num, text);
     } catch (e) {
-      console.error("[Owner Payment Alert] Failed:", e);
+      logger.error("[Owner Payment Alert] Failed:", e);
     }
   }
 }
@@ -542,7 +543,7 @@ async function proceedToBilling(
       deliveryFee = Math.round(quotes.cheapest.quotedFee);
     }
   } catch (e) {
-    console.warn("[Delivery quote failed — using flat fee]", e);
+    logger.warn("[Delivery quote failed — using flat fee]", e);
   }
 
   const grandTotal = subtotal + deliveryFee;
@@ -574,7 +575,7 @@ async function proceedToBilling(
       });
       payUrl = payRes?.url ?? null;
     } catch (e) {
-      console.error("[Razorpay link generation failed]", e);
+      logger.error("[Razorpay link generation failed]", e);
     }
   }
 
@@ -619,10 +620,10 @@ export class BotSessionManager {
   /** Start sessions for all active restaurants. */
   async startAll() {
     const restaurants = await prisma.restaurantConfig.findMany({ where: { isActive: true } });
-    console.log(`🚀 Starting ${restaurants.length} bot session(s) [provider: Meta Cloud API]...`);
+    logger.info(`🚀 Starting ${restaurants.length} bot session(s) [provider: Meta Cloud API]...`);
     for (const r of restaurants) {
       await this.startSession(r.id, r.restaurantName).catch((e) =>
-        console.error(`Failed to start session for restaurant ${r.id}:`, e),
+        logger.error(`Failed to start session for restaurant ${r.id}:`, e),
       );
     }
   }
@@ -630,7 +631,7 @@ export class BotSessionManager {
   /** Start (or restart) a single restaurant's WhatsApp session. */
   async startSession(restaurantId: number, restaurantName: string, customAdapter?: CloudAdapter) {
     if (this.sessions.has(restaurantId)) {
-      console.log(`[r${restaurantId}] Session already running — skipping.`);
+      logger.info(`[r${restaurantId}] Session already running — skipping.`);
       return;
     }
 
@@ -642,326 +643,432 @@ export class BotSessionManager {
     const phoneNumberId = botCfg?.cloudPhoneNumberId || config.cloud.phoneNumberId;
     const token = botCfg?.cloudToken || config.cloud.token;
     if (!phoneNumberId || !token) {
-      console.warn(`[r${restaurantId}] Cloud API not configured (missing phoneNumberId or token) — skipping.`);
+      logger.warn(`[r${restaurantId}] Cloud API not configured (missing phoneNumberId or token) — skipping.`);
       return;
     }
     const adapter = customAdapter || new CloudAdapter(phoneNumberId, token);
     this.phoneIdMap.set(phoneNumberId, restaurantId);
 
     adapter.onMessage(async (msg) => {
-      console.log(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
-      try {
-        // The database lives in ap-northeast-2 while this runs in asia-south1, so
-        // every query costs a cross-region round trip. This row changes only when
-        // the owner edits the dashboard, and getCached already invalidates on
-        // config_updated, so reading it per message was pure latency.
-        const cfg = await getCached(
-          restaurantId,
-          "sessionConfig",
-          () =>
-            prisma.restaurantConfig.findUnique({
-              where: { id: restaurantId },
-              select: {
-                restaurantName: true,
-                restaurantCity: true,
-                botPaused: true,
-                pauseMessage: true,
-              },
-            }),
-          30_000,
-        );
-        if (cfg?.botPaused) {
-          const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
-          await sendHumanly(adapter, msg.phone, [pauseMsg], restaurantId);
-          return;
-        }
-
-        const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
-
-        // Greet before touching the database. WhatsApp already gives us the
-        // customer's profile name, and the restaurant name is cached, so the
-        // welcome needs nothing else — it goes out while the customer row is
-        // still being fetched instead of after it.
-        const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"]
-          .includes(msg.text.trim().toLowerCase());
-
-        if (isGreeting) {
-          const greetName = msg.name?.trim() ? `${msg.name.trim()} garu` : "andi";
-          await send(adapter, msg.phone, renderWelcome(greetName, rName));
-          // Keep the profile/history write off the critical path, and retire any
-          // finished or expired cart so a greeting genuinely starts a new order.
-          void getOrCreateCustomer(msg.phone, msg.name)
-            .then(async (c) => {
-              await clearFinishedCart(c.id);
-              await logMessage(c.id, "user", msg.text);
-            })
-            .catch((e) => console.error("[Greeting] background persist failed:", e));
-          return;
-        }
-
-        const customer = await getOrCreateCustomer(msg.phone, msg.name);
-
-        // ── Human handoff active: AI is paused for this customer ────────────────
-        // Staff reply from the dashboard until they hit "Resume AI". We still log
-        // the inbound message so it shows live in the dashboard chat.
-        if (customer?.humanRequestedAt) {
-          await logMessage(customer.id, "user", msg.text);
-          return;
-        }
-
-        // ── Voice note (no speech-to-text yet) — ask for text or a call instead ──
-        if (msg.text === VOICE_NOTE_SENTINEL) {
-          await adapter.sendText(msg.phone, voiceNoteFallbackTemplate());
-          return;
-        }
-
-        const rawText = msg.text.trim();
-        const lowerText = rawText.toLowerCase();
-        const cleanText = lowerText.replace(/[^\w\s]/g, "").trim();
-
-        // ── Direct Action 1: View Menu ───────────────────────────────────────
-        // Item button ids look like "menu_item_22" / "menu_item_22_v_3", which the
-        // substring check below would otherwise treat as "show me the menu" — the
-        // add-to-cart handler further down never got reached, so every tap on an
-        // item just reopened the menu.
-        const isMenuItemButton = /^menu_item_\d+(?:_v_\d+)?$/.test(rawText);
-        if (
-          !isMenuItemButton &&
-          (rawText === "view_menu" ||
-            cleanText === "menu" ||
-            cleanText.includes("menu") ||
-            /\bmenu\b/i.test(lowerText))
-        ) {
-          const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
-
-          await sendMenuVisual(adapter, msg.phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
-          return;
-        }
-
-        // ── Direct Action 2: Location & Hours ────────────────────────────────
-        if (
-          rawText !== "pin_new_location_btn" &&
-          (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("where are you located") || lowerText.includes("restaurant location") || lowerText.includes("opening hours") || lowerText.includes("your location"))
-        ) {
-          const city = cfg?.restaurantCity ?? "Hyderabad";
-          const locationMsg = `*${rName}*, ${city}\nEvening service 7:30 PM nunchi andi.`;
-          await adapter.sendText(msg.phone, locationMsg);
-          return;
-        }
-
-        // ── Direct Action 3: Dish photo request (e.g. "chepala pulusu photo pampandi") ──
-        const photoKeywords = ["photo", "pic ", "pics", "picture", "image", "chupinchu", "chupincharu", "choodali", "chudali"];
-        if (photoKeywords.some((k) => lowerText.includes(k))) {
-          const items = await prisma.menuItem.findMany({
-            where: { available: true, imageUrl: { not: null } },
-            select: { name: true, imageUrl: true },
-          });
-          const matched = items.find((item) => {
-            const nameWords = item.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-            const hits = nameWords.filter((w) => lowerText.includes(w)).length;
-            return hits >= Math.min(2, nameWords.length);
-          });
-          if (matched?.imageUrl) {
-            await adapter.sendImage(msg.phone, matched.imageUrl, matched.name);
-            return;
-          }
-          // No confident dish match or no photo on file — fall through to the normal reply.
-        }
-
-        // ── Direct Action 4: Item Selection (carousel/list "Add" or variant pick) ──
-        // Formats: menu_item_<id>  OR  menu_item_<id>_v_<variantId>
-        const itemMatch = rawText.match(/^menu_item_(\d+)(?:_v_(\d+))?$/);
-        if (itemMatch) {
-          const itemId = parseInt(itemMatch[1], 10);
-          const pickedVariantId = itemMatch[2] ? parseInt(itemMatch[2], 10) : undefined;
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-
-          const item = await prisma.menuItem.findUnique({
-            where: { id: itemId },
-            include: { variants: { where: { available: true }, orderBy: { sortOrder: "asc" } } },
-          });
-          if (!item || !item.available) {
-            await adapter.sendText(msg.phone, "Aa item ee roju ledu andi.");
+      runWithContext({ restaurantId, phone: msg.phone }, async () => {
+        logger.info(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
+        try {
+          // The database lives in ap-northeast-2 while this runs in asia-south1, so
+          // every query costs a cross-region round trip. This row changes only when
+          // the owner edits the dashboard, and getCached already invalidates on
+          // config_updated, so reading it per message was pure latency.
+          const cfg = await getCached(
+            restaurantId,
+            "sessionConfig",
+            () =>
+              prisma.restaurantConfig.findUnique({
+                where: { id: restaurantId },
+                select: {
+                  restaurantName: true,
+                  restaurantCity: true,
+                  botPaused: true,
+                  pauseMessage: true,
+                },
+              }),
+            30_000,
+          );
+          if (cfg?.botPaused) {
+            const pauseMsg = cfg.pauseMessage ?? "Sorry, we're temporarily unavailable. We'll be back shortly! 🙏";
+            await sendHumanly(adapter, msg.phone, [pauseMsg], restaurantId);
             return;
           }
 
-          // Item has an Annam/Bagara (or other) variant choice but none picked → ask which one.
-          if (item.variants.length > 0 && !pickedVariantId) {
-            await adapter.sendInteractiveButtons(
+          const rName = cfg?.restaurantName ?? restaurantName ?? "our restaurant";
+
+          // Greet before touching the database. WhatsApp already gives us the
+          // customer's profile name, and the restaurant name is cached, so the
+          // welcome needs nothing else — it goes out while the customer row is
+          // still being fetched instead of after it.
+          const isGreeting = ["hi", "hello", "hey", "namaste", "start", "yo", "hola", "namaskar"]
+            .includes(msg.text.trim().toLowerCase());
+
+          if (isGreeting) {
+            const greetName = msg.name?.trim() ? `${msg.name.trim()} garu` : "andi";
+            await send(adapter, msg.phone, renderWelcome(greetName, rName));
+            // Keep the profile/history write off the critical path, and retire any
+            // finished or expired cart so a greeting genuinely starts a new order.
+            void getOrCreateCustomer(msg.phone, msg.name)
+              .then(async (c) => {
+                await clearFinishedCart(c.id);
+                await logMessage(c.id, "user", msg.text);
+              })
+              .catch((e) => logger.error("[Greeting] background persist failed:", e));
+            return;
+          }
+
+          const customer = await getOrCreateCustomer(msg.phone, msg.name);
+
+          // ── Human handoff active: AI is paused for this customer ────────────────
+          // Staff reply from the dashboard until they hit "Resume AI". We still log
+          // the inbound message so it shows live in the dashboard chat.
+          if (customer?.humanRequestedAt) {
+            await logMessage(customer.id, "user", msg.text);
+            return;
+          }
+
+          // ── Voice note (no speech-to-text yet) — ask for text or a call instead ──
+          if (msg.text === VOICE_NOTE_SENTINEL) {
+            await adapter.sendText(msg.phone, voiceNoteFallbackTemplate());
+            return;
+          }
+
+          const rawText = msg.text.trim();
+          const lowerText = rawText.toLowerCase();
+          const cleanText = lowerText.replace(/[^\w\s]/g, "").trim();
+
+          // ── Direct Action 1: View Menu ───────────────────────────────────────
+          // Item button ids look like "menu_item_22" / "menu_item_22_v_3", which the
+          // substring check below would otherwise treat as "show me the menu" — the
+          // add-to-cart handler further down never got reached, so every tap on an
+          // item just reopened the menu.
+          const isMenuItemButton = /^menu_item_\d+(?:_v_\d+)?$/.test(rawText);
+          if (
+            !isMenuItemButton &&
+            (rawText === "view_menu" ||
+              cleanText === "menu" ||
+              cleanText.includes("menu") ||
+              /\bmenu\b/i.test(lowerText))
+          ) {
+            const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
+
+            await sendMenuVisual(adapter, msg.phone, restaurantId, "Ee roju menu idi andi 👇", webMenuUrl);
+            return;
+          }
+
+          // ── Direct Action 2: Location & Hours ────────────────────────────────
+          if (
+            rawText !== "pin_new_location_btn" &&
+            (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("where are you located") || lowerText.includes("restaurant location") || lowerText.includes("opening hours") || lowerText.includes("your location"))
+          ) {
+            const city = cfg?.restaurantCity ?? "Hyderabad";
+            const locationMsg = `*${rName}*, ${city}\nEvening service 7:30 PM nunchi andi.`;
+            await adapter.sendText(msg.phone, locationMsg);
+            return;
+          }
+
+          // ── Direct Action 3: Dish photo request (e.g. "chepala pulusu photo pampandi") ──
+          const photoKeywords = ["photo", "pic ", "pics", "picture", "image", "chupinchu", "chupincharu", "choodali", "chudali"];
+          if (photoKeywords.some((k) => lowerText.includes(k))) {
+            const items = await prisma.menuItem.findMany({
+              where: { available: true, imageUrl: { not: null } },
+              select: { name: true, imageUrl: true },
+            });
+            const matched = items.find((item) => {
+              const nameWords = item.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+              const hits = nameWords.filter((w) => lowerText.includes(w)).length;
+              return hits >= Math.min(2, nameWords.length);
+            });
+            if (matched?.imageUrl) {
+              await adapter.sendImage(msg.phone, matched.imageUrl, matched.name);
+              return;
+            }
+            // No confident dish match or no photo on file — fall through to the normal reply.
+          }
+
+          // ── Direct Action 4: Item Selection (carousel/list "Add" or variant pick) ──
+          // Formats: menu_item_<id>  OR  menu_item_<id>_v_<variantId>
+          const itemMatch = rawText.match(/^menu_item_(\d+)(?:_v_(\d+))?$/);
+          if (itemMatch) {
+            const itemId = parseInt(itemMatch[1], 10);
+            const pickedVariantId = itemMatch[2] ? parseInt(itemMatch[2], 10) : undefined;
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+
+            const item = await prisma.menuItem.findUnique({
+              where: { id: itemId },
+              include: { variants: { where: { available: true }, orderBy: { sortOrder: "asc" } } },
+            });
+            if (!item || !item.available) {
+              await adapter.sendText(msg.phone, "Aa item ee roju ledu andi.");
+              return;
+            }
+
+            // Item has an Annam/Bagara (or other) variant choice but none picked → ask which one.
+            if (item.variants.length > 0 && !pickedVariantId) {
+              await adapter.sendInteractiveButtons(
+                msg.phone,
+                `*${item.name}* — bagara tho aa, annam tho aa andi?`,
+                item.variants.slice(0, 3).map((v) => ({
+                  id: `menu_item_${item.id}_v_${v.id}`,
+                  title: `${v.name} ₹${v.price}`.slice(0, 20),
+                })),
+              );
+              return;
+            }
+
+            // Load the current cart by the unique customerId (NOT filtered by expiry —
+            // a stale/expired row still occupies the unique slot, so we must upsert it).
+            const existing = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
+            let currentLines: any[] = [];
+            if (existing && existing.expiresAt > new Date() && existing.lines) {
+              try { currentLines = JSON.parse(existing.lines); } catch {}
+            }
+
+            const idx = currentLines.findIndex(
+              (l) => l.menuItemId === itemId && (l.variantId ?? null) === (pickedVariantId ?? null),
+            );
+            if (idx >= 0) currentLines[idx].qty += 1;
+            else currentLines.push({ menuItemId: itemId, qty: 1, ...(pickedVariantId ? { variantId: pickedVariantId } : {}) });
+
+            const menuItems = await prisma.menuItem.findMany({
+              where: { id: { in: currentLines.map((l) => l.menuItemId) } },
+              include: { variants: true },
+            });
+            const byId = new Map(menuItems.map((m) => [m.id, m]));
+
+            let total = 0;
+            const labels: string[] = [];
+            const validLines: any[] = [];
+            for (const l of currentLines) {
+              const mi = byId.get(l.menuItemId);
+              if (!mi || !mi.available) continue;
+              let price = mi.price;
+              let variantName: string | undefined;
+              if (l.variantId) {
+                const v = mi.variants.find((v) => v.id === l.variantId);
+                if (v) { price = v.price; variantName = v.name; }
+              }
+              validLines.push(l);
+              const label = variantName ? `${l.qty}x ${mi.name} (${variantName})` : `${l.qty}x ${mi.name}`;
+              labels.push(`${label} ₹${price * l.qty}`);
+              total += price * l.qty;
+            }
+
+            // A settled or expired cart is retired here rather than refusing the
+            // tap. PendingOrder is unique per customer, so a completed order left
+            // the row at ORDER_PLACED and locked the customer out of ever ordering
+            // again — adding an item is a clear signal they want a new order.
+            if (existing && (isLocked(existing.stage) || existing.expiresAt <= new Date())) {
+              await clearFinishedCart(cust.id);
+              currentLines = [];
+              validLines.length = 0;
+              validLines.push({ menuItemId: itemId, qty: 1, ...(pickedVariantId ? { variantId: pickedVariantId } : {}) });
+            }
+
+            const CART_TTL_MS = 2 * 60 * 60 * 1000;
+            const expiresAt = new Date(Date.now() + CART_TTL_MS);
+            await prisma.pendingOrder.upsert({
+              where: { customerId: cust.id },
+              create: { customerId: cust.id, lines: JSON.stringify(validLines), type: "delivery", expiresAt },
+              update: { lines: JSON.stringify(validLines), expiresAt },
+            });
+
+            // Rewind the stage and void any outstanding payment link — the cart the
+            // customer is holding a link for no longer exists. Keeps the address.
+            await applyCartEdit(cust.id, adapter, msg.phone);
+
+            const cart = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
+            await send(
+              adapter,
               msg.phone,
-              `*${item.name}* — bagara tho aa, annam tho aa andi?`,
-              item.variants.slice(0, 3).map((v) => ({
-                id: `menu_item_${item.id}_v_${v.id}`,
-                title: `${v.name} ₹${v.price}`.slice(0, 20),
-              })),
+              renderCartSummary({
+                items: labels,
+                subtotal: total,
+                stage: cart?.stage ?? "BUILDING_CART",
+              }),
             );
             return;
           }
 
-          // Load the current cart by the unique customerId (NOT filtered by expiry —
-          // a stale/expired row still occupies the unique slot, so we must upsert it).
-          const existing = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
-          let currentLines: any[] = [];
-          if (existing && existing.expiresAt > new Date() && existing.lines) {
-            try { currentLines = JSON.parse(existing.lines); } catch {}
-          }
+          // ── Direct Action 4b: Use Saved Address vs Pin New Location ──────────────
+          // Both id spellings are accepted — older messages in customers' chat
+          // history still carry "use_saved_address", and a stale button must not
+          // fall through to the model.
+          if (
+            rawText.startsWith("saved_addr_") ||
+            rawText === "use_saved_address_btn" ||
+            rawText.includes("use_saved_address") ||
+            cleanText.includes("use saved address") ||
+            cleanText.includes("saved address") ||
+            cleanText === "use saved address"
+          ) {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const prevOrders = await prisma.order.findMany({
+              where: { customerId: cust.id, deliveryAddress: { not: null } },
+              orderBy: { createdAt: "desc" },
+              take: 10,
+            });
 
-          const idx = currentLines.findIndex(
-            (l) => l.menuItemId === itemId && (l.variantId ?? null) === (pickedVariantId ?? null),
-          );
-          if (idx >= 0) currentLines[idx].qty += 1;
-          else currentLines.push({ menuItemId: itemId, qty: 1, ...(pickedVariantId ? { variantId: pickedVariantId } : {}) });
-
-          const menuItems = await prisma.menuItem.findMany({
-            where: { id: { in: currentLines.map((l) => l.menuItemId) } },
-            include: { variants: true },
-          });
-          const byId = new Map(menuItems.map((m) => [m.id, m]));
-
-          let total = 0;
-          const labels: string[] = [];
-          const validLines: any[] = [];
-          for (const l of currentLines) {
-            const mi = byId.get(l.menuItemId);
-            if (!mi || !mi.available) continue;
-            let price = mi.price;
-            let variantName: string | undefined;
-            if (l.variantId) {
-              const v = mi.variants.find((v) => v.id === l.variantId);
-              if (v) { price = v.price; variantName = v.name; }
+            const addressesSet = new Set<string>();
+            if (cust.address) addressesSet.add(cust.address);
+            for (const o of prevOrders) {
+              if (o.deliveryAddress) addressesSet.add(o.deliveryAddress);
             }
-            validLines.push(l);
-            const label = variantName ? `${l.qty}x ${mi.name} (${variantName})` : `${l.qty}x ${mi.name}`;
-            labels.push(`${label} ₹${price * l.qty}`);
-            total += price * l.qty;
-          }
+            const addressList = Array.from(addressesSet);
 
-          // A settled or expired cart is retired here rather than refusing the
-          // tap. PendingOrder is unique per customer, so a completed order left
-          // the row at ORDER_PLACED and locked the customer out of ever ordering
-          // again — adding an item is a clear signal they want a new order.
-          if (existing && (isLocked(existing.stage) || existing.expiresAt <= new Date())) {
-            await clearFinishedCart(cust.id);
-            currentLines = [];
-            validLines.length = 0;
-            validLines.push({ menuItemId: itemId, qty: 1, ...(pickedVariantId ? { variantId: pickedVariantId } : {}) });
-          }
+            // If specific row selected from list:
+            if (rawText.startsWith("saved_addr_")) {
+              const idx = parseInt(rawText.replace("saved_addr_", ""), 10);
+              const selectedAddr = addressList[idx];
+              if (selectedAddr) {
+                await prisma.customer.update({
+                  where: { id: cust.id },
+                  data: { address: selectedAddr },
+                });
 
-          const CART_TTL_MS = 2 * 60 * 60 * 1000;
-          const expiresAt = new Date(Date.now() + CART_TTL_MS);
-          await prisma.pendingOrder.upsert({
-            where: { customerId: cust.id },
-            create: { customerId: cust.id, lines: JSON.stringify(validLines), type: "delivery", expiresAt },
-            update: { lines: JSON.stringify(validLines), expiresAt },
-          });
+                const pending = await prisma.pendingOrder.findFirst({
+                  where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+                });
 
-          // Rewind the stage and void any outstanding payment link — the cart the
-          // customer is holding a link for no longer exists. Keeps the address.
-          await applyCartEdit(cust.id, adapter, msg.phone);
+                let subtotal = 0;
+                const labels: string[] = [];
+                if (pending && pending.lines) {
+                  let lines: any[] = [];
+                  try { lines = JSON.parse(pending.lines); } catch {}
+                  const menuItems = await prisma.menuItem.findMany({
+                    where: { id: { in: lines.map((l) => l.menuItemId) } },
+                    include: { variants: true }
+                  });
+                  const byId = new Map(menuItems.map((m) => [m.id, m]));
+                  for (const l of lines) {
+                    const mi = byId.get(l.menuItemId);
+                    if (!mi) continue;
+                    let p = mi.price;
+                    let vName: string | undefined;
+                    if (l.variantId) {
+                      const v = mi.variants.find((v) => v.id === l.variantId);
+                      if (v) { p = v.price; vName = v.name; }
+                    }
+                    const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
+                    labels.push(`${label} ₹${p * l.qty}`);
+                    subtotal += p * l.qty;
+                  }
+                }
 
-          const cart = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
-          await send(
-            adapter,
-            msg.phone,
-            renderCartSummary({
-              items: labels,
-              subtotal: total,
-              stage: cart?.stage ?? "BUILDING_CART",
-            }),
-          );
-          return;
-        }
+                let deliveryFee = 45;
+                try {
+                  deliveryFee = await getExactServiceDeliveryFee(selectedAddr);
+                } catch (err) {
+                  await adapter.sendInteractiveButtons(
+                    msg.phone,
+                    `❌ *Delivery Location Not Serviceable*\n\nSorry, this delivery location is currently not serviceable by our delivery partners. Please pick another location or pin a location nearby!`,
+                    [
+                      { id: "pin_new_location_btn", title: "🗺️ Pin New Location" },
+                      { id: "use_saved_address_btn", title: "📍 Select Address" }
+                    ],
+                    "📦 Delivery Location",
+                  );
+                  return;
+                }
 
-        // ── Direct Action 4b: Use Saved Address vs Pin New Location ──────────────
-        // Both id spellings are accepted — older messages in customers' chat
-        // history still carry "use_saved_address", and a stale button must not
-        // fall through to the model.
-        if (
-          rawText.startsWith("saved_addr_") ||
-          rawText === "use_saved_address_btn" ||
-          rawText.includes("use_saved_address") ||
-          cleanText.includes("use saved address") ||
-          cleanText.includes("saved address") ||
-          cleanText === "use saved address"
-        ) {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const prevOrders = await prisma.order.findMany({
-            where: { customerId: cust.id, deliveryAddress: { not: null } },
-            orderBy: { createdAt: "desc" },
-            take: 10,
-          });
+                const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
+                const grandTotal = subtotal + deliveryFee;
+                const summaryMsg = orderStagedTemplate(labels, subtotal, "delivery", pending?.note ?? undefined, deliveryFee, selectedAddr);
+                let payUrl: string | null = null;
+                if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
+                  const payRes = await createPaymentLink({
+                    restaurantId,
+                    customerId: cust.id,
+                    amount: grandTotal,
+                    customerPhone: msg.phone,
+                    restaurantName: botConfig.restaurantName,
+                  });
+                  if (payRes?.url) payUrl = payRes.url;
+                }
 
-          const addressesSet = new Set<string>();
-          if (cust.address) addressesSet.add(cust.address);
-          for (const o of prevOrders) {
-            if (o.deliveryAddress) addressesSet.add(o.deliveryAddress);
-          }
-          const addressList = Array.from(addressesSet);
+                if (payUrl) {
+                  await adapter.sendInteractiveCtaUrl(
+                    msg.phone,
+                    summaryMsg,
+                    `💳 Confirm & Pay ₹${grandTotal}`,
+                    payUrl,
+                  );
+                } else {
+                  await adapter.sendInteractiveButtons(
+                    msg.phone,
+                    summaryMsg,
+                    [
+                      { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
+                      { id: "add_more_items_btn", title: "➕ Add More Items" },
+                    ],
+                    "🛒 Order Summary",
+                  );
+                }
+                return;
+              }
+            }
 
-          // If specific row selected from list:
-          if (rawText.startsWith("saved_addr_")) {
-            const idx = parseInt(rawText.replace("saved_addr_", ""), 10);
-            const selectedAddr = addressList[idx];
-            if (selectedAddr) {
-              await prisma.customer.update({
-                where: { id: cust.id },
-                data: { address: selectedAddr },
+            // Otherwise open the Interactive List Modal Sheet of all saved addresses
+            if (addressList.length > 0) {
+              const rows = addressList.map((addr, idx) => ({
+                id: `saved_addr_${idx}`,
+                title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
+                description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
+              }));
+
+              rows.push({
+                id: "pin_new_location_btn",
+                title: "🗺️ Pin New Location",
+                description: "Open Google Maps to pin a new delivery location",
               });
 
-              const pending = await prisma.pendingOrder.findFirst({
-                where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+              await adapter.sendInteractiveList(
+                msg.phone,
+                "📍 *Select Delivery Address*\n\nSelect a saved location from your previous orders or pin a new map location below:",
+                "📍 Select Address",
+                [{ title: "Saved Delivery Locations", rows }],
+                "📦 Delivery Location",
+              );
+              return;
+            }
+            await sendPinLocationPrompt(adapter, msg.phone);
+            return;
+          }
+
+          if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location")) {
+            await sendPinLocationPrompt(adapter, msg.phone);
+            return;
+          }
+
+          // ── Direct Action 4d: Order Type Selection (Pickup vs Delivery) ───────
+          if (rawText === "order_type_pickup" || cleanText === "pickup" || cleanText === "takeaway") {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const pending = await prisma.pendingOrder.findFirst({
+              where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+            });
+
+            if (pending) {
+              await prisma.pendingOrder.update({
+                where: { id: pending.id },
+                data: { type: "pickup" }
               });
 
+              let lines: any[] = [];
+              try { lines = JSON.parse(pending.lines); } catch {}
+              const menuItems = await prisma.menuItem.findMany({
+                where: { id: { in: lines.map((l) => l.menuItemId) } },
+                include: { variants: true }
+              });
+              const byId = new Map(menuItems.map((m) => [m.id, m]));
               let subtotal = 0;
               const labels: string[] = [];
-              if (pending && pending.lines) {
-                let lines: any[] = [];
-                try { lines = JSON.parse(pending.lines); } catch {}
-                const menuItems = await prisma.menuItem.findMany({
-                  where: { id: { in: lines.map((l) => l.menuItemId) } },
-                  include: { variants: true }
-                });
-                const byId = new Map(menuItems.map((m) => [m.id, m]));
-                for (const l of lines) {
-                  const mi = byId.get(l.menuItemId);
-                  if (!mi) continue;
-                  let p = mi.price;
-                  let vName: string | undefined;
-                  if (l.variantId) {
-                    const v = mi.variants.find((v) => v.id === l.variantId);
-                    if (v) { p = v.price; vName = v.name; }
-                  }
-                  const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
-                  labels.push(`${label} ₹${p * l.qty}`);
-                  subtotal += p * l.qty;
+              for (const l of lines) {
+                const mi = byId.get(l.menuItemId);
+                if (!mi) continue;
+                let p = mi.price;
+                let vName: string | undefined;
+                if (l.variantId) {
+                  const v = mi.variants.find((v) => v.id === l.variantId);
+                  if (v) { p = v.price; vName = v.name; }
                 }
-              }
-
-              let deliveryFee = 45;
-              try {
-                deliveryFee = await getExactServiceDeliveryFee(selectedAddr);
-              } catch (err) {
-                await adapter.sendInteractiveButtons(
-                  msg.phone,
-                  `❌ *Delivery Location Not Serviceable*\n\nSorry, this delivery location is currently not serviceable by our delivery partners. Please pick another location or pin a location nearby!`,
-                  [
-                    { id: "pin_new_location_btn", title: "🗺️ Pin New Location" },
-                    { id: "use_saved_address_btn", title: "📍 Select Address" }
-                  ],
-                  "📦 Delivery Location",
-                );
-                return;
+                const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
+                labels.push(`${label} ₹${p * l.qty}`);
+                subtotal += p * l.qty;
               }
 
               const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
-              const grandTotal = subtotal + deliveryFee;
-              const summaryMsg = orderStagedTemplate(labels, subtotal, "delivery", pending?.note ?? undefined, deliveryFee, selectedAddr);
+              const summaryMsg = orderStagedTemplate(labels, subtotal, "pickup", pending?.note ?? undefined);
+
               let payUrl: string | null = null;
               if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
                 const payRes = await createPaymentLink({
                   restaurantId,
                   customerId: cust.id,
-                  amount: grandTotal,
+                  amount: subtotal,
                   customerPhone: msg.phone,
                   restaurantName: botConfig.restaurantName,
                 });
@@ -972,7 +1079,7 @@ export class BotSessionManager {
                 await adapter.sendInteractiveCtaUrl(
                   msg.phone,
                   summaryMsg,
-                  `💳 Confirm & Pay ₹${grandTotal}`,
+                  `💳 Confirm & Pay ₹${subtotal}`,
                   payUrl,
                 );
               } else {
@@ -981,7 +1088,7 @@ export class BotSessionManager {
                   summaryMsg,
                   [
                     { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
-                    { id: "add_more_items_btn", title: "➕ Add More Items" },
+                    { id: "add_more_items_btn", title: "➕ Add More Items" }
                   ],
                   "🛒 Order Summary",
                 );
@@ -990,316 +1097,102 @@ export class BotSessionManager {
             }
           }
 
-          // Otherwise open the Interactive List Modal Sheet of all saved addresses
-          if (addressList.length > 0) {
-            const rows = addressList.map((addr, idx) => ({
-              id: `saved_addr_${idx}`,
-              title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
-              description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
-            }));
-
-            rows.push({
-              id: "pin_new_location_btn",
-              title: "🗺️ Pin New Location",
-              description: "Open Google Maps to pin a new delivery location",
+          if (rawText === "order_type_delivery" || cleanText === "delivery") {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const pending = await prisma.pendingOrder.findFirst({
+              where: { customerId: cust.id, expiresAt: { gt: new Date() } }
             });
 
-            await adapter.sendInteractiveList(
-              msg.phone,
-              "📍 *Select Delivery Address*\n\nSelect a saved location from your previous orders or pin a new map location below:",
-              "📍 Select Address",
-              [{ title: "Saved Delivery Locations", rows }],
-              "📦 Delivery Location",
-            );
-            return;
-          }
-          await sendPinLocationPrompt(adapter, msg.phone);
-          return;
-        }
-
-        if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location")) {
-          await sendPinLocationPrompt(adapter, msg.phone);
-          return;
-        }
-
-        // ── Direct Action 4d: Order Type Selection (Pickup vs Delivery) ───────
-        if (rawText === "order_type_pickup" || cleanText === "pickup" || cleanText === "takeaway") {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
-          });
-
-          if (pending) {
-            await prisma.pendingOrder.update({
-              where: { id: pending.id },
-              data: { type: "pickup" }
-            });
-
-            let lines: any[] = [];
-            try { lines = JSON.parse(pending.lines); } catch {}
-            const menuItems = await prisma.menuItem.findMany({
-              where: { id: { in: lines.map((l) => l.menuItemId) } },
-              include: { variants: true }
-            });
-            const byId = new Map(menuItems.map((m) => [m.id, m]));
-            let subtotal = 0;
-            const labels: string[] = [];
-            for (const l of lines) {
-              const mi = byId.get(l.menuItemId);
-              if (!mi) continue;
-              let p = mi.price;
-              let vName: string | undefined;
-              if (l.variantId) {
-                const v = mi.variants.find((v) => v.id === l.variantId);
-                if (v) { p = v.price; vName = v.name; }
-              }
-              const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
-              labels.push(`${label} ₹${p * l.qty}`);
-              subtotal += p * l.qty;
-            }
-
-            const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
-            const summaryMsg = orderStagedTemplate(labels, subtotal, "pickup", pending?.note ?? undefined);
-
-            let payUrl: string | null = null;
-            if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
-              const payRes = await createPaymentLink({
-                restaurantId,
-                customerId: cust.id,
-                amount: subtotal,
-                customerPhone: msg.phone,
-                restaurantName: botConfig.restaurantName,
+            if (pending) {
+              await prisma.pendingOrder.update({
+                where: { id: pending.id },
+                data: { type: "delivery" }
               });
-              if (payRes?.url) payUrl = payRes.url;
-            }
 
-            if (payUrl) {
-              await adapter.sendInteractiveCtaUrl(
-                msg.phone,
-                summaryMsg,
-                `💳 Confirm & Pay ₹${subtotal}`,
-                payUrl,
-              );
-            } else {
-              await adapter.sendInteractiveButtons(
-                msg.phone,
-                summaryMsg,
-                [
-                  { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
-                  { id: "add_more_items_btn", title: "➕ Add More Items" }
-                ],
-                "🛒 Order Summary",
-              );
+              const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
+              const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
+
+              // Collect saved addresses
+              const prevOrders = await prisma.order.findMany({
+                where: { customerId: cust.id, deliveryAddress: { not: null } },
+                orderBy: { createdAt: "desc" },
+                take: 10,
+              });
+              const addressesSet = new Set<string>();
+              if (cust.address) addressesSet.add(cust.address);
+              for (const o of prevOrders) {
+                if (o.deliveryAddress) addressesSet.add(o.deliveryAddress);
+              }
+              const addressList = Array.from(addressesSet);
+
+              if (addressList.length > 0) {
+                // Directly open interactive list — no intermediate step
+                const rows = addressList.map((addr, idx) => ({
+                  id: `saved_addr_${idx}`,
+                  title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
+                  description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
+                }));
+                rows.push({
+                  id: "pin_new_location_btn",
+                  title: "🗺️ Pin on Map",
+                  description: "Open Google Maps to pin a new address",
+                });
+                await adapter.sendInteractiveList(
+                  msg.phone,
+                  "📦 *Delivery Location*\n\nSelect a saved address or pin a new location on the map:",
+                  "📍 Choose Address",
+                  [{ title: "Saved Addresses", rows }],
+                  "📦 Delivery Location",
+                );
+              } else {
+                // No saved addresses — directly open the map link
+                await adapter.sendInteractiveCtaUrl(
+                  msg.phone,
+                  "📦 *Delivery Location Required*\n\nTap below to open Google Maps and pin your delivery address 👇",
+                  "🗺️ Pin Location on Map",
+                  mapFormUrl,
+                );
+              }
+              return;
             }
-            return;
           }
-        }
 
-        if (rawText === "order_type_delivery" || cleanText === "delivery") {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
-          });
-
-          if (pending) {
-            await prisma.pendingOrder.update({
-              where: { id: pending.id },
-              data: { type: "delivery" }
-            });
-
+          if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location") || cleanText.includes("enter new address")) {
             const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
             const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
 
-            // Collect saved addresses
-            const prevOrders = await prisma.order.findMany({
-              where: { customerId: cust.id, deliveryAddress: { not: null } },
-              orderBy: { createdAt: "desc" },
-              take: 10,
+            await adapter.sendInteractiveCtaUrl(
+              msg.phone,
+              "📍 Tap the button below to open Google Maps & pin your delivery address 👇",
+              "🗺️ Pin Location on Map",
+              mapFormUrl,
+            );
+            return;
+          }
+
+          // ── Direct Action 5: Confirm Order Button ──────────────────────────────
+          if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const pending = await prisma.pendingOrder.findFirst({
+              where: { customerId: cust.id, expiresAt: { gt: new Date() } }
             });
-            const addressesSet = new Set<string>();
-            if (cust.address) addressesSet.add(cust.address);
-            for (const o of prevOrders) {
-              if (o.deliveryAddress) addressesSet.add(o.deliveryAddress);
+
+            if (!pending || !pending.lines || pending.lines === "[]") {
+              await adapter.sendText(msg.phone, "Cart empty andi. *📋 Menu* tap cheyandi.");
+              return;
             }
-            const addressList = Array.from(addressesSet);
 
-            if (addressList.length > 0) {
-              // Directly open interactive list — no intermediate step
-              const rows = addressList.map((addr, idx) => ({
-                id: `saved_addr_${idx}`,
-                title: addr.length > 24 ? addr.slice(0, 21) + "…" : addr,
-                description: addr.length > 72 ? addr.slice(0, 69) + "…" : addr,
-              }));
-              rows.push({
-                id: "pin_new_location_btn",
-                title: "🗺️ Pin on Map",
-                description: "Open Google Maps to pin a new address",
-              });
-              await adapter.sendInteractiveList(
-                msg.phone,
-                "📦 *Delivery Location*\n\nSelect a saved address or pin a new location on the map:",
-                "📍 Choose Address",
-                [{ title: "Saved Addresses", rows }],
-                "📦 Delivery Location",
-              );
-            } else {
-              // No saved addresses — directly open the map link
-              await adapter.sendInteractiveCtaUrl(
-                msg.phone,
-                "📦 *Delivery Location Required*\n\nTap below to open Google Maps and pin your delivery address 👇",
-                "🗺️ Pin Location on Map",
-                mapFormUrl,
-              );
+            // This cart already has a location chosen for it, so go straight to the
+            // bill. Re-asking after every cart edit made the journey restart under
+            // the customer: pick address, edit cart, pick the same address again.
+            // A new order starts at BUILDING_CART, so it still gets the picker.
+            if (pending.stage !== "BUILDING_CART" && cust.address) {
+              await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, cust.address);
+              return;
             }
-            return;
-          }
-        }
 
-        if (rawText === "pin_new_location_btn" || cleanText.includes("pin new location") || cleanText.includes("enter new address")) {
-          const serverUrl = process.env.SERVER_URL || "https://robe-sagging-envoy.ngrok-free.dev";
-          const mapFormUrl = `${serverUrl}/address?phone=${encodeURIComponent(msg.phone)}`;
-
-          await adapter.sendInteractiveCtaUrl(
-            msg.phone,
-            "📍 Tap the button below to open Google Maps & pin your delivery address 👇",
-            "🗺️ Pin Location on Map",
-            mapFormUrl,
-          );
-          return;
-        }
-
-        // ── Direct Action 5: Confirm Order Button ──────────────────────────────
-        if (rawText === "confirm_order_btn" || cleanText === "confirm order") {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
-          });
-
-          if (!pending || !pending.lines || pending.lines === "[]") {
-            await adapter.sendText(msg.phone, "Cart empty andi. *📋 Menu* tap cheyandi.");
-            return;
-          }
-
-          // This cart already has a location chosen for it, so go straight to the
-          // bill. Re-asking after every cart edit made the journey restart under
-          // the customer: pick address, edit cart, pick the same address again.
-          // A new order starts at BUILDING_CART, so it still gets the picker.
-          if (pending.stage !== "BUILDING_CART" && cust.address) {
-            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, cust.address);
-            return;
-          }
-
-          // Location is never assumed for a fresh order — customers order to home,
-          // office and elsewhere on different days.
-          const savedAddresses = await savedAddressesFor(cust.id, cust.address);
-
-          if (savedAddresses.length > 0) {
-            await sendAddressPickerList(adapter, msg.phone, savedAddresses);
-            return;
-          }
-
-          await sendPinLocationPrompt(adapter, msg.phone);
-          return;
-        }
-
-        // ── Direct Action 5b: Customer picked one of their saved addresses ─────
-        const savedAddrChoice = rawText.match(/^use_addr_(\d+)$/);
-        if (savedAddrChoice) {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const list = await savedAddressesFor(cust.id, cust.address);
-          const chosen = list[Number(savedAddrChoice[1])];
-
-          if (!chosen) {
-            await sendPinLocationPrompt(adapter, msg.phone);
-            return;
-          }
-
-          await prisma.customer.update({
-            where: { id: cust.id },
-            data: { address: chosen },
-          });
-          await prisma.pendingOrder.updateMany({
-            where: { customerId: cust.id },
-            data: { stage: "ADDRESS_SELECTED" },
-          });
-          await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, chosen);
-          return;
-
-        }
-
-        // ── Direct Action 6: Add More Items Button ──────────────────────────────
-        if (rawText === "add_more_items_btn") {
-          const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
-          await sendMenuVisual(adapter, msg.phone, restaurantId, "Inka em kavali andi?", webMenuUrl);
-          return;
-        }
-
-        // Cash / pay-on-delivery is deliberately gone: every order is prepaid via
-        // Razorpay, so an order must never be created before the webhook fires.
-        // Nothing emits these any more, but old buttons live on in customers'
-        // chat history and a stale tap must not reach the model.
-        if (
-          rawText === "pay_method_cash" ||
-          rawText === "pay_method_upi" ||
-          rawText === "pay_method_razorpay" ||
-          cleanText === "cash on pickup" ||
-          cleanText === "pay cash"
-        ) {
-          await adapter.sendText(
-            msg.phone,
-            "Payment antha online ne andi 🙏 Pai lo unna *Pay* button tap cheyandi.",
-          );
-          return;
-        }
-
-        // The flat/door follow-up that used to live here is gone. The map form
-        // already requires flat, building and landmark and posts them composed
-        // into the address, so this only made the customer type it all twice —
-        // and it appended whatever they said next to their saved address, which
-        // is how one record ended up as "<address> — already add chesa".
-
-        // ── Direct Action: "which address?" ───────────────────────────────────
-        // Answered from stored state. Left to the model this replied "meeru inka
-        // delivery address set cheyaledu" while an address was on file and a
-        // payment link had already been issued, then offered a change_address
-        // button it had invented, which called save_customer_info with an empty
-        // address and tried to wipe the record.
-        const asksAddress =
-          rawText === "change_address" ||
-          /\b(address|adress)\b/i.test(cleanText) ||
-          cleanText.includes("ekkada deliver") ||
-          cleanText.includes("ey address");
-
-        if (asksAddress) {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-
-          if (rawText === "change_address") {
-            const saved = await savedAddressesFor(cust.id, cust.address);
-            if (saved.length > 0) await sendAddressPickerList(adapter, msg.phone, saved);
-            else await sendPinLocationPrompt(adapter, msg.phone);
-            return;
-          }
-
-          if (cust.address) {
-            await send(adapter, msg.phone, renderCurrentAddress(cust.address));
-            return;
-          }
-
-          await sendPinLocationPrompt(adapter, msg.phone);
-          return;
-        }
-
-        // ── Direct Action: Text-based order confirmation ──────────────────────
-        // If the customer types "confirm", "yes", "haan" etc. AND has a staged
-        // cart, route through the same address → billing flow as the ✅ button.
-        const confirmWords = ["confirm", "yes", "haan", "ha", "sure", "ok", "okay", "avunu", "sare", "confirm order"];
-        if (confirmWords.includes(cleanText)) {
-          const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-          const pending = await prisma.pendingOrder.findFirst({
-            where: { customerId: cust.id, expiresAt: { gt: new Date() } }
-          });
-          if (pending && pending.lines && pending.lines !== "[]") {
-            // Same flow as confirm_order_btn — show saved addresses or pin prompt
+            // Location is never assumed for a fresh order — customers order to home,
+            // office and elsewhere on different days.
             const savedAddresses = await savedAddressesFor(cust.id, cust.address);
 
             if (savedAddresses.length > 0) {
@@ -1310,56 +1203,166 @@ export class BotSessionManager {
             await sendPinLocationPrompt(adapter, msg.phone);
             return;
           }
-        }
 
-        const { reply, mediaReply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
+          // ── Direct Action 5b: Customer picked one of their saved addresses ─────
+          const savedAddrChoice = rawText.match(/^use_addr_(\d+)$/);
+          if (savedAddrChoice) {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const list = await savedAddressesFor(cust.id, cust.address);
+            const chosen = list[Number(savedAddrChoice[1])];
 
-        // An empty reply means this message was folded into a turn already in
-        // flight for the same customer — that turn answers all of them at once,
-        // so there is nothing to send here.
-        if (!reply && !mediaReply) return;
+            if (!chosen) {
+              await sendPinLocationPrompt(adapter, msg.phone);
+              return;
+            }
 
-        console.log(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
+            await prisma.customer.update({
+              where: { id: cust.id },
+              data: { address: chosen },
+            });
+            await prisma.pendingOrder.updateMany({
+              where: { customerId: cust.id },
+              data: { stage: "ADDRESS_SELECTED" },
+            });
+            await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, chosen);
+            return;
 
-        if (mediaReply) {
-          await adapter.sendImage(msg.phone, mediaReply.imageUrl, mediaReply.caption);
-        }
+          }
 
-        // If the reply is a cart-staged message, send it with Delivery/Pickup buttons instead of plain text
-        if (reply.includes("🛒 *Your Cart:*") && reply.includes("How would you like your order?")) {
-          await adapter.sendInteractiveButtons(
-            msg.phone,
-            reply,
-            [
-              { id: "order_type_delivery", title: "🛵 Delivery" },
-              { id: "order_type_pickup", title: "🛍️ Pickup" },
-              { id: "add_more_items_btn", title: "➕ Add More" },
-            ],
-            "🛒 Your Cart",
-            "Choose order type to continue",
-          );
-        } else {
-          await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
+          // ── Direct Action 6: Add More Items Button ──────────────────────────────
+          if (rawText === "add_more_items_btn") {
+            const webMenuUrl = webMenuUrlFor(restaurantId, msg.phone);
+            await sendMenuVisual(adapter, msg.phone, restaurantId, "Inka em kavali andi?", webMenuUrl);
+            return;
+          }
+
+          // Cash / pay-on-delivery is deliberately gone: every order is prepaid via
+          // Razorpay, so an order must never be created before the webhook fires.
+          // Nothing emits these any more, but old buttons live on in customers'
+          // chat history and a stale tap must not reach the model.
+          if (
+            rawText === "pay_method_cash" ||
+            rawText === "pay_method_upi" ||
+            rawText === "pay_method_razorpay" ||
+            cleanText === "cash on pickup" ||
+            cleanText === "pay cash"
+          ) {
+            await adapter.sendText(
+              msg.phone,
+              "Payment antha online ne andi 🙏 Pai lo unna *Pay* button tap cheyandi.",
+            );
+            return;
+          }
+
+          // The flat/door follow-up that used to live here is gone. The map form
+          // already requires flat, building and landmark and posts them composed
+          // into the address, so this only made the customer type it all twice —
+          // and it appended whatever they said next to their saved address, which
+          // is how one record ended up as "<address> — already add chesa".
+
+          // ── Direct Action: "which address?" ───────────────────────────────────
+          // Answered from stored state. Left to the model this replied "meeru inka
+          // delivery address set cheyaledu" while an address was on file and a
+          // payment link had already been issued, then offered a change_address
+          // button it had invented, which called save_customer_info with an empty
+          // address and tried to wipe the record.
+          const asksAddress =
+            rawText === "change_address" ||
+            /\b(address|adress)\b/i.test(cleanText) ||
+            cleanText.includes("ekkada deliver") ||
+            cleanText.includes("ey address");
+
+          if (asksAddress) {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+
+            if (rawText === "change_address") {
+              const saved = await savedAddressesFor(cust.id, cust.address);
+              if (saved.length > 0) await sendAddressPickerList(adapter, msg.phone, saved);
+              else await sendPinLocationPrompt(adapter, msg.phone);
+              return;
+            }
+
+            if (cust.address) {
+              await send(adapter, msg.phone, renderCurrentAddress(cust.address));
+              return;
+            }
+
+            await sendPinLocationPrompt(adapter, msg.phone);
+            return;
+          }
+
+          // ── Direct Action: Text-based order confirmation ──────────────────────
+          // If the customer types "confirm", "yes", "haan" etc. AND has a staged
+          // cart, route through the same address → billing flow as the ✅ button.
+          const confirmWords = ["confirm", "yes", "haan", "ha", "sure", "ok", "okay", "avunu", "sare", "confirm order"];
+          if (confirmWords.includes(cleanText)) {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+            const pending = await prisma.pendingOrder.findFirst({
+              where: { customerId: cust.id, expiresAt: { gt: new Date() } }
+            });
+            if (pending && pending.lines && pending.lines !== "[]") {
+              // Same flow as confirm_order_btn — show saved addresses or pin prompt
+              const savedAddresses = await savedAddressesFor(cust.id, cust.address);
+
+              if (savedAddresses.length > 0) {
+                await sendAddressPickerList(adapter, msg.phone, savedAddresses);
+                return;
+              }
+
+              await sendPinLocationPrompt(adapter, msg.phone);
+              return;
+            }
+          }
+
+          const { reply, mediaReply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
+
+          // An empty reply means this message was folded into a turn already in
+          // flight for the same customer — that turn answers all of them at once,
+          // so there is nothing to send here.
+          if (!reply && !mediaReply) return;
+
+          logger.info(`[${restaurantName}] 🤖 ${reply.replace(/\n+/g, " / ")}`);
+
+          if (mediaReply) {
+            await adapter.sendImage(msg.phone, mediaReply.imageUrl, mediaReply.caption);
+          }
+
+          // If the reply is a cart-staged message, send it with Delivery/Pickup buttons instead of plain text
+          if (reply.includes("🛒 *Your Cart:*") && reply.includes("How would you like your order?")) {
+            await adapter.sendInteractiveButtons(
+              msg.phone,
+              reply,
+              [
+                { id: "order_type_delivery", title: "🛵 Delivery" },
+                { id: "order_type_pickup", title: "🛍️ Pickup" },
+                { id: "add_more_items_btn", title: "➕ Add More" },
+              ],
+              "🛒 Your Cart",
+              "Choose order type to continue",
+            );
+          } else {
+            await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
+          }
+          if (placedOrderId) {
+            // Send formatted receipt to customer + notify owner in parallel
+            await Promise.all([
+              sendOrderReceipt(adapter, msg.phone, restaurantId, placedOrderId),
+              notifyOwner(adapter, restaurantId, placedOrderId),
+            ]);
+          }
+          if (humanHandoffRequested) {
+            await notifyOwnerOfHandoff(adapter, restaurantId, { name: customer?.name ?? null, phone: msg.phone }, msg.text);
+          }
+        } catch (e) {
+          logger.error(`[${restaurantName}] Handler error:`, e);
+          await adapter.sendText(msg.phone, systemErrorTemplate());
         }
-        if (placedOrderId) {
-          // Send formatted receipt to customer + notify owner in parallel
-          await Promise.all([
-            sendOrderReceipt(adapter, msg.phone, restaurantId, placedOrderId),
-            notifyOwner(adapter, restaurantId, placedOrderId),
-          ]);
-        }
-        if (humanHandoffRequested) {
-          await notifyOwnerOfHandoff(adapter, restaurantId, { name: customer?.name ?? null, phone: msg.phone }, msg.text);
-        }
-      } catch (e) {
-        console.error(`[${restaurantName}] Handler error:`, e);
-        await adapter.sendText(msg.phone, systemErrorTemplate());
-      }
+      });
     });
 
     await adapter.start();
     this.sessions.set(restaurantId, adapter);
-    console.log(`✅ Bot session started: ${restaurantName} (restaurant ${restaurantId})`);
+    logger.info(`✅ Bot session started: ${restaurantName} (restaurant ${restaurantId})`);
 
     // Cloud/Kapso API is always connected — signal the dashboard immediately.
     if (config.whatsappProvider === "cloud" || config.whatsappProvider === "kapso") {
@@ -1374,7 +1377,7 @@ export class BotSessionManager {
       if (rId === restaurantId) this.phoneIdMap.delete(phoneId);
     }
     this.sessions.delete(restaurantId);
-    console.log(`🛑 Session removed for restaurant ${restaurantId}`);
+    logger.info(`🛑 Session removed for restaurant ${restaurantId}`);
   }
 
   /**
@@ -1387,7 +1390,7 @@ export class BotSessionManager {
       restaurantId = Array.from(this.sessions.keys())[0];
     }
     if (restaurantId === undefined) {
-      console.warn(`[Cloud] No active session found to handle incoming message`);
+      logger.warn(`[Cloud] No active session found to handle incoming message`);
       return;
     }
     const adapter = this.sessions.get(restaurantId);

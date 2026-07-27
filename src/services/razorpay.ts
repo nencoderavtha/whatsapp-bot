@@ -2,6 +2,7 @@ import Razorpay from "razorpay";
 import { createHmac } from "node:crypto";
 import { prisma } from "../db.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { logger } from './logger.js';
 
 function rzpError(e: any): string {
   return (
@@ -16,7 +17,7 @@ function rzpError(e: any): string {
 async function getClient(_restaurantId?: number): Promise<Razorpay | null> {
   const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   if (!cfg?.razorpayKeyId || !cfg.razorpayKeySecret) {
-    console.warn("[Razorpay] Keys not configured in RestaurantConfig");
+    logger.warn("[Razorpay] Keys not configured in RestaurantConfig");
     return null;
   }
   return new Razorpay({ key_id: cfg.razorpayKeyId, key_secret: cfg.razorpayKeySecret });
@@ -28,10 +29,10 @@ export async function cancelPaymentLink(linkId: string, restaurantId?: number): 
   if (!client) return false;
   try {
     await client.paymentLink.cancel(linkId);
-    console.log(`[Razorpay] Cancelled old payment link: ${linkId}`);
+    logger.info(`[Razorpay] Cancelled old payment link: ${linkId}`);
     return true;
   } catch (e: any) {
-    console.warn(`[Razorpay] Could not cancel payment link ${linkId}:`, rzpError(e));
+    logger.warn(`[Razorpay] Could not cancel payment link ${linkId}:`, rzpError(e));
     return false;
   }
 }
@@ -82,10 +83,10 @@ export async function createPaymentLink(params: {
       }).catch(() => {});
     }
 
-    console.log(`[Razorpay] New payment link created — ${shortUrl}`);
+    logger.info(`[Razorpay] New payment link created — ${shortUrl}`);
     return { id: linkId, url: shortUrl };
   } catch (e: any) {
-    console.error("[Razorpay] createPaymentLink failed —", rzpError(e));
+    logger.error("[Razorpay] createPaymentLink failed —", rzpError(e));
     throw new Error(`Razorpay: ${rzpError(e)}`);
   }
 }
@@ -100,7 +101,7 @@ export async function verifyWebhookSignature(
     // Fail closed. This used to return true, so with no secret configured ANY
     // unsigned POST to /webhook/razorpay could mark an order paid — fine behind an
     // obscure tunnel, not on a stable public URL.
-    console.error("[Razorpay] No webhook secret configured — rejecting webhook");
+    logger.error("[Razorpay] No webhook secret configured — rejecting webhook");
     return false;
   }
   const expected = createHmac("sha256", cfg.razorpayWebhookSecret)

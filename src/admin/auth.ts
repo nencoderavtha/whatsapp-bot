@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { logger } from '../services/logger.js';
 
 declare global {
   namespace Express {
@@ -127,7 +128,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: restaurantId } });
     res.json({ ok: true, restaurantId, restaurantName: restaurant?.restaurantName });
   } catch (e) {
-    console.error("[auth] login DB error:", e);
+    logger.error("[auth] login DB error:", e);
     res.status(503).json({ error: "Service temporarily unavailable — please try again in a moment" });
   }
 }
@@ -142,7 +143,7 @@ export async function meHandler(req: Request, res: Response): Promise<void> {
     const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
     res.json({ restaurantId: DEFAULT_RESTAURANT_ID, restaurantName: restaurant?.restaurantName });
   } catch (e) {
-    console.error("[auth] me DB error:", e);
+    logger.error("[auth] me DB error:", e);
     res.status(503).json({ error: "Service temporarily unavailable" });
   }
 }

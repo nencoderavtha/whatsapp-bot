@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
+import { logger } from './logger.js';
 
 /**
  * How long a lease is held before another instance may steal it.
@@ -82,7 +83,7 @@ export async function acquire(key: string): Promise<ConversationLease | null> {
         await prisma.conversationLock.deleteMany({ where: { key, holder } });
       } catch (e) {
         // Leaving the row costs one lease expiry, not correctness.
-        console.error(`[Lock] Could not release ${key}:`, e);
+        logger.error(`[Lock] Could not release ${key}:`, e);
       }
     },
   };
@@ -95,7 +96,7 @@ async function renew(key: string, holder: string): Promise<void> {
       data: { expiresAt: new Date(Date.now() + LEASE_MS) },
     });
   } catch (e) {
-    console.error(`[Lock] Renewal failed for ${key}:`, e);
+    logger.error(`[Lock] Renewal failed for ${key}:`, e);
   }
 }
 

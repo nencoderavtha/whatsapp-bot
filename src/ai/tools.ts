@@ -12,6 +12,7 @@ import { notifyAdminOfEvent } from "../services/events.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { logger } from '../services/logger.js';
 
 export interface PendingCart {
   lines: { menuItemId: number; variantId?: number; qty: number; note?: string }[];
@@ -204,11 +205,11 @@ export async function runTool(
         const proposed = typeof args.address === "string" ? args.address.trim() : undefined;
 
         if (args.address !== undefined && !proposed) {
-          console.warn(
+          logger.warn(
             `[save_customer_info] Refusing to clear the address for customer ${customerId} — empty value supplied.`,
           );
         } else if (proposed && hasPinnedAddress) {
-          console.warn(
+          logger.warn(
             `[save_customer_info] Ignoring model-supplied address for customer ${customerId} — a pinned location is already on file.`,
           );
         }
@@ -662,7 +663,7 @@ export async function runTool(
     }
   } catch (e: any) {
     const msg = e?.error?.description ?? e?.message ?? JSON.stringify(e) ?? "Unknown error";
-    console.error(`[tool:${name}] error:`, msg);
+    logger.error(`[tool:${name}] error:`, msg);
     void logActivity(restaurantId, "tool_error", `${name}: ${msg}`.slice(0, 300), { tool: name }, customerId);
     return { output: { error: msg } };
   }

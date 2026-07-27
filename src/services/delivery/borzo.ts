@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Borzo (WeFast Express) Delivery Integration Service
  * 
@@ -141,7 +142,7 @@ export class BorzoDeliveryService {
           // point still returns a (wrong) price. Surface it instead of silently
           // charging the customer whatever came back.
           if (data.parameter_warnings) {
-            console.warn(
+            logger.warn(
               "[Borzo] Quote returned parameter warnings:",
               JSON.stringify(data.parameter_warnings),
             );
@@ -160,7 +161,7 @@ export class BorzoDeliveryService {
           }
         }
       } catch (err) {
-        console.error("[Borzo API Error]", err);
+        logger.error("[Borzo API Error]", err);
       }
     }
 
@@ -217,8 +218,8 @@ export class BorzoDeliveryService {
         if (!res.ok) {
           // Log what we sent alongside the rejection. A bare "invalid_phone" on
           // points[0] is not actionable without seeing the value that produced it.
-          console.error(`[Borzo Dispatch] HTTP ${res.status}:`, raw.slice(0, 500));
-          console.error(
+          logger.error(`[Borzo Dispatch] HTTP ${res.status}:`, raw.slice(0, 500));
+          logger.error(
             "[Borzo Dispatch] payload was:",
             JSON.stringify({
               pickupAddress: params.pickupAddress,
@@ -238,7 +239,7 @@ export class BorzoDeliveryService {
             parameter_warnings?: unknown;
           };
           if (data.parameter_warnings) {
-            console.warn("[Borzo Dispatch] parameter warnings:", JSON.stringify(data.parameter_warnings));
+            logger.warn("[Borzo Dispatch] parameter warnings:", JSON.stringify(data.parameter_warnings));
           }
           if (data.is_successful && data.order?.order_id) {
             return {
@@ -253,7 +254,7 @@ export class BorzoDeliveryService {
           }
         }
       } catch (err) {
-        console.error("[Borzo Dispatch Error, using fallback]", err);
+        logger.error("[Borzo Dispatch Error, using fallback]", err);
       }
     }
 
