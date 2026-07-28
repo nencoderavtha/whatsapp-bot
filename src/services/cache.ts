@@ -1,4 +1,6 @@
 import { eventBus } from "./events.js";
+import { redis } from "./redis.js";
+import { logger } from "./logger.js";
 
 /**
  * Tiny in-memory per-restaurant cache for restaurant-global data that only
@@ -31,24 +33,68 @@ export async function getCached<T>(
   ttlMs: number = DEFAULT_TTL_MS,
 ): Promise<T> {
   const k = keyOf(restaurantId, key);
+  
+  // L1: In-memory cache
   const hit = store.get(k);
   if (hit && hit.expires > Date.now()) {
     return hit.value as T;
   }
+
+  // L2: Redis cache
+  if (redis) {
+    try {
+      const rHit = await redis.get(`cache:${k}`);
+      if (rHit) {
+        const value = JSON.parse(rHit) as T;
+        store.set(k, { value, expires: Date.now() + ttlMs });
+        return value;
+      }
+    } catch (e) {
+      logger.error(`[Redis Cache] get failed for ${k}:`, e);
+    }
+  }
+
+  // L3: Load from source
   const value = await loader();
+  
+  // Populate L1
   store.set(k, { value, expires: Date.now() + ttlMs });
+  
+  // Populate L2
+  if (redis) {
+    try {
+      await redis.set(`cache:${k}`, JSON.stringify(value), "PX", ttlMs);
+    } catch (e) {
+      logger.error(`[Redis Cache] set failed for ${k}:`, e);
+    }
+  }
+  
   return value;
 }
 
 /** Invalidate one key, or the whole restaurant when key is omitted. */
 export function invalidate(restaurantId: number, key?: string): void {
+  // L1 Invalidation
   if (key) {
     store.delete(keyOf(restaurantId, key));
-    return;
+  } else {
+    const prefix = `${restaurantId}:`;
+    for (const k of store.keys()) {
+      if (k.startsWith(prefix)) store.delete(k);
+    }
   }
-  const prefix = `${restaurantId}:`;
-  for (const k of store.keys()) {
-    if (k.startsWith(prefix)) store.delete(k);
+  
+  // L2 Invalidation
+  if (redis) {
+    if (key) {
+      redis.del(`cache:${keyOf(restaurantId, key)}`).catch(e => logger.error("[Redis Cache] del failed:", e));
+    } else {
+      // In a real environment with thousands of keys we'd use SCAN, 
+      // but for menu/config per restaurant this is safe enough.
+      redis.keys(`cache:${restaurantId}:*`).then(keys => {
+        if (keys.length > 0) redis.del(...keys);
+      }).catch(e => logger.error("[Redis Cache] keys/del failed:", e));
+    }
   }
 }
 

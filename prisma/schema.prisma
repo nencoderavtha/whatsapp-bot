@@ -229,7 +229,6 @@ enum OrderStage {
   ADDRESS_SELECTED
   QUOTE_GENERATED
   AWAITING_PAYMENT
-  PAYMENT_RECEIVED
   ORDER_PLACED
   /// Razorpay reported the link cancelled or the payment failed. The cart is
   /// intact and re-payable — without this the row sat at AWAITING_PAYMENT until

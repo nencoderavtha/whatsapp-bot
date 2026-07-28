@@ -185,7 +185,7 @@ Small, independent, can slot in anywhere after Phase 1.
 
 ---
 
-## Phase 5 — Redis
+## Phase 5 — Redis (✅ Completed)
 
 **Not a correctness fix — a latency fix.** Deferred deliberately until after Phase 3, because Phase 3 changes what state is hot and doing this first would mean caching the wrong things.
 

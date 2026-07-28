@@ -12,6 +12,8 @@ import { clearFinishedCart } from "../whatsapp/stage.js";
 import { logger } from '../services/logger.js';
 import { menuAsText } from "../services/menu.js";
 import { classifyIntent } from "./intent.js";
+import { missingSlots } from "../orchestrator/slots.js";
+import { nextAction } from "../orchestrator/transitions.js";
 
 export interface AgentResult {
   reply: string;
@@ -67,52 +69,28 @@ async function processIncoming(
   } else if (userText === "add_more_items_btn") {
     userText = "I want to add more items to my order";
   }
-  // Address and payment-method button ids are deliberately absent. Rewriting a
-  // tap into prose sent the model off to compose its own reply — which is how a
-  // customer asking about their address got told they had none, and how the
-  // address loop formed. Those ids are handled deterministically before the
-  // agent is reached; anything still arriving here is genuine free text.
 
-  // Retire a cart that is genuinely finished — settled, or past its TTL. The
-  // decision comes from the stage on the row, not from what the conversation
-  // looks like.
-  //
-  // What used to be here read the last five messages and wiped every message
-  // *and* the pending cart if the customer said "menu", if fifteen minutes had
-  // passed, or if any assistant reply contained "order confirmed" / "ready in".
-  // All three misfire on a live order: the bot says "ready in 30 mins" while a
-  // cart is still being built, and the cart — address, quote, payment link —
-  // vanishes mid-order. That is the workflow restart this platform is not
-  // allowed to do. Staleness is now handled where it belongs, by trimming the
-  // model's context window rather than deleting the customer's history.
   await clearFinishedCart(customer.id);
-
   await logMessage(customer.id, "user", userText);
 
   const history = await conversationWindow(customer.id, 6);
   const isFirstMessage = history.length === 1;
 
-  const [system, tools, menuText] = await Promise.all([
+  const [system, tools, menuText, draft] = await Promise.all([
     buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage, customer.id),
     getEnabledTools(restaurantId),
     menuAsText(restaurantId),
+    prisma.pendingOrder.findUnique({ where: { customerId: customer.id } }),
   ]);
 
-  const intentPromise = classifyIntent(
+  const intentResult = await classifyIntent(
     history.map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
     userText,
     menuText
   );
 
-  const messages: ChatCompletionMessageParam[] = [
-    { role: "system", content: system },
-    ...history.map(
-      (m): ChatCompletionMessageParam => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
-      }),
-    ),
-  ];
+  const missing = missingSlots(draft, customer);
+  const action = nextAction(draft?.stage ?? "BUILDING_CART", intentResult, missing);
 
   let placedOrderId: number | undefined;
   let humanHandoffRequested = false;
@@ -123,51 +101,148 @@ async function processIncoming(
 
   const startedAt = Date.now();
 
-  for (let hop = 0; hop < 6; hop++) {
-    const { content, toolCalls } = await completeChat({
-      messages,
-      tools,
-      temperature: 0.3,
-      maxTokens: 400,
-    });
+  try {
+    void logActivity(
+      restaurantId,
+      "intent_shadow", // keep same log type for continuity
+      `Intent: ${intentResult.intent} -> Action: ${action.kind} (${action.kind === "mutate" ? action.op : action.kind === "render" ? action.type : ""})`,
+      { intent: intentResult, action, userText },
+      customer.id
+    );
+  } catch (e) {
+    logger.error("[agent] Intent classification logging failed:", e);
+  }
 
-    if (!toolCalls.length) {
-      if (content && !looksLikeToolGarbage(content)) finalText = content;
-      break;
-    }
-
-    messages.push({
-      role: "assistant",
-      content: content ?? null,
-      tool_calls: toolCalls as any,
-    } as any);
-
-    for (const tc of toolCalls) {
-      if (tc.type !== "function") continue;
-      let args: Record<string, any> = {};
-      try {
-        args = JSON.parse(tc.function.arguments || "{}");
-      } catch {
-        args = {};
+  if (action.kind === "clarify") {
+    finalText = action.text;
+  } else if (action.kind === "mutate") {
+    let output: any;
+    
+    if (["add_items", "remove_items", "update_items", "clear_cart"].includes(action.op)) {
+      let currentLines: any[] = [];
+      if (draft && draft.lines) {
+        try { currentLines = JSON.parse(draft.lines); } catch (e) {}
       }
 
-      logger.info(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
-      executedTools.push(tc.function.name);
-      const { output, orderId, templateReply: tr, humanHandoff, mediaReply: mr } = await runTool(customer.id, restaurantId, tc.function.name, args);
-      logger.info(`[agent] ← ${tc.function.name}:`, JSON.stringify(output).slice(0, 300));
-      if (orderId) placedOrderId = orderId;
-      if (humanHandoff) humanHandoffRequested = true;
-      if (tr) templateReply = tr;
-      if (mr) mediaReply = mr;
+      const deltaItems = action.args?.items || [];
+      
+      if (action.op === "clear_cart") {
+        currentLines = [];
+      } else if (action.op === "add_items") {
+        for (const item of deltaItems) {
+          const ex = currentLines.find((l: any) => l.menuItemId === item.menuItemId && l.variantId === item.variantId);
+          if (ex) {
+            ex.qty += (item.qty || 1);
+          } else {
+            currentLines.push({ menuItemId: item.menuItemId, variantId: item.variantId, qty: item.qty || 1, note: item.note });
+          }
+        }
+      } else if (action.op === "remove_items") {
+        for (const item of deltaItems) {
+          currentLines = currentLines.filter((l: any) => !(l.menuItemId === item.menuItemId && (item.variantId ? l.variantId === item.variantId : true)));
+        }
+      } else if (action.op === "update_items") {
+        for (const item of deltaItems) {
+          const ex = currentLines.find((l: any) => l.menuItemId === item.menuItemId && (item.variantId ? l.variantId === item.variantId : true));
+          if (ex) {
+            ex.qty = item.qty || 1;
+            if (item.note) ex.note = item.note;
+          }
+        }
+      }
+
+      executedTools.push("propose_order");
+      const res = await runTool(customer.id, restaurantId, "propose_order", { items: currentLines });
+      output = res.output;
+      templateReply = res.templateReply;
+    } 
+    else if (action.op === "confirm_order") {
+      executedTools.push("confirm_order");
+      const res = await runTool(customer.id, restaurantId, "confirm_order", {});
+      output = res.output;
+      templateReply = res.templateReply;
+    }
+    else if (action.op === "cancel_order") {
+      executedTools.push("cancel_order");
+      const res = await runTool(customer.id, restaurantId, "cancel_order", {});
+      output = res.output;
+      templateReply = res.templateReply;
+    }
+    else if (action.op === "check_status") {
+      executedTools.push("check_order_status");
+      const res = await runTool(customer.id, restaurantId, "check_order_status", {});
+      output = res.output;
+      templateReply = res.templateReply;
+    }
+    else if (action.op === "request_human") {
+      humanHandoffRequested = true;
+      templateReply = fallbackTemplate(); 
+    }
+    else if (action.op === "change_address" || action.op === "select_address") {
+      templateReply = "Delivery address cheppandi, ekkadiki pampali? (e.g., 'Deliver to 123 Main St')";
+    }
+  } else if (action.kind === "render") {
+    if (action.type === "request_address") {
+      templateReply = "Delivery address inka ivvaledu andi, ekkadiki pampali?";
+    } else if (action.type === "request_payment") {
+      templateReply = "Payment inka complete kaledu andi. Please pay using the link provided previously.";
+    }
+  }
+
+  if (action.kind === "reply_freeform" || (!templateReply && !finalText)) {
+    const messages: ChatCompletionMessageParam[] = [
+      { role: "system", content: system },
+      ...history.map(
+        (m): ChatCompletionMessageParam => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.content,
+        }),
+      ),
+    ];
+
+    for (let hop = 0; hop < 3; hop++) {
+      const { content, toolCalls } = await completeChat({
+        messages,
+        tools: tools,
+        temperature: 0.3,
+        maxTokens: 400,
+      });
+
+      if (!toolCalls.length) {
+        if (content && !looksLikeToolGarbage(content)) finalText = content;
+        break;
+      }
 
       messages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: JSON.stringify(output),
+        role: "assistant",
+        content: content ?? null,
+        tool_calls: toolCalls as any,
       } as any);
-    }
 
-    if (templateReply) break;
+      for (const tc of toolCalls) {
+        if (tc.type !== "function") continue;
+        let args: Record<string, any> = {};
+        try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+
+        logger.info(`[agent] → tool: ${tc.function.name}  args: ${JSON.stringify(args)}`);
+        executedTools.push(tc.function.name);
+        const { output: o, orderId: oid, templateReply: tr, humanHandoff: hh, mediaReply: mr } = await runTool(customer.id, restaurantId, tc.function.name, args);
+        logger.info(`[agent] ← ${tc.function.name}:`, JSON.stringify(o).slice(0, 300));
+        
+        if (oid) placedOrderId = oid;
+        if (hh) humanHandoffRequested = true;
+        if (tr) templateReply = tr;
+        if (mr) mediaReply = mr;
+
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(o),
+        } as any);
+      }
+
+      if (templateReply) break;
+    }
   }
 
   const usedFallback = !templateReply && !finalText;
@@ -180,21 +255,8 @@ async function processIncoming(
     void logActivity(restaurantId, "fallback", `Fell back to generic reply for: ${userText.slice(0, 80)}`, undefined, customer.id);
   }
 
-  try {
-    const intentResult = await intentPromise;
-    void logActivity(
-      restaurantId,
-      "intent_shadow",
-      `Intent: ${intentResult.intent} vs Tools: ${executedTools.length ? executedTools.join(", ") : "none"}`,
-      { intent: intentResult, executedTools, userText },
-      customer.id
-    );
-  } catch (e) {
-    logger.error("[agent] Intent classification failed:", e);
-  }
-
   await logMessage(customer.id, "assistant", finalText);
-  return { reply: finalText, placedOrderId, humanHandoffRequested };
+  return { reply: finalText, placedOrderId, humanHandoffRequested, mediaReply };
 }
 
 /**

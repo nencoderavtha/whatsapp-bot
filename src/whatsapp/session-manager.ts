@@ -1025,78 +1025,6 @@ export class BotSessionManager {
           }
 
           // ── Direct Action 4d: Order Type Selection (Pickup vs Delivery) ───────
-          if (rawText === "order_type_pickup" || cleanText === "pickup" || cleanText === "takeaway") {
-            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
-            const pending = await prisma.pendingOrder.findFirst({
-              where: { customerId: cust.id, expiresAt: { gt: new Date() } }
-            });
-
-            if (pending) {
-              await prisma.pendingOrder.update({
-                where: { id: pending.id },
-                data: { type: "pickup" }
-              });
-
-              let lines: any[] = [];
-              try { lines = JSON.parse(pending.lines); } catch {}
-              const menuItems = await prisma.menuItem.findMany({
-                where: { id: { in: lines.map((l) => l.menuItemId) } },
-                include: { variants: true }
-              });
-              const byId = new Map(menuItems.map((m) => [m.id, m]));
-              let subtotal = 0;
-              const labels: string[] = [];
-              for (const l of lines) {
-                const mi = byId.get(l.menuItemId);
-                if (!mi) continue;
-                let p = mi.price;
-                let vName: string | undefined;
-                if (l.variantId) {
-                  const v = mi.variants.find((v) => v.id === l.variantId);
-                  if (v) { p = v.price; vName = v.name; }
-                }
-                const label = vName ? `${l.qty}x ${mi.name} (${vName})` : `${l.qty}x ${mi.name}`;
-                labels.push(`${label} ₹${p * l.qty}`);
-                subtotal += p * l.qty;
-              }
-
-              const botConfig = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
-              const summaryMsg = orderStagedTemplate(labels, subtotal, "pickup", pending?.note ?? undefined);
-
-              let payUrl: string | null = null;
-              if (botConfig?.razorpayEnabled && botConfig.razorpayKeyId && botConfig.razorpayKeySecret) {
-                const payRes = await createPaymentLink({
-                  restaurantId,
-                  customerId: cust.id,
-                  amount: subtotal,
-                  customerPhone: msg.phone,
-                  restaurantName: botConfig.restaurantName,
-                });
-                if (payRes?.url) payUrl = payRes.url;
-              }
-
-              if (payUrl) {
-                await adapter.sendInteractiveCtaUrl(
-                  msg.phone,
-                  summaryMsg,
-                  `💳 Confirm & Pay ₹${subtotal}`,
-                  payUrl,
-                );
-              } else {
-                await adapter.sendInteractiveButtons(
-                  msg.phone,
-                  summaryMsg,
-                  [
-                    { id: "confirm_order_btn", title: "✅ Confirm & Pay" },
-                    { id: "add_more_items_btn", title: "➕ Add More Items" }
-                  ],
-                  "🛒 Order Summary",
-                );
-              }
-              return;
-            }
-          }
-
           if (rawText === "order_type_delivery" || cleanText === "delivery") {
             const cust = await getOrCreateCustomer(msg.phone, restaurantId);
             const pending = await prisma.pendingOrder.findFirst({
@@ -1327,22 +1255,7 @@ export class BotSessionManager {
             await adapter.sendImage(msg.phone, mediaReply.imageUrl, mediaReply.caption);
           }
 
-          // If the reply is a cart-staged message, send it with Delivery/Pickup buttons instead of plain text
-          if (reply.includes("🛒 *Your Cart:*") && reply.includes("How would you like your order?")) {
-            await adapter.sendInteractiveButtons(
-              msg.phone,
-              reply,
-              [
-                { id: "order_type_delivery", title: "🛵 Delivery" },
-                { id: "order_type_pickup", title: "🛍️ Pickup" },
-                { id: "add_more_items_btn", title: "➕ Add More" },
-              ],
-              "🛒 Your Cart",
-              "Choose order type to continue",
-            );
-          } else {
-            await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
-          }
+          await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
           if (placedOrderId) {
             // Send formatted receipt to customer + notify owner in parallel
             await Promise.all([

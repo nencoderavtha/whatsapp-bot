@@ -11,9 +11,9 @@ export const INTENTS = [
 export const IntentSchema = z.object({
   intent: z.enum(INTENTS),
   items: z.array(z.object({
-    name: z.string(),
+    menuItemId: z.number(),
     qty: z.number().optional(),
-    variant: z.string().optional(),
+    variantId: z.number().optional(),
     note: z.string().optional(),
   })).optional(),
   confidence: z.number(),
@@ -56,11 +56,11 @@ Classify the intent into exactly ONE of the following categories:
 
 ### ITEMS EXTRACTION
 If the intent involves modifying the cart (ADD_ITEM, REMOVE_ITEM, UPDATE_QUANTITY), you must extract the items mentioned.
-Map the user's request to the actual item names from the provided menu.
+Map the user's request to the actual item IDs from the provided menu.
 For each item, provide:
-- name: The exact item name from the menu.
+- menuItemId: The exact numeric ID of the item from the menu (shown in brackets like [12]).
 - qty: The quantity requested (default to 1 if unspecified).
-- variant: The specific variant requested (e.g., "Bagara", "Annam"), if any.
+- variantId: The specific numeric variant ID requested (shown as [v3]), if any.
 - note: Any customization requested (e.g., "less spicy", "no onions").
 
 ### MENU
