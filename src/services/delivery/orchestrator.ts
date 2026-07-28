@@ -89,11 +89,11 @@ export class DeliveryOrchestrator {
     // cheapest quote wins, a made-up number would routinely undercut the one
     // real quote and become the fee charged to the customer.
     const pending: Array<Promise<UnifiedQuote | null>> = [];
-    // Commented out other services to plug only Borzo for now
-    /*
     if (process.env.SHIPROCKET_API_EMAIL && process.env.SHIPROCKET_API_PASSWORD) {
       pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
     }
+    // Commented out other services to plug only Borzo for now
+    /*
     if (process.env.SHADOWFAX_API_KEY) {
       // Build Shadowfax-specific params including optional lat/lng
       const sfxParams: ShadowfaxQuoteParams = {

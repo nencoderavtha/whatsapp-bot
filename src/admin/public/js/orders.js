@@ -178,7 +178,7 @@ function renderDeliverySection(o) {
         <span class="text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">🍳 Cooking in Kitchen</span>
       </div>
       <div class="flex gap-2 pt-1">
-        <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
+        <button onclick="window.dispatchOrderDelivery(${o.id}, 'shiprocket')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
           🛵 Call Rider Now
         </button>
       </div>

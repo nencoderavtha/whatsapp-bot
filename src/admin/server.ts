@@ -1097,7 +1097,7 @@ export function buildAdminApp() {
     // better move; this is the safety net for when nobody did.
     if (status === "ready" && order.type === "delivery") {
       try {
-        const result: any = await DeliveryManager.dispatchOrder(orderId, "borzo");
+        const result: any = await DeliveryManager.dispatchOrder(orderId, "shiprocket");
         logger.info(
           result?.alreadyDispatched
             ? `[Auto-Dispatch] Order #${orderId} already had a courier booked.`

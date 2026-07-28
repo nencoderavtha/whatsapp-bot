@@ -104,7 +104,7 @@ export async function createOrder(params: {
         ? {
             deliveryDispatch: {
               create: {
-                providerCode: "borzo",
+                providerCode: "shiprocket",
                 deliveryFee: deliveryFee,
                 status: "PENDING_KITCHEN",
                 externalDeliveryId: "NOT_DISPATCHED_YET",
