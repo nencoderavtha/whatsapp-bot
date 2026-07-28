@@ -790,7 +790,7 @@ export function buildAdminApp() {
       internalStatus = "CANCELLED";
     }
 
-    const orderIdNum = order_id && !isNaN(Number(order_id)) ? Number(order_id) : -1;
+    const orderIdNum = order_id && !isNaN(Number(order_id)) && Number(order_id) <= 2147483647 && Number(order_id) > 0 ? Number(order_id) : -1;
 
     const dispatch = await prisma.deliveryDispatch.findFirst({
       where: {

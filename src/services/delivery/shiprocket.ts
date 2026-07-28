@@ -233,6 +233,11 @@ export class ShiprocketDeliveryService {
 
         const cleanPhone = params.customerPhone.replace(/^(\+?91)/, "").trim();
 
+        const cleanAddress = params.deliveryAddress
+          .replace(/\b[A-Z0-9]{4}\+[A-Z0-9]{2,4}\b/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
         const pincodeMatch = params.deliveryAddress.match(/(\d{6})\s*$/) || params.deliveryAddress.match(/\b(\d{6})\b/);
         const billingPincode = pincodeMatch ? Number(pincodeMatch[1]) : 500081;
 
@@ -249,7 +254,7 @@ export class ShiprocketDeliveryService {
             billing_customer_name: firstName,
             billing_last_name: lastName,
             billing_phone: cleanPhone,
-            billing_address: params.deliveryAddress,
+            billing_address: cleanAddress,
             billing_city: "Hyderabad",
             billing_state: "Telangana",
             billing_pincode: billingPincode,
@@ -274,14 +279,65 @@ export class ShiprocketDeliveryService {
 
         if (res.ok) {
           const data = (await res.json()) as { shipment_id?: number; order_id?: number };
+          const shipmentId = data.shipment_id;
+
+          let awbCode = "";
+          let courierName = "";
+
+          // Step 2: Auto-assign Courier & Generate AWB
+          if (shipmentId) {
+            try {
+              const awbRes = await fetch(`${this.baseUrl}/courier/assign/awb`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ shipment_id: shipmentId }),
+              });
+
+              if (awbRes.ok) {
+                const awbData = (await awbRes.json()) as any;
+                if (awbData.awb_assign_status === 1 || awbData.response?.data?.awb_code) {
+                  awbCode = awbData.response?.data?.awb_code || "";
+                  courierName = awbData.response?.data?.courier_name || "";
+                  logger.info(`✅ [Shiprocket Auto-Ship] Courier assigned: ${courierName} (AWB: ${awbCode})`);
+
+                  // Step 3: Auto-request Pickup
+                  const pickupRes = await fetch(`${this.baseUrl}/courier/generate/pickup`, {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ shipment_id: [shipmentId] }),
+                  });
+
+                  if (pickupRes.ok) {
+                    logger.info(`✅ [Shiprocket Auto-Ship] Pickup scheduled for shipment ${shipmentId}`);
+                  }
+                } else {
+                  logger.warn(`[Shiprocket AWB Assign Warning] ${JSON.stringify(awbData)}`);
+                }
+              }
+            } catch (awbErr) {
+              logger.error("[Shiprocket Auto-Ship Step 2/3 Error]", awbErr);
+            }
+          }
+
+          const finalDispatchId = awbCode ? `SR-${awbCode}` : (shipmentId ? `SR-${shipmentId}` : mockDispatchId);
+          const trackingId = awbCode || shipmentId || mockDispatchId;
+
           return {
             ok: true,
             orderId: params.orderId,
             providerCode: "shiprocket",
-            dispatchId: `SR-${data.shipment_id || mockDispatchId}`,
-            trackingUrl: `https://shiprocket.co/tracking/${data.shipment_id || mockDispatchId}`,
+            dispatchId: finalDispatchId,
+            trackingUrl: `https://shiprocket.co/tracking/${trackingId}`,
             status: "BOOKED",
-            message: "Successfully booked rider via Shiprocket Quick.",
+            message: courierName
+              ? `Successfully auto-shipped via ${courierName} (AWB: ${awbCode}).`
+              : "Successfully booked rider via Shiprocket Quick.",
           };
         } else {
           const text = await res.text();
