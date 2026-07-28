@@ -164,6 +164,7 @@
               <div class="text-right">
                 <div id="uberPrice" class="text-2xl font-black text-indigo-400">₹0</div>
                 <div id="uberTime" class="text-xs text-slate-400">-- mins</div>
+                <div id="uberPickup" class="text-[10px] text-emerald-400 font-semibold mt-0.5"></div>
               </div>
             </div>
           </div>
@@ -353,11 +354,13 @@
           document.getElementById("uberPrice").textContent = `₹${data.uber.quotedFee}`;
           document.getElementById("uberTime").textContent = formatDuration(data.uber.estimatedMinutes);
           document.getElementById("uberDetails").textContent = data.uber.vehicleType || "Hyperlocal Delivery";
+          document.getElementById("uberPickup").textContent = data.uber.pickupDuration ? `🛵 Pickup: ${data.uber.pickupDuration} mins` : "-- mins pickup";
           document.getElementById("uberCard").classList.remove("opacity-50");
           document.getElementById("uberBadge").innerHTML = "";
         } else {
           document.getElementById("uberPrice").textContent = "N/A";
           document.getElementById("uberTime").textContent = "-- mins";
+          document.getElementById("uberPickup").textContent = "";
           document.getElementById("uberDetails").textContent = "Unavailable";
           document.getElementById("uberCard").classList.add("opacity-50");
           log(`Uber Direct Quote Failed: ${data.uber?.error || "unserviceable"}`, "error");
@@ -382,6 +385,7 @@
       } catch (err) {
         loading.classList.add("hidden");
         placeholder.classList.remove("hidden");
+        document.getElementById("uberPickup").textContent = "";
         lastFetchedQuotes = { 
           borzo: { error: err.message }, 
           shiprocket: { error: err.message },

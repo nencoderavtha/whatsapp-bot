@@ -25,6 +25,7 @@ export interface UnifiedQuote {
   available: boolean;
   vehicleType: string;
   underlyingCarrier?: string;
+  pickupDuration?: number;
 }
 
 export interface QuoteParams {

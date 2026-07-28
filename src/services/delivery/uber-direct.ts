@@ -10,6 +10,7 @@ export interface UberDirectQuoteResponse {
   vehicleType: string;
   raw?: any;
   error?: string;
+  pickupDuration?: number;
 }
 
 export class UberDirectDeliveryService {
@@ -172,6 +173,7 @@ export class UberDirectDeliveryService {
         providerCode: "uber",
         quotedFee: fee,
         estimatedMinutes: duration,
+        pickupDuration: Number(data.pickup_duration || 0),
         available: true,
         vehicleType: "Uber Direct Hyperlocal",
         raw: data,
