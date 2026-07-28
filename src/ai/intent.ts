@@ -21,11 +21,68 @@ export const IntentSchema = z.object({
 
 export type Intent = z.infer<typeof IntentSchema>;
 
+/**
+ * Resolve the unambiguous cases without calling the model.
+ *
+ * A button tap carries an id we chose ourselves — asking an LLM what
+ * `confirm_order_btn` means is paying for a round trip to be told what we
+ * already know. The same holds for a bare "hi" or "cancel".
+ *
+ * Deliberately conservative: only exact, normalised matches. Anything with
+ * extra words ("cancel the biryani but keep the rice") falls through to the
+ * model, because a wrong fast answer is far worse than a slow right one.
+ * Cart edits always fall through — they need the menu to resolve item ids.
+ *
+ * Returns null when it isn't sure.
+ */
+export function fastClassifyIntent(latestMessage: string): Intent | null {
+  const raw = latestMessage.trim();
+
+  // Button ids we emit ourselves. Unambiguous by construction.
+  if (/^menu_item_\d+(?:_v_\d+)?$/.test(raw)) return null; // needs item resolution
+  const byButtonId: Record<string, Intent["intent"]> = {
+    confirm_order_btn: "CONFIRM_CART",
+    add_more_items_btn: "ADD_ITEM",
+    view_menu: "FAQ",
+    location_info: "FAQ",
+    change_address: "CHANGE_ADDRESS",
+    pin_new_location_btn: "CHANGE_ADDRESS",
+    use_saved_address_btn: "SELECT_ADDRESS",
+    use_saved_address: "SELECT_ADDRESS",
+    confirm_delivery_addr_btn: "SELECT_ADDRESS",
+  };
+  if (byButtonId[raw]) return { intent: byButtonId[raw], confidence: 1 };
+  if (/^(?:use_addr|saved_addr)_\d+$/.test(raw)) return { intent: "SELECT_ADDRESS", confidence: 1 };
+
+  // Free text: strip punctuation and collapse whitespace, then match whole phrases.
+  const t = raw.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+
+  const exact: Record<string, Intent["intent"]> = {};
+  const put = (intent: Intent["intent"], phrases: string[]) =>
+    phrases.forEach((p) => (exact[p] = intent));
+
+  put("GREETING", ["hi", "hello", "hey", "namaste", "namaskar", "namaskaram", "start", "yo", "hola"]);
+  put("CONFIRM_CART", ["confirm", "confirm order", "yes", "yes please", "ok", "okay", "haan", "ha", "sare", "avunu", "sure", "done", "proceed"]);
+  put("CANCEL_ORDER", ["cancel", "cancel order", "cancel my order", "cancel cheyandi"]);
+  put("CLEAR_CART", ["clear cart", "clear", "empty cart", "start over", "reset", "cart clear cheyandi"]);
+  put("CHECK_STATUS", ["status", "order status", "wheres my order", "where is my order", "track", "track order", "na order ekkada"]);
+  put("REQUEST_HUMAN", ["manager", "human", "staff", "agent", "talk to human", "speak to manager", "call me"]);
+  put("CHANGE_ADDRESS", ["change address", "new address", "different address", "vere address", "address marchandi"]);
+
+  const hit = exact[t];
+  return hit ? { intent: hit, confidence: 1 } : null;
+}
+
 export async function classifyIntent(
   history: { role: "user" | "assistant"; content: string }[],
   latestMessage: string,
   menuText: string
 ): Promise<Intent> {
+  // Skip the model entirely when the message is unambiguous.
+  const fast = fastClassifyIntent(latestMessage);
+  if (fast) return fast;
+
   const prompt = `
 You are an intent classification engine for a restaurant ordering system. 
 Your ONLY job is to analyze the user's latest message in the context of the conversation and output a structured JSON object representing their intent.
