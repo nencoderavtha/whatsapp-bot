@@ -92,7 +92,7 @@ export class DeliveryOrchestrator {
     if (process.env.SHIPROCKET_API_EMAIL && process.env.SHIPROCKET_API_PASSWORD) {
       pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
     }
-    // Commented out other services to plug only Borzo for now
+    // Commented out other services to plug only Shiprocket for now
     /*
     if (process.env.SHADOWFAX_API_KEY) {
       // Build Shadowfax-specific params including optional lat/lng
@@ -107,11 +107,9 @@ export class DeliveryOrchestrator {
       };
       pending.push(this.shadowfax.getQuote(sfxParams) as Promise<UnifiedQuote | null>);
     }
-    */
     if (process.env.BORZO_API_TOKEN || process.env.BORZO_PROD_API_TOKEN) {
       pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
     }
-    /*
     if (process.env.UBER_CLIENT_ID && process.env.UBER_CLIENT_SECRET) {
       pending.push(this.uber.getQuote(params) as Promise<UnifiedQuote | null>);
     }
