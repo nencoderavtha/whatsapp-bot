@@ -94,7 +94,7 @@ export class DeliveryOrchestrator {
       };
       pending.push(this.shadowfax.getQuote(sfxParams) as Promise<UnifiedQuote | null>);
     }
-    if (process.env.BORZO_API_TOKEN) {
+    if (process.env.BORZO_API_TOKEN || process.env.BORZO_PROD_API_TOKEN) {
       pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
     }
 

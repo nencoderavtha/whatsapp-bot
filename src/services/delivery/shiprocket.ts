@@ -11,6 +11,10 @@ export interface ShiprocketQuoteParams {
   deliveryPincode: number;
   weightKg?: number;
   declaredValue?: number;
+  pickupLat?: number | null;
+  pickupLng?: number | null;
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
 }
 
 export interface ShiprocketQuoteResponse {
@@ -21,6 +25,7 @@ export interface ShiprocketQuoteResponse {
   available: boolean;
   vehicleType: string;
   underlyingCarrier?: string;
+  error?: string;
 }
 
 export interface ShiprocketDispatchParams {
@@ -73,45 +78,130 @@ export class ShiprocketDeliveryService {
 
     if (token) {
       try {
-        const query = new URLSearchParams({
+        const queryParams: Record<string, string> = {
           pickup_postcode: params.pickupPincode.toString(),
           delivery_postcode: params.deliveryPincode.toString(),
           weight: (params.weightKg || 0.5).toString(),
           cod: "0",
-        });
+        };
 
+        if (params.pickupLat && params.pickupLng && params.deliveryLat && params.deliveryLng) {
+          queryParams.is_new_hyperlocal = "1";
+          queryParams.lat_from = params.pickupLat.toString();
+          queryParams.long_from = params.pickupLng.toString();
+          queryParams.lat_to = params.deliveryLat.toString();
+          queryParams.long_to = params.deliveryLng.toString();
+        }
+
+        const query = new URLSearchParams(queryParams);
         const res = await fetch(`${this.baseUrl}/courier/serviceability?${query}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
         if (res.ok) {
-          const data = (await res.json()) as {
-            status: number;
-            data?: {
-              available_courier_companies?: Array<{
-                courier_name: string;
-                rate: number;
-                etd: string;
-              }>;
-            };
-          };
+          const data = (await res.json()) as any;
+          let couriers: Array<{ name: string; rate: number; etd: string; etd_hours: number | null }> = [];
+          
+          if (data.data && Array.isArray(data.data)) {
+            // Hyperlocal response structure
+            couriers = data.data.map((c: any) => ({
+              name: c.courier_name || "Shiprocket Quick",
+              rate: Number(c.rates || c.rate || 0),
+              etd: c.etd || `${c.etd_hours || 1} hour`,
+              etd_hours: c.etd_hours ? Number(c.etd_hours) : null,
+            }));
+          } else if (data.data?.available_courier_companies) {
+            // Standard domestic response structure
+            couriers = data.data.available_courier_companies.map((c: any) => ({
+              name: c.courier_name,
+              rate: Number(c.rate || c.rates || 0),
+              etd: c.etd,
+              etd_hours: c.etd_hours ? Number(c.etd_hours) : null,
+            }));
+          }
 
-          const couriers = data.data?.available_courier_companies || [];
           if (couriers.length > 0) {
             const cheapest = couriers.reduce((prev, curr) => (curr.rate < prev.rate ? curr : prev));
+            
+            let estimatedMinutes = 35;
+            if (cheapest.etd_hours != null && !isNaN(cheapest.etd_hours) && cheapest.etd_hours > 0) {
+              estimatedMinutes = Math.round(cheapest.etd_hours * 60);
+            } else if (cheapest.etd) {
+              const etdLower = cheapest.etd.toLowerCase();
+              if (etdLower.includes("hour")) {
+                const hrs = parseFloat(etdLower.match(/(\d+(\.\d+)?)/)?.[0] || "1");
+                estimatedMinutes = Math.round(hrs * 60);
+              } else if (etdLower.includes("min")) {
+                estimatedMinutes = parseInt(etdLower.match(/\d+/)?.[0] || "35", 10);
+              } else {
+                const parsedDate = Date.parse(cheapest.etd);
+                if (!isNaN(parsedDate)) {
+                  const diff = parsedDate - Date.now();
+                  if (diff > 0) {
+                    estimatedMinutes = Math.max(15, Math.round(diff / 60000));
+                  } else {
+                    estimatedMinutes = 24 * 60; // 24 hours fallback for standard shipping
+                  }
+                }
+              }
+            }
+
+            let vehicleType = "2-Wheeler Hyperlocal";
+            const carrierLower = cheapest.name.toLowerCase();
+            if (carrierLower.includes("surface") || carrierLower.includes("air") || carrierLower.includes("express")) {
+              vehicleType = "E-Commerce Delivery Courier";
+            } else if (carrierLower.includes("quick") || carrierLower.includes("rapido") || carrierLower.includes("dunzo") || carrierLower.includes("shadowfax") || carrierLower.includes("porter")) {
+              vehicleType = "2-Wheeler Motorbike (Hyperlocal)";
+            }
+
             return {
               provider: "Shiprocket Quick",
               providerCode: "shiprocket",
-              quotedFee: Number(cheapest.rate),
-              estimatedMinutes: 25,
+              quotedFee: cheapest.rate,
+              estimatedMinutes,
               available: true,
-              vehicleType: "2-Wheeler Motorbike",
-              underlyingCarrier: cheapest.courier_name,
+              vehicleType,
+              underlyingCarrier: cheapest.name,
+            };
+          } else {
+            return {
+              provider: "Shiprocket Quick",
+              providerCode: "shiprocket",
+              quotedFee: 0,
+              estimatedMinutes: 0,
+              available: false,
+              vehicleType: "2-Wheeler Hyperlocal",
+              error: "No serviceable couriers returned by Shiprocket.",
             };
           }
+        } else {
+          const text = await res.text();
+          let errStr = text;
+          try {
+            const parsed = JSON.parse(text);
+            errStr = parsed.message || parsed.errors?.join(", ") || text;
+          } catch {}
+          return {
+            provider: "Shiprocket Quick",
+            providerCode: "shiprocket",
+            quotedFee: 0,
+            estimatedMinutes: 0,
+            available: false,
+            vehicleType: "2-Wheeler Hyperlocal",
+            error: errStr || `HTTP error ${res.status}`,
+          };
         }
-      } catch (err) {
+      } catch (err: any) {
         logger.error("[Shiprocket API Error]", err);
+        return {
+          provider: "Shiprocket Quick",
+          providerCode: "shiprocket",
+          quotedFee: 0,
+          estimatedMinutes: 0,
+          available: false,
+          vehicleType: "2-Wheeler Hyperlocal",
+          error: err?.message || String(err),
+        };
       }
     }
 
@@ -122,6 +212,7 @@ export class ShiprocketDeliveryService {
       estimatedMinutes: 0,
       available: false,
       vehicleType: "2-Wheeler Hyperlocal",
+      error: "Authentication failed. Check your Shiprocket credentials in .env.",
     };
   }
 

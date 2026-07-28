@@ -61,6 +61,7 @@ export interface BorzoQuoteResponse {
   estimatedMinutes: number;
   available: boolean;
   vehicleType: string;
+  error?: string;
 }
 
 export interface BorzoDispatchParams {
@@ -82,12 +83,10 @@ export class BorzoDeliveryService {
   private apiToken: string;
   private baseUrl: string;
 
-  constructor() {
-    this.apiToken = process.env.BORZO_API_TOKEN || "";
-    // Sandbox unless BORZO_ENV is explicitly "production". This used to also force
-    // sandbox for any token starting with the old test token's prefix, which meant
-    // BORZO_ENV=production silently did nothing.
-    const isSandbox = (process.env.BORZO_ENV ?? "sandbox") !== "production";
+  constructor(forceEnv?: "sandbox" | "production") {
+    const env = forceEnv || process.env.BORZO_ENV || "sandbox";
+    const isSandbox = env !== "production";
+    this.apiToken = (isSandbox ? process.env.BORZO_API_TOKEN : process.env.BORZO_PROD_API_TOKEN) || "";
     this.baseUrl = isSandbox
       ? "https://robotapitest-in.borzodelivery.com/api/business/1.8"
       : "https://robot-in.borzodelivery.com/api/business/1.8";
@@ -135,12 +134,10 @@ export class BorzoDeliveryService {
               delivery_fee_amount?: string;
               points?: Array<{ previous_point_driving_distance_meters?: number }>;
             };
+            errors?: string[];
             parameter_warnings?: unknown;
           };
 
-          // Borzo answers 200 with warnings rather than failing, so a malformed
-          // point still returns a (wrong) price. Surface it instead of silently
-          // charging the customer whatever came back.
           if (data.parameter_warnings) {
             logger.warn(
               "[Borzo] Quote returned parameter warnings:",
@@ -150,24 +147,64 @@ export class BorzoDeliveryService {
 
           if (data.is_successful && data.order) {
             const amount = Number(data.order.payment_amount || data.order.delivery_fee_amount || 52);
+            const deliveryPoint = data.order.points?.[1] || data.order.points?.find((p: any) => p.point_type === "delivery");
+            const distanceMeters = deliveryPoint?.previous_point_driving_distance_meters || 0;
+            let estimatedMinutes = 28;
+            if (distanceMeters > 0) {
+              const distanceKm = distanceMeters / 1000;
+              estimatedMinutes = Math.round(distanceKm * 3 + 10);
+            }
+
             return {
               provider: "Borzo Express",
               providerCode: "borzo",
               quotedFee: amount,
-              estimatedMinutes: 28,
+              estimatedMinutes,
               available: true,
               vehicleType: "2-Wheeler Express Courier",
             };
+          } else {
+            return {
+              provider: "Borzo Express",
+              providerCode: "borzo",
+              quotedFee: 0,
+              estimatedMinutes: 0,
+              available: false,
+              vehicleType: "2-Wheeler Express Courier",
+              error: data.errors?.join(", ") || "Validation failed or no route available.",
+            };
           }
+        } else {
+          const text = await res.text();
+          let errStr = text;
+          try {
+            const parsed = JSON.parse(text);
+            errStr = parsed.errors?.join(", ") || parsed.message || text;
+          } catch {}
+          return {
+            provider: "Borzo Express",
+            providerCode: "borzo",
+            quotedFee: 0,
+            estimatedMinutes: 0,
+            available: false,
+            vehicleType: "2-Wheeler Express Courier",
+            error: errStr || `HTTP error ${res.status}`,
+          };
         }
-      } catch (err) {
+      } catch (err: any) {
         logger.error("[Borzo API Error]", err);
+        return {
+          provider: "Borzo Express",
+          providerCode: "borzo",
+          quotedFee: 0,
+          estimatedMinutes: 0,
+          available: false,
+          vehicleType: "2-Wheeler Express Courier",
+          error: err?.message || String(err),
+        };
       }
     }
 
-    // No invented fee. A made-up number here becomes the amount the customer is
-    // actually charged, so an unavailable quote must report itself unavailable
-    // and let the caller fall back to the flat rate deliberately.
     return {
       provider: "Borzo Express",
       providerCode: "borzo",
@@ -175,6 +212,7 @@ export class BorzoDeliveryService {
       estimatedMinutes: 0,
       available: false,
       vehicleType: "2-Wheeler Express Courier",
+      error: "No Borzo API token configured in .env",
     };
   }
 

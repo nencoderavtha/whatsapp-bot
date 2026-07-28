@@ -16,17 +16,20 @@ import { BorzoDeliveryService } from "../src/services/delivery/borzo.js";
 async function verifyBorzoIntegration() {
   console.log("🔍 Checking Borzo Integration Configuration...\n");
 
-  const apiToken = process.env.BORZO_API_TOKEN;
+  const env = process.env.BORZO_ENV || "sandbox";
+  const isProd = env === "production";
+  const apiToken = isProd ? process.env.BORZO_PROD_API_TOKEN : process.env.BORZO_API_TOKEN;
   const callbackToken = process.env.BORZO_CALLBACK_TOKEN;
 
-  console.log(`🔑 BORZO_API_TOKEN: ${apiToken ? `PRESENT (${apiToken.slice(0, 6)}...${apiToken.slice(-4)})` : "❌ NOT SET in .env"}`);
+  console.log(`🌐 BORZO_ENV: ${env.toUpperCase()}`);
+  console.log(`🔑 Active Token (BORZO_${isProd ? "PROD_" : ""}API_TOKEN): ${apiToken ? `PRESENT (${apiToken.slice(0, 6)}...${apiToken.slice(-4)})` : "❌ NOT SET in .env"}`);
   console.log(`🛡️ BORZO_CALLBACK_TOKEN: ${callbackToken ? `PRESENT (${callbackToken.slice(0, 4)}...)` : "⚠️ Optional / NOT SET in .env"}`);
   console.log("--------------------------------------------------\n");
 
   if (!apiToken) {
-    console.log("⚠️ BORZO_API_TOKEN is missing from .env!");
+    console.log(`⚠️ BORZO_${isProd ? "PROD_" : ""}API_TOKEN is missing from .env!`);
     console.log("Please open .env and add:");
-    console.log('  BORZO_API_TOKEN="your-borzo-api-token"');
+    console.log(`  BORZO_${isProd ? "PROD_" : ""}API_TOKEN="your-borzo-token"`);
     console.log('  BORZO_CALLBACK_TOKEN="your-borzo-callback-token"');
     return;
   }
