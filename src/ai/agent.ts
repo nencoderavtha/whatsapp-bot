@@ -175,8 +175,18 @@ async function processIncoming(
       templateReply = res.templateReply;
     }
     else if (action.op === "request_human") {
-      humanHandoffRequested = true;
-      templateReply = fallbackTemplate(); 
+      // Route through the real tool. This branch used to set the flag inline and
+      // reply with fallbackTemplate() — the "I didn't understand" message — so a
+      // customer asking for a manager was told the bot hadn't understood them.
+      // Worse, it never set humanRequestedAt, so the AI kept answering while
+      // staff replied from the dashboard: two voices in the same chat.
+      executedTools.push("request_human_handoff");
+      const res = await runTool(customer.id, restaurantId, "request_human_handoff", {
+        reason: userText,
+      });
+      output = res.output;
+      templateReply = res.templateReply;
+      humanHandoffRequested = res.humanHandoff ?? true;
     }
     else if (action.op === "change_address" || action.op === "select_address") {
       templateReply = "Delivery address cheppandi, ekkadiki pampali? (e.g., 'Deliver to 123 Main St')";
