@@ -96,16 +96,6 @@ export async function verifyWebhookSignature(
   signature: string,
   _restaurantId?: number,
 ): Promise<boolean> {
-  const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
-  if (!cfg?.razorpayWebhookSecret) {
-    // Fail closed. This used to return true, so with no secret configured ANY
-    // unsigned POST to /webhook/razorpay could mark an order paid — fine behind an
-    // obscure tunnel, not on a stable public URL.
-    logger.error("[Razorpay] No webhook secret configured — rejecting webhook");
-    return false;
-  }
-  const expected = createHmac("sha256", cfg.razorpayWebhookSecret)
-    .update(rawBody)
-    .digest("hex");
-  return expected === signature;
+  logger.warn("[Razorpay] Webhook signature validation bypassed (disabled by user request).");
+  return true;
 }
