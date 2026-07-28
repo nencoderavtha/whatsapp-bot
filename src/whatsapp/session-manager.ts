@@ -1216,9 +1216,25 @@ export class BotSessionManager {
               return;
             }
 
+            let nextLat = cust.deliveryLat;
+            let nextLng = cust.deliveryLng;
+
+            if (chosen !== cust.address) {
+              const matchingOrder = await prisma.order.findFirst({
+                where: { customerId: cust.id, deliveryAddress: chosen, deliveryLat: { not: null } },
+                orderBy: { createdAt: "desc" },
+              });
+              nextLat = matchingOrder ? matchingOrder.deliveryLat : null;
+              nextLng = matchingOrder ? matchingOrder.deliveryLng : null;
+            }
+
             await prisma.customer.update({
               where: { id: cust.id },
-              data: { address: chosen },
+              data: {
+                address: chosen,
+                deliveryLat: nextLat,
+                deliveryLng: nextLng,
+              },
             });
             await prisma.pendingOrder.updateMany({
               where: { customerId: cust.id },
