@@ -380,15 +380,9 @@ async function sendPinLocationPrompt(adapter: CloudAdapter, phone: string): Prom
   const base = botSessionManager.getPublicServerUrl().replace(/\/+$/, "");
   const mapFormUrl = `${base}/address?phone=${encodeURIComponent(phone)}`;
 
-  try {
-    await adapter.sendInteractiveLocationRequest(
-      phone,
-      "📍 Delivery address kavali andi. Mee location share cheyandi, leda kinda button tap chesi map lo pin drop cheyandi.",
-    );
-  } catch (e) {
-    logger.warn("[Location Request Failed, sending CTA URL]", e);
-  }
-
+  // The location_request_message interactive type is rejected by Meta with a
+  // 400 on every call for this number, so attempting it only cost a round trip
+  // and logged an error before falling through to the CTA that actually works.
   await adapter.sendInteractiveCtaUrl(
     phone,
     "Ee link lo mee location pin drop cheyandi 👇",
@@ -1206,7 +1200,15 @@ export class BotSessionManager {
           if (asksAddress) {
             const cust = await getOrCreateCustomer(msg.phone, restaurantId);
 
-            if (rawText === "change_address") {
+            // "change address" typed as free text never equalled the button id
+            // change_address, so wanting to change one produced the "is this
+            // correct?" confirmation instead of the picker. Treat any phrasing
+            // that asks for a different address as a change.
+            const wantsDifferent =
+              rawText === "change_address" ||
+              /\b(change|new|another|different|vere|maaru|marchandi)\b/i.test(cleanText);
+
+            if (wantsDifferent) {
               const saved = await savedAddressesFor(cust.id, cust.address);
               if (saved.length > 0) await sendAddressPickerList(adapter, msg.phone, saved);
               else await sendPinLocationPrompt(adapter, msg.phone);
