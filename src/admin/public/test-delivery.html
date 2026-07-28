@@ -150,6 +150,22 @@
                 <div id="shiprocketTime" class="text-xs text-slate-400">-- mins</div>
               </div>
             </div>
+
+            <!-- Uber Direct Results Card -->
+            <div id="uberCard" class="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 flex justify-between items-center transition-all hover:border-slate-700">
+              <div class="space-y-1">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xl">🚕</span>
+                  <h3 class="font-bold text-slate-100">Uber Direct</h3>
+                </div>
+                <p id="uberDetails" class="text-xs text-slate-400">Hyperlocal Delivery</p>
+                <div id="uberBadge" class="inline-flex"></div>
+              </div>
+              <div class="text-right">
+                <div id="uberPrice" class="text-2xl font-black text-indigo-400">₹0</div>
+                <div id="uberTime" class="text-xs text-slate-400">-- mins</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -175,6 +191,10 @@
             class="flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all">
             Shiprocket Response
           </button>
+          <button id="tabUber" onclick="switchJsonTab('uber')" 
+            class="flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all">
+            Uber Response
+          </button>
         </div>
 
         <!-- JSON View Area -->
@@ -197,7 +217,7 @@
         return;
       }
       
-      const quote = activeTab === 'borzo' ? lastFetchedQuotes.borzo : lastFetchedQuotes.shiprocket;
+      const quote = activeTab === 'borzo' ? lastFetchedQuotes.borzo : (activeTab === 'shiprocket' ? lastFetchedQuotes.shiprocket : lastFetchedQuotes.uber);
       const payload = quote ? quote.raw : null;
       if (payload) {
         viewer.textContent = JSON.stringify(payload, null, 2);
@@ -210,16 +230,20 @@
 
     function switchJsonTab(provider) {
       activeTab = provider;
-      const tabBorzo = document.getElementById("tabBorzo");
-      const tabShiprocket = document.getElementById("tabShiprocket");
+      const tabs = {
+        borzo: document.getElementById("tabBorzo"),
+        shiprocket: document.getElementById("tabShiprocket"),
+        uber: document.getElementById("tabUber")
+      };
       
-      if (provider === 'borzo') {
-        tabBorzo.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-indigo-500 text-indigo-400 focus:outline-none transition-all";
-        tabShiprocket.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all";
-      } else {
-        tabBorzo.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all";
-        tabShiprocket.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-indigo-500 text-indigo-400 focus:outline-none transition-all";
-      }
+      Object.keys(tabs).forEach(k => {
+        if (!tabs[k]) return;
+        if (k === provider) {
+          tabs[k].className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-indigo-500 text-indigo-400 focus:outline-none transition-all";
+        } else {
+          tabs[k].className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all";
+        }
+      });
       renderRawJson();
     }
 
@@ -324,22 +348,45 @@
           log(`Shiprocket Quote Failed: ${data.shiprocket?.error || "unserviceable"}`, "error");
         }
 
+        // 3. Uber Direct Render
+        if (data.uber && data.uber.available) {
+          document.getElementById("uberPrice").textContent = `₹${data.uber.quotedFee}`;
+          document.getElementById("uberTime").textContent = formatDuration(data.uber.estimatedMinutes);
+          document.getElementById("uberDetails").textContent = data.uber.vehicleType || "Hyperlocal Delivery";
+          document.getElementById("uberCard").classList.remove("opacity-50");
+          document.getElementById("uberBadge").innerHTML = "";
+        } else {
+          document.getElementById("uberPrice").textContent = "N/A";
+          document.getElementById("uberTime").textContent = "-- mins";
+          document.getElementById("uberDetails").textContent = "Unavailable";
+          document.getElementById("uberCard").classList.add("opacity-50");
+          log(`Uber Direct Quote Failed: ${data.uber?.error || "unserviceable"}`, "error");
+        }
+
         // Highlight Cheapest
         const borzoFee = data.borzo?.available ? data.borzo.quotedFee : Infinity;
         const srFee = data.shiprocket?.available ? data.shiprocket.quotedFee : Infinity;
+        const uberFee = data.uber?.available ? data.uber.quotedFee : Infinity;
 
-        if (borzoFee < Infinity || srFee < Infinity) {
-          if (borzoFee < srFee) {
+        const minFee = Math.min(borzoFee, srFee, uberFee);
+        if (minFee < Infinity) {
+          if (minFee === borzoFee) {
             document.getElementById("borzoBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
-          } else if (srFee < borzoFee) {
+          } else if (minFee === srFee) {
             document.getElementById("shiprocketBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
+          } else if (minFee === uberFee) {
+            document.getElementById("uberBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
           }
         }
 
       } catch (err) {
         loading.classList.add("hidden");
         placeholder.classList.remove("hidden");
-        lastFetchedQuotes = { borzo: { error: err.message }, shiprocket: { error: err.message } };
+        lastFetchedQuotes = { 
+          borzo: { error: err.message }, 
+          shiprocket: { error: err.message },
+          uber: { error: err.message }
+        };
         renderRawJson();
         log(`Calculation error: ${err.message}`, "error");
       } finally {

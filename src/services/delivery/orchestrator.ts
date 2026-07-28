@@ -13,8 +13,9 @@ import { prisma } from "../../db.js";
 import { ShiprocketDeliveryService } from "./shiprocket.js";
 import { ShadowfaxDeliveryService, ShadowfaxQuoteParams } from "./shadowfax.js";
 import { BorzoDeliveryService } from "./borzo.js";
+import { UberDirectDeliveryService } from "./uber-direct.js";
 
-export type DeliveryProviderCode = "rapido" | "shiprocket" | "shadowfax" | "borzo" | "porter";
+export type DeliveryProviderCode = "rapido" | "shiprocket" | "shadowfax" | "borzo" | "porter" | "uber";
 
 export interface UnifiedQuote {
   provider: string;
@@ -61,6 +62,7 @@ export class DeliveryOrchestrator {
   private shiprocket = new ShiprocketDeliveryService();
   private shadowfax = new ShadowfaxDeliveryService();
   private borzo = new BorzoDeliveryService();
+  private uber = new UberDirectDeliveryService();
 
   /**
    * Fetch quotes from all active providers concurrently and return sorted results.
@@ -96,6 +98,9 @@ export class DeliveryOrchestrator {
     }
     if (process.env.BORZO_API_TOKEN || process.env.BORZO_PROD_API_TOKEN) {
       pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
+    }
+    if (process.env.UBER_CLIENT_ID && process.env.UBER_CLIENT_SECRET) {
+      pending.push(this.uber.getQuote(params) as Promise<UnifiedQuote | null>);
     }
 
     const results = await Promise.allSettled(pending);
@@ -134,6 +139,8 @@ export class DeliveryOrchestrator {
         return this.shadowfax.dispatchOrder(request);
       case "borzo":
         return this.borzo.dispatchOrder(request);
+      case "uber":
+        return this.uber.dispatchOrder(request);
       case "shiprocket":
         return this.shiprocket.dispatchOrder(request);
       case "rapido":

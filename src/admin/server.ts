@@ -41,6 +41,7 @@ import { orderStagedTemplate } from "../ai/templates.js";
 import { logger } from '../services/logger.js';
 import { BorzoDeliveryService } from "../services/delivery/borzo.js";
 import { ShiprocketDeliveryService } from "../services/delivery/shiprocket.js";
+import { UberDirectDeliveryService } from "../services/delivery/uber-direct.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -444,7 +445,7 @@ export function buildAdminApp() {
   });
 
   app.post("/public/api/test-delivery/quote", asyncRoute(async (req, res) => {
-    const { pickupPincode, pickupAddress, deliveryAddress, deliveryPincode, deliveryPhone, deliveryLat, deliveryLng, pickupLat, pickupLng } = req.body;
+    const { pickupPincode, pickupAddress, deliveryAddress, deliveryPincode, deliveryPhone, deliveryLat, deliveryLng, pickupLat, pickupLng, pickupPhone } = req.body;
     const results: Record<string, any> = { ok: true };
 
     const pickup = pickupPincode && !isNaN(Number(pickupPincode)) ? Number(pickupPincode) : 500081;
@@ -492,6 +493,27 @@ export function buildAdminApp() {
       results.shiprocket = quote;
     } catch (err: any) {
       results.shiprocket = { available: false, error: err?.message ?? err };
+    }
+
+    // 3. Uber Direct Quote Query
+    const uber = new UberDirectDeliveryService();
+    try {
+      const quote = await uber.getQuote({
+        pickupPincode: pickup,
+        deliveryPincode: drop,
+        weightKg: 0.5,
+        pickupAddress: pickupAddress || undefined,
+        pickupPhone: pickupPhone || undefined,
+        pickupLat: pLat,
+        pickupLng: pLng,
+        deliveryAddress,
+        deliveryLat: dLat,
+        deliveryLng: dLng,
+        deliveryPhone,
+      });
+      results.uber = quote;
+    } catch (err: any) {
+      results.uber = { available: false, error: err?.message ?? err };
     }
 
     res.json(results);
