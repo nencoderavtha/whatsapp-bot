@@ -26,6 +26,7 @@ export interface ShiprocketQuoteResponse {
   vehicleType: string;
   underlyingCarrier?: string;
   error?: string;
+  raw?: any;
 }
 
 export interface ShiprocketDispatchParams {
@@ -155,25 +156,27 @@ export class ShiprocketDeliveryService {
             }
 
             return {
-              provider: "Shiprocket Quick",
-              providerCode: "shiprocket",
-              quotedFee: cheapest.rate,
-              estimatedMinutes,
-              available: true,
-              vehicleType,
-              underlyingCarrier: cheapest.name,
-            };
-          } else {
-            return {
-              provider: "Shiprocket Quick",
-              providerCode: "shiprocket",
-              quotedFee: 0,
-              estimatedMinutes: 0,
-              available: false,
-              vehicleType: "2-Wheeler Hyperlocal",
-              error: "No serviceable couriers returned by Shiprocket.",
-            };
-          }
+               provider: "Shiprocket Quick",
+               providerCode: "shiprocket",
+               quotedFee: cheapest.rate,
+               estimatedMinutes,
+               available: true,
+               vehicleType,
+               underlyingCarrier: cheapest.name,
+               raw: data,
+             };
+           } else {
+             return {
+               provider: "Shiprocket Quick",
+               providerCode: "shiprocket",
+               quotedFee: 0,
+               estimatedMinutes: 0,
+               available: false,
+               vehicleType: "2-Wheeler Hyperlocal",
+               error: "No serviceable couriers returned by Shiprocket.",
+               raw: data,
+             };
+           }
         } else {
           const text = await res.text();
           let errStr = text;
@@ -189,6 +192,7 @@ export class ShiprocketDeliveryService {
             available: false,
             vehicleType: "2-Wheeler Hyperlocal",
             error: errStr || `HTTP error ${res.status}`,
+            raw: text,
           };
         }
       } catch (err: any) {

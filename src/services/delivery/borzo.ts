@@ -62,6 +62,7 @@ export interface BorzoQuoteResponse {
   available: boolean;
   vehicleType: string;
   error?: string;
+  raw?: any;
 }
 
 export interface BorzoDispatchParams {
@@ -162,6 +163,7 @@ export class BorzoDeliveryService {
               estimatedMinutes,
               available: true,
               vehicleType: "2-Wheeler Express Courier",
+              raw: data,
             };
           } else {
             return {
@@ -172,6 +174,7 @@ export class BorzoDeliveryService {
               available: false,
               vehicleType: "2-Wheeler Express Courier",
               error: data.errors?.join(", ") || "Validation failed or no route available.",
+              raw: data,
             };
           }
         } else {
@@ -189,6 +192,7 @@ export class BorzoDeliveryService {
             available: false,
             vehicleType: "2-Wheeler Express Courier",
             error: errStr || `HTTP error ${res.status}`,
+            raw: text,
           };
         }
       } catch (err: any) {
