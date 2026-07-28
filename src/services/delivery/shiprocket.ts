@@ -245,7 +245,7 @@ export class ShiprocketDeliveryService {
           body: JSON.stringify({
             order_id: params.orderId.toString(),
             order_date: new Date().toISOString().split("T")[0],
-            pickup_location: "Shiva Shiva",
+            pickup_location: "Work",
             billing_customer_name: firstName,
             billing_last_name: lastName,
             billing_phone: cleanPhone,
