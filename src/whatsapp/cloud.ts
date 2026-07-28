@@ -254,7 +254,6 @@ export class CloudAdapter implements WhatsAppAdapter {
       body: { text: bodyText },
       action: {
         name: "send_location",
-        parameters: { request_message: bodyText },
       },
     });
   }
