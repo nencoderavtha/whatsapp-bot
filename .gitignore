@@ -24,4 +24,7 @@ pnpm-debug.log*
 .vscode/
 .idea/
 sessions/
+# One-off migration and rewrite helpers. They are run once against a live
+# database and are not part of the app.
+scratch/
 
