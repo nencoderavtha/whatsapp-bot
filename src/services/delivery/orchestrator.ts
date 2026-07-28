@@ -56,6 +56,7 @@ export interface DispatchRequest {
   pickupLat?: number;
   pickupLng?: number;
   pickupPhone?: string;
+  pickupName?: string;
   pickupPincode?: number;
   deliveryPincode?: number;
 }

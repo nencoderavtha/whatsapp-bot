@@ -129,6 +129,7 @@ export class DeliveryManager {
       pickupLat: restaurant?.restaurantLat ?? undefined,
       pickupLng: restaurant?.restaurantLng ?? undefined,
       pickupPhone: ownerPhone,
+      pickupName: restaurant?.restaurantName ?? "Restaurant",
     });
 
     // A rejected booking is not a dispatch. Recording one wrote a row with a null
