@@ -91,7 +91,11 @@ export class DeliveryManager {
     logger.info(`👤 [Customer Details] Name: ${order.customer.name || "Customer"} | Phone: ${order.customer.phone}`);
     logger.info(`📍 [Drop Address] ${order.deliveryAddress || "Jubilee Hills, Hyderabad"}`);
 
-    if (order.deliveryDispatch && order.deliveryDispatch.externalDeliveryId) {
+    if (
+      order.deliveryDispatch &&
+      order.deliveryDispatch.externalDeliveryId &&
+      order.deliveryDispatch.externalDeliveryId !== "NOT_DISPATCHED_YET"
+    ) {
       logger.info(
         `↩️  [Already Dispatched] Order #${orderId} → ${order.deliveryDispatch.externalDeliveryId}. Not booking a second courier.`,
       );
