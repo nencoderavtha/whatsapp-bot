@@ -14,6 +14,7 @@ import { ShiprocketDeliveryService } from "./shiprocket.js";
 import { ShadowfaxDeliveryService, ShadowfaxQuoteParams } from "./shadowfax.js";
 import { BorzoDeliveryService } from "./borzo.js";
 import { UberDirectDeliveryService } from "./uber-direct.js";
+import { logger } from "../logger.js";
 
 export type DeliveryProviderCode = "rapido" | "shiprocket" | "shadowfax" | "borzo" | "porter" | "uber";
 
@@ -76,6 +77,12 @@ export class DeliveryOrchestrator {
     cheapest: UnifiedQuote;
     fastest: UnifiedQuote;
   }> {
+    logger.info(
+      `\n🌐 [Delivery Quote Request]\n` +
+      `   📍 Pickup Address : ${params.pickupAddress ?? "Pincode " + params.pickupPincode} (Lat: ${params.pickupLat ?? "N/A"}, Lng: ${params.pickupLng ?? "N/A"})\n` +
+      `   🏁 Drop Address   : ${params.deliveryAddress ?? "Pincode " + params.deliveryPincode} (Lat: ${params.deliveryLat ?? "N/A"}, Lng: ${params.deliveryLng ?? "N/A"})\n`
+    );
+
     // Only ask providers that actually have credentials. Unconfigured providers
     // used to return invented simulation fees marked available, and since the
     // cheapest quote wins, a made-up number would routinely undercut the one
