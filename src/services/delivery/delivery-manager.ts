@@ -83,7 +83,7 @@ export class DeliveryManager {
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { customer: true, deliveryDispatch: true },
+      include: { customer: true, deliveryDispatch: true, items: true },
     });
 
     if (!order) throw new Error(`Order #${orderId} not found`);
@@ -134,6 +134,12 @@ export class DeliveryManager {
       pickupLng: restaurant?.restaurantLng ?? undefined,
       pickupPhone: ownerPhone,
       pickupName: restaurant?.restaurantName ?? "Restaurant",
+      items: order.items.map((i) => ({
+        name: i.nameSnap,
+        qty: i.qty,
+        price: i.priceSnap,
+      })),
+      subTotal: order.subtotal,
     });
 
     // A rejected booking is not a dispatch. Recording one wrote a row with a null

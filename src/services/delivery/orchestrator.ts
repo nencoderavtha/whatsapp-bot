@@ -59,6 +59,8 @@ export interface DispatchRequest {
   pickupName?: string;
   pickupPincode?: number;
   deliveryPincode?: number;
+  items?: Array<{ name: string; qty: number; price: number }>;
+  subTotal?: number;
 }
 
 export class DeliveryOrchestrator {

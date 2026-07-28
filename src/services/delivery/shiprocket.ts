@@ -35,6 +35,8 @@ export interface ShiprocketDispatchParams {
   customerPhone: string;
   deliveryAddress: string;
   pickupAddress?: string;
+  items?: Array<{ name: string; qty: number; price: number }>;
+  subTotal?: number;
 }
 
 export class ShiprocketDeliveryService {
@@ -241,6 +243,28 @@ export class ShiprocketDeliveryService {
         const pincodeMatch = params.deliveryAddress.match(/(\d{6})\s*$/) || params.deliveryAddress.match(/\b(\d{6})\b/);
         const billingPincode = pincodeMatch ? Number(pincodeMatch[1]) : 500081;
 
+        const orderItems = params.items && params.items.length > 0
+          ? params.items.map((item, idx) => ({
+              name: item.name,
+              qty: item.qty,
+              price: item.price,
+              selling_price: item.price,
+              units: item.qty,
+              sku: `ITEM_${idx + 1}`
+            }))
+          : [{
+              name: "Food Package",
+              qty: 1,
+              price: params.subTotal || 1,
+              selling_price: params.subTotal || 1,
+              units: 1,
+              sku: "FOOD01"
+            }];
+
+        const orderSubTotal = params.subTotal && params.subTotal > 0
+          ? params.subTotal
+          : orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
+
         const res = await fetch(`${this.baseUrl}/orders/create/adhoc`, {
           method: "POST",
           headers: {
@@ -261,16 +285,9 @@ export class ShiprocketDeliveryService {
             billing_country: "India",
             shipping_is_billing: true,
             is_hyperlocal: 1,
-            order_items: [{
-              name: "Food Package",
-              qty: 1,
-              price: 500,
-              selling_price: 500,
-              units: 1,
-              sku: "FOOD01"
-            }],
+            order_items: orderItems,
             payment_method: "Prepaid",
-            sub_total: 500,
+            sub_total: orderSubTotal,
             length: 10,
             breadth: 10,
             height: 10,
