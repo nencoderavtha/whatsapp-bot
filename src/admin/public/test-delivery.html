@@ -197,7 +197,8 @@
         return;
       }
       
-      const payload = activeTab === 'borzo' ? lastFetchedQuotes.borzo : lastFetchedQuotes.shiprocket;
+      const quote = activeTab === 'borzo' ? lastFetchedQuotes.borzo : lastFetchedQuotes.shiprocket;
+      const payload = quote ? quote.raw : null;
       if (payload) {
         viewer.textContent = JSON.stringify(payload, null, 2);
         viewer.className = "flex-1 bg-slate-950/80 border border-slate-900 rounded-xl p-4 text-xs font-mono text-emerald-400 overflow-auto whitespace-pre-wrap break-all h-[340px]";
