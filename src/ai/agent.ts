@@ -15,11 +15,26 @@ import { classifyIntent } from "./intent.js";
 import { missingSlots } from "../orchestrator/slots.js";
 import { nextAction } from "../orchestrator/transitions.js";
 
+/**
+ * UI the backend must render for this turn.
+ *
+ * The agent names what should happen; the session manager owns how it looks and
+ * which WhatsApp primitive carries it. Branches here used to answer with
+ * hardcoded prose instead — telling customers to type "Deliver to 123 Main St"
+ * when the whole flow is built around a pinned location, or to "use the link
+ * provided previously" without resending it.
+ */
+export type RenderAction =
+  | { type: "address_picker" }
+  | { type: "billing" }
+  | { type: "resend_payment_link" };
+
 export interface AgentResult {
   reply: string;
   placedOrderId?: number;
   humanHandoffRequested?: boolean;
   mediaReply?: { imageUrl: string; caption?: string };
+  renderAction?: RenderAction;
 }
 
 function looksLikeToolGarbage(s: string): boolean {
@@ -96,6 +111,7 @@ async function processIncoming(
   let humanHandoffRequested = false;
   let templateReply: string | undefined;
   let mediaReply: { imageUrl: string; caption?: string } | undefined;
+  let renderAction: RenderAction | undefined;
   let finalText = "";
   const executedTools: string[] = [];
 
@@ -189,13 +205,23 @@ async function processIncoming(
       humanHandoffRequested = res.humanHandoff ?? true;
     }
     else if (action.op === "change_address" || action.op === "select_address") {
-      templateReply = "Delivery address cheppandi, ekkadiki pampali? (e.g., 'Deliver to 123 Main St')";
+      // Was: "Delivery address cheppandi... (e.g., 'Deliver to 123 Main St')".
+      // A typed address has no coordinates, so Borzo would quote from a geocoded
+      // guess rather than the pin — the saved-address picker is the actual flow.
+      renderAction = { type: "address_picker" };
+    }
+    else if (action.op === "generate_quote") {
+      // Previously unhandled, so needing a delivery quote silently abandoned the
+      // deterministic path and let the model improvise mid-checkout.
+      renderAction = { type: "billing" };
     }
   } else if (action.kind === "render") {
     if (action.type === "request_address") {
-      templateReply = "Delivery address inka ivvaledu andi, ekkadiki pampali?";
+      renderAction = { type: "address_picker" };
     } else if (action.type === "request_payment") {
-      templateReply = "Payment inka complete kaledu andi. Please pay using the link provided previously.";
+      // Was: "use the link provided previously" — a dead end for anyone who had
+      // lost it. Resend the actual link instead.
+      renderAction = { type: "resend_payment_link" };
     }
   }
 
@@ -263,6 +289,11 @@ async function processIncoming(
   void logActivity(restaurantId, "response_time", `Reply in ${elapsedMs}ms`, { elapsedMs }, customer.id);
   if (usedFallback) {
     void logActivity(restaurantId, "fallback", `Fell back to generic reply for: ${userText.slice(0, 80)}`, undefined, customer.id);
+  }
+
+  // A render action carries the whole reply, so don't also emit fallback prose.
+  if (renderAction) {
+    return { reply: "", placedOrderId, humanHandoffRequested, mediaReply, renderAction };
   }
 
   await logMessage(customer.id, "assistant", finalText);

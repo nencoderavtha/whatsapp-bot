@@ -376,6 +376,28 @@ async function savedAddressesFor(
 }
 
 /** Ask the customer to drop a pin, falling back to the map form CTA. */
+/** Items total for a stored cart's JSON lines, priced from the current menu. */
+async function cartSubtotal(linesJson: string | null | undefined): Promise<number> {
+  let lines: any[] = [];
+  try { lines = JSON.parse(linesJson ?? "[]"); } catch { return 0; }
+  if (!lines.length) return 0;
+
+  const items = await prisma.menuItem.findMany({
+    where: { id: { in: lines.map((l) => l.menuItemId) } },
+    include: { variants: true },
+  });
+  const byId = new Map(items.map((m) => [m.id, m]));
+
+  let total = 0;
+  for (const l of lines) {
+    const mi = byId.get(l.menuItemId);
+    if (!mi) continue;
+    const v = l.variantId ? mi.variants.find((x) => x.id === l.variantId) : undefined;
+    total += (v?.price ?? mi.price) * l.qty;
+  }
+  return total;
+}
+
 async function sendPinLocationPrompt(adapter: CloudAdapter, phone: string): Promise<void> {
   const base = botSessionManager.getPublicServerUrl().replace(/\/+$/, "");
   const mapFormUrl = `${base}/address?phone=${encodeURIComponent(phone)}`;
@@ -1247,7 +1269,45 @@ export class BotSessionManager {
             }
           }
 
-          const { reply, mediaReply, placedOrderId, humanHandoffRequested } = await handleIncoming(msg.phone, msg.text, restaurantId);
+          const { reply, mediaReply, placedOrderId, humanHandoffRequested, renderAction } =
+            await handleIncoming(msg.phone, msg.text, restaurantId);
+
+          // The agent names the UI it needs; rendering it belongs here, where the
+          // WhatsApp primitives and existing renderers live.
+          if (renderAction) {
+            const cust = await getOrCreateCustomer(msg.phone, restaurantId);
+
+            if (renderAction.type === "address_picker") {
+              const saved = await savedAddressesFor(cust.id, cust.address);
+              if (saved.length > 0) await sendAddressPickerList(adapter, msg.phone, saved);
+              else await sendPinLocationPrompt(adapter, msg.phone);
+              return;
+            }
+
+            if (renderAction.type === "billing") {
+              if (cust.address) {
+                await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, cust.address);
+              } else {
+                await sendPinLocationPrompt(adapter, msg.phone);
+              }
+              return;
+            }
+
+            if (renderAction.type === "resend_payment_link") {
+              const cart = await prisma.pendingOrder.findUnique({ where: { customerId: cust.id } });
+              if (cart?.razorpayLinkUrl) {
+                const total = (cart.deliveryFee ?? 0) + (await cartSubtotal(cart.lines));
+                await send(adapter, msg.phone, renderPaymentLink(cart.razorpayLinkUrl, total));
+              } else if (cust.address) {
+                // No link on file — regenerate rather than pointing at one that
+                // does not exist.
+                await proceedToBilling(adapter, msg.phone, restaurantId, cust.id, cust.address);
+              } else {
+                await sendPinLocationPrompt(adapter, msg.phone);
+              }
+              return;
+            }
+          }
 
           // An empty reply means this message was folded into a turn already in
           // flight for the same customer — that turn answers all of them at once,
