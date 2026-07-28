@@ -260,6 +260,7 @@ export class ShiprocketDeliveryService {
             billing_pincode: billingPincode,
             billing_country: "India",
             shipping_is_billing: true,
+            is_hyperlocal: 1,
             order_items: [{
               name: "Food Package",
               qty: 1,
