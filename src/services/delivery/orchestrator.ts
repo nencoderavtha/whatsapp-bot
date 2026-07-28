@@ -81,6 +81,8 @@ export class DeliveryOrchestrator {
     // cheapest quote wins, a made-up number would routinely undercut the one
     // real quote and become the fee charged to the customer.
     const pending: Array<Promise<UnifiedQuote | null>> = [];
+    // Commented out other services to plug only Borzo for now
+    /*
     if (process.env.SHIPROCKET_API_EMAIL && process.env.SHIPROCKET_API_PASSWORD) {
       pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
     }
@@ -97,12 +99,15 @@ export class DeliveryOrchestrator {
       };
       pending.push(this.shadowfax.getQuote(sfxParams) as Promise<UnifiedQuote | null>);
     }
+    */
     if (process.env.BORZO_API_TOKEN || process.env.BORZO_PROD_API_TOKEN) {
       pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
     }
+    /*
     if (process.env.UBER_CLIENT_ID && process.env.UBER_CLIENT_SECRET) {
       pending.push(this.uber.getQuote(params) as Promise<UnifiedQuote | null>);
     }
+    */
 
     const results = await Promise.allSettled(pending);
 

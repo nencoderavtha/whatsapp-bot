@@ -478,7 +478,8 @@ export function buildAdminApp() {
       results.borzo = { available: false, error: err?.message ?? err };
     }
 
-    // 2. Shiprocket Quote Query
+    // 2. Shiprocket Quote Query - Commented out to plug only Borzo for now
+    /*
     const shiprocket = new ShiprocketDeliveryService();
     try {
       const quote = await shiprocket.getQuote({
@@ -494,8 +495,10 @@ export function buildAdminApp() {
     } catch (err: any) {
       results.shiprocket = { available: false, error: err?.message ?? err };
     }
+    */
 
-    // 3. Uber Direct Quote Query
+    // 3. Uber Direct Quote Query - Commented out to plug only Borzo for now
+    /*
     const uber = new UberDirectDeliveryService();
     try {
       const quote = await uber.getQuote({
@@ -515,6 +518,7 @@ export function buildAdminApp() {
     } catch (err: any) {
       results.uber = { available: false, error: err?.message ?? err };
     }
+    */
 
     res.json(results);
   }));
