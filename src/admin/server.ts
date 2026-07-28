@@ -652,6 +652,7 @@ export function buildAdminApp() {
 
           if (text.trim()) {
             const inbound: InboundMessage = {
+              id: msg.id as string | undefined,
               phone: msg.from as string,
               text: text.trim(),
               name: entry?.contacts?.[0]?.profile?.name as string | undefined,

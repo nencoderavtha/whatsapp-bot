@@ -29,6 +29,26 @@ export class CloudAdapter implements WhatsAppAdapter {
     await this.handler?.(msg);
   }
 
+  async markRead(messageId: string): Promise<void> {
+    const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: messageId,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      logger.error(`[Cloud ${this.phoneNumberId}] markRead failed (${resp.status}):`, err);
+    }
+  }
+
   async sendText(phone: string, text: string): Promise<void> {
     const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
     const resp = await fetch(url, {

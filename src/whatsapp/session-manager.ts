@@ -650,6 +650,9 @@ export class BotSessionManager {
     this.phoneIdMap.set(phoneNumberId, restaurantId);
 
     adapter.onMessage(async (msg) => {
+      if (msg.id && adapter.markRead) {
+        adapter.markRead(msg.id).catch(e => logger.error(`[Cloud] markRead failed for ${msg.id}`, e));
+      }
       runWithContext({ restaurantId, phone: msg.phone }, async () => {
         logger.info(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
         try {

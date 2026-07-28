@@ -2,6 +2,7 @@
  * Meta WhatsApp Cloud API Adapter Interface.
  */
 export interface InboundMessage {
+  id?: string; // WhatsApp message ID for read receipts
   phone: string; // normalized digits, no "+"
   text: string;
   name?: string; // WhatsApp push name if available
@@ -15,6 +16,7 @@ export interface WhatsAppAdapter {
   start(): Promise<void>;
   stop?(): Promise<void>;
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void;
+  markRead?(messageId: string): Promise<void>;
   sendText(phone: string, text: string): Promise<void>;
   sendImage(phone: string, imageUrl: string, caption?: string): Promise<void>;
   sendInteractiveButtons?(
