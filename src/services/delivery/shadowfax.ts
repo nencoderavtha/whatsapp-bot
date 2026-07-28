@@ -122,7 +122,7 @@ export class ShadowfaxDeliveryService {
             provider: "Shadowfax Hyperlocal",
             providerCode: "shadowfax",
             quotedFee: data.price ?? data.delivery_charges ?? 48,
-            estimatedMinutes: data.eta ?? 25,
+            estimatedMinutes: data.eta ?? 0,
             available: true,
             vehicleType: "2-Wheeler (Thermal Bag)",
           };

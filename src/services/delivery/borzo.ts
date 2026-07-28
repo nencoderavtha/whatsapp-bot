@@ -148,19 +148,12 @@ export class BorzoDeliveryService {
 
           if (data.is_successful && data.order) {
             const amount = Number(data.order.payment_amount || data.order.delivery_fee_amount || 52);
-            const deliveryPoint = data.order.points?.[1] || data.order.points?.find((p: any) => p.point_type === "delivery");
-            const distanceMeters = deliveryPoint?.previous_point_driving_distance_meters || 0;
-            let estimatedMinutes = 28;
-            if (distanceMeters > 0) {
-              const distanceKm = distanceMeters / 1000;
-              estimatedMinutes = Math.round(distanceKm * 3 + 10);
-            }
 
             return {
               provider: "Borzo Express",
               providerCode: "borzo",
               quotedFee: amount,
-              estimatedMinutes,
+              estimatedMinutes: 0,
               available: true,
               vehicleType: "2-Wheeler Express Courier",
               raw: data,

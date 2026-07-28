@@ -124,24 +124,22 @@ export class ShiprocketDeliveryService {
           if (couriers.length > 0) {
             const cheapest = couriers.reduce((prev, curr) => (curr.rate < prev.rate ? curr : prev));
             
-            let estimatedMinutes = 35;
+            let estimatedMinutes = 0;
             if (cheapest.etd_hours != null && !isNaN(cheapest.etd_hours) && cheapest.etd_hours > 0) {
               estimatedMinutes = Math.round(cheapest.etd_hours * 60);
             } else if (cheapest.etd) {
               const etdLower = cheapest.etd.toLowerCase();
               if (etdLower.includes("hour")) {
-                const hrs = parseFloat(etdLower.match(/(\d+(\.\d+)?)/)?.[0] || "1");
+                const hrs = parseFloat(etdLower.match(/(\d+(\.\d+)?)/)?.[0] || "0");
                 estimatedMinutes = Math.round(hrs * 60);
               } else if (etdLower.includes("min")) {
-                estimatedMinutes = parseInt(etdLower.match(/\d+/)?.[0] || "35", 10);
+                estimatedMinutes = parseInt(etdLower.match(/\d+/)?.[0] || "0", 10);
               } else {
                 const parsedDate = Date.parse(cheapest.etd);
                 if (!isNaN(parsedDate)) {
                   const diff = parsedDate - Date.now();
                   if (diff > 0) {
-                    estimatedMinutes = Math.max(15, Math.round(diff / 60000));
-                  } else {
-                    estimatedMinutes = 24 * 60; // 24 hours fallback for standard shipping
+                    estimatedMinutes = Math.round(diff / 60000);
                   }
                 }
               }
