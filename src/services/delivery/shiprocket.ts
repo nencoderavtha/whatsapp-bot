@@ -227,6 +227,15 @@ export class ShiprocketDeliveryService {
 
     if (token) {
       try {
+        const nameParts = params.customerName.trim().split(/\s+/);
+        const firstName = nameParts[0] || "Customer";
+        const lastName = nameParts.slice(1).join(" ") || "Customer";
+
+        const cleanPhone = params.customerPhone.replace(/^(\+?91)/, "").trim();
+
+        const pincodeMatch = params.deliveryAddress.match(/(\d{6})\s*$/) || params.deliveryAddress.match(/\b(\d{6})\b/);
+        const billingPincode = pincodeMatch ? Number(pincodeMatch[1]) : 500081;
+
         const res = await fetch(`${this.baseUrl}/orders/create/adhoc`, {
           method: "POST",
           headers: {
@@ -236,11 +245,24 @@ export class ShiprocketDeliveryService {
           body: JSON.stringify({
             order_id: params.orderId.toString(),
             order_date: new Date().toISOString().split("T")[0],
-            pickup_location: "Godavari Ruchulu Jubilee Hills",
-            billing_customer_name: params.customerName,
-            billing_phone: params.customerPhone,
+            pickup_location: "Shiva Shiva",
+            billing_customer_name: firstName,
+            billing_last_name: lastName,
+            billing_phone: cleanPhone,
             billing_address: params.deliveryAddress,
-            order_items: [{ name: "Food Package", qty: 1, price: 500 }],
+            billing_city: "Hyderabad",
+            billing_state: "Telangana",
+            billing_pincode: billingPincode,
+            billing_country: "India",
+            shipping_is_billing: true,
+            order_items: [{
+              name: "Food Package",
+              qty: 1,
+              price: 500,
+              selling_price: 500,
+              units: 1,
+              sku: "FOOD01"
+            }],
             payment_method: "Prepaid",
             sub_total: 500,
             length: 10,
@@ -261,6 +283,9 @@ export class ShiprocketDeliveryService {
             status: "BOOKED",
             message: "Successfully booked rider via Shiprocket Quick.",
           };
+        } else {
+          const text = await res.text();
+          logger.error(`[Shiprocket Dispatch API Error] Status: ${res.status} Response: ${text}`);
         }
       } catch (err) {
         logger.error("[Shiprocket Dispatch Error, using fallback]", err);
