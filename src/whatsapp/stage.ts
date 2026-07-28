@@ -60,7 +60,10 @@ export function stageAfterCartEdit(current: OrderStage): OrderStage {
  * `PAYMENT_FAILED` is deliberately absent — that cart is very much still live.
  */
 export function isLocked(stage: OrderStage): boolean {
-  return stage === "PAYMENT_RECEIVED" || stage === "ORDER_PLACED" || stage === "CANCELLED";
+  // PAYMENT_RECEIVED was folded into ORDER_PLACED when the enum gained
+  // PAYMENT_FAILED and CANCELLED; this comparison outlived it and no longer
+  // matched any stage.
+  return stage === "ORDER_PLACED" || stage === "CANCELLED";
 }
 
 /**

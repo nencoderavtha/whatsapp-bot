@@ -24,10 +24,13 @@ export async function acquire(key: string): Promise<ConversationLease | null> {
   const holder = randomUUID();
 
   // ----- REDIS IMPLEMENTATION -----
-  if (redis) {
+  // Bind to a local: the release callback below runs long after this function
+  // returns, and the outer narrowing from `if (redis)` does not survive into it.
+  const r = redis;
+  if (r) {
     try {
       const lockKey = `lock:${key}`;
-      const acquired = await redis.set(lockKey, holder, "PX", LEASE_MS, "NX");
+      const acquired = await r.set(lockKey, holder, "PX", LEASE_MS, "NX");
       
       if (!acquired) return null;
 
@@ -53,7 +56,7 @@ export async function acquire(key: string): Promise<ConversationLease | null> {
                 return 0
               end
             `;
-            await redis.eval(script, 1, lockKey, holder);
+            await r.eval(script, 1, lockKey, holder);
           } catch (e) {
             logger.error(`[Redis Lock] Could not release ${key}:`, e);
           }

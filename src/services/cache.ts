@@ -84,15 +84,19 @@ export function invalidate(restaurantId: number, key?: string): void {
     }
   }
   
-  // L2 Invalidation
-  if (redis) {
+  // L2 Invalidation. Bind to a local first: inside the .then() callback the
+  // outer narrowing from `if (redis)` no longer holds, since redis is a
+  // module-level binding that could in principle change before the promise
+  // settles.
+  const r = redis;
+  if (r) {
     if (key) {
-      redis.del(`cache:${keyOf(restaurantId, key)}`).catch(e => logger.error("[Redis Cache] del failed:", e));
+      r.del(`cache:${keyOf(restaurantId, key)}`).catch(e => logger.error("[Redis Cache] del failed:", e));
     } else {
-      // In a real environment with thousands of keys we'd use SCAN, 
+      // In a real environment with thousands of keys we'd use SCAN,
       // but for menu/config per restaurant this is safe enough.
-      redis.keys(`cache:${restaurantId}:*`).then(keys => {
-        if (keys.length > 0) redis.del(...keys);
+      r.keys(`cache:${restaurantId}:*`).then(keys => {
+        if (keys.length > 0) r.del(...keys);
       }).catch(e => logger.error("[Redis Cache] keys/del failed:", e));
     }
   }
