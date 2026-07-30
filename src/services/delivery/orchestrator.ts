@@ -90,30 +90,19 @@ export class DeliveryOrchestrator {
     // used to return invented simulation fees marked available, and since the
     // cheapest quote wins, a made-up number would routinely undercut the one
     // real quote and become the fee charged to the customer.
+    // Active providers query (Unplugged Shiprocket and Borzo for testing Uber Direct)
     const pending: Array<Promise<UnifiedQuote | null>> = [];
+    
+    // Enable Uber Direct for testing
+    pending.push(this.uber.getQuote(params) as Promise<UnifiedQuote | null>);
+
+    /*
+    // Shiprocket & Borzo unplugged per user request
     if (process.env.SHIPROCKET_API_EMAIL && process.env.SHIPROCKET_API_PASSWORD) {
       pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
     }
-    // Commented out other services to plug only Shiprocket for now
-    /*
-    if (process.env.SHADOWFAX_API_KEY) {
-      // Build Shadowfax-specific params including optional lat/lng
-      const sfxParams: ShadowfaxQuoteParams = {
-        pickupPincode: params.pickupPincode,
-        deliveryPincode: params.deliveryPincode,
-        weightKg: params.weightKg,
-        pickupLat: params.pickupLat ?? undefined,
-        pickupLng: params.pickupLng ?? undefined,
-        deliveryLat: params.deliveryLat ?? undefined,
-        deliveryLng: params.deliveryLng ?? undefined,
-      };
-      pending.push(this.shadowfax.getQuote(sfxParams) as Promise<UnifiedQuote | null>);
-    }
     if (process.env.BORZO_API_TOKEN || process.env.BORZO_PROD_API_TOKEN) {
       pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
-    }
-    if (process.env.UBER_CLIENT_ID && process.env.UBER_CLIENT_SECRET) {
-      pending.push(this.uber.getQuote(params) as Promise<UnifiedQuote | null>);
     }
     */
 
@@ -145,24 +134,11 @@ export class DeliveryOrchestrator {
   }
 
   /**
-   * Dispatch delivery order to the selected provider.
+   * Dispatch delivery order (Exclusively routed to Uber Direct)
    */
   async dispatchOrder(request: DispatchRequest) {
-    switch (request.providerCode) {
-      case "shadowfax":
-        return this.shadowfax.dispatchOrder(request);
-      case "borzo":
-        return this.borzo.dispatchOrder(request);
-      case "uber":
-        return this.uber.dispatchOrder(request);
-      case "shiprocket":
-        return this.shiprocket.dispatchOrder(request);
-      case "rapido":
-        // Rapido routed via Shiprocket Quick until direct Rapido partner API is live
-        return this.shiprocket.dispatchOrder(request);
-      default:
-        return this.shiprocket.dispatchOrder(request);
-    }
+    logger.info(`🚚 [Orchestrator] Directing dispatch for Order #${request.orderId} exclusively to Uber Direct`);
+    return this.uber.dispatchOrder(request);
   }
 
   /**

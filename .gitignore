@@ -24,4 +24,5 @@ pnpm-debug.log*
 .vscode/
 .idea/
 sessions/
+*.tmp.ts
 

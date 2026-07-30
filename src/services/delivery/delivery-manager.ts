@@ -106,7 +106,7 @@ export class DeliveryManager {
     // is never recomputed here — re-quoting at booking time (20-30 minutes later,
     // at a different price) and writing the new number back left the books
     // disagreeing with what was actually charged.
-    const selectedProviderCode = preferredProviderCode ?? "shiprocket";
+    const selectedProviderCode = preferredProviderCode ?? "uber";
     const billedFee = order.deliveryFee || 45;
 
     logger.info(`🏆 [Delivery Partner]: ${selectedProviderCode.toUpperCase()} | Customer was billed ₹${billedFee}`);

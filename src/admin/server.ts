@@ -854,6 +854,89 @@ export function buildAdminApp() {
     res.status(200).json({ ok: true });
   }));
 
+  app.post("/webhook/uberdirect", express.json(), asyncRoute(async (req, res) => {
+    const payload = req.body;
+    logger.info("🚚 [Uber Direct Webhook Event Received]:", JSON.stringify(payload, null, 2));
+
+    const deliveryId = payload.delivery_id || payload.data?.id;
+    const uberStatus = (payload.status || payload.data?.status || "").toLowerCase();
+    const courier = payload.courier || payload.data?.courier || {};
+
+    if (!deliveryId) {
+      res.status(200).json({ ok: true, note: "No delivery ID in payload" });
+      return;
+    }
+
+    const dispatch = await prisma.deliveryDispatch.findFirst({
+      where: {
+        OR: [
+          { externalDeliveryId: deliveryId },
+          { externalDeliveryId: `UBR-${deliveryId}` },
+        ],
+      },
+      include: { order: { include: { customer: true } } },
+    });
+
+    if (!dispatch) {
+      logger.warn(`[Uber Direct Webhook] No dispatch found for delivery ID ${deliveryId}`);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    let internalStatus = dispatch.status;
+    if (uberStatus === "pickup" || uberStatus === "pickup_complete" || uberStatus === "in_transit") {
+      internalStatus = "OUT_FOR_DELIVERY";
+    } else if (uberStatus === "delivered" || uberStatus === "completed") {
+      internalStatus = "DELIVERED";
+    } else if (uberStatus === "canceled" || uberStatus === "cancelled") {
+      internalStatus = "CANCELLED";
+    } else if (uberStatus === "dispatching" || uberStatus === "processing") {
+      internalStatus = "SEARCHING_RIDER";
+    }
+
+    const riderName = courier.name || null;
+    const riderPhone = courier.phone_number || null;
+    const vehicleNumber = courier.vehicle_type || null;
+
+    await prisma.deliveryDispatch.update({
+      where: { id: dispatch.id },
+      data: {
+        status: internalStatus,
+        ...(riderName ? { riderName } : {}),
+        ...(riderPhone ? { riderPhone } : {}),
+        ...(vehicleNumber ? { riderVehicleNumber: vehicleNumber } : {}),
+      },
+    });
+
+    if (internalStatus === "DELIVERED") {
+      await prisma.order.update({
+        where: { id: dispatch.orderId },
+        data: { status: "delivered" },
+      });
+    }
+
+    const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
+    if (session && dispatch.order?.customer?.phone) {
+      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
+      const trackingUrl = payload.tracking_url || (dispatch.externalDeliveryId ? `https://delivery.uber.com` : null);
+      const notifMsg = deliveryStatusMsg(
+        dispatch.orderId,
+        internalStatus,
+        riderName,
+        riderPhone,
+        trackingUrl,
+        cfg?.restaurantName ?? "Restaurant"
+      );
+
+      if (notifMsg) {
+        await session.sendText(dispatch.order.customer.phone, notifMsg);
+        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
+      }
+    }
+
+    res.status(200).json({ ok: true });
+  }));
+
   app.get("/api/ping", (_req, res) => res.json({ ok: true }));
   app.post("/api/auth/login", loginHandler);
   app.post("/api/auth/logout", logoutHandler);
@@ -1097,7 +1180,7 @@ export function buildAdminApp() {
     // better move; this is the safety net for when nobody did.
     if (status === "ready" && order.type === "delivery") {
       try {
-        const result: any = await DeliveryManager.dispatchOrder(orderId, "shiprocket");
+        const result: any = await DeliveryManager.dispatchOrder(orderId, "uber");
         logger.info(
           result?.alreadyDispatched
             ? `[Auto-Dispatch] Order #${orderId} already had a courier booked.`
@@ -1124,7 +1207,7 @@ export function buildAdminApp() {
 
   api.post("/orders/:id/dispatch", async (req, res) => {
     const orderId = Number(req.params.id);
-    const providerCode = req.body.providerCode || "borzo";
+    const providerCode = req.body.providerCode || "uber";
     try {
       const result = await DeliveryManager.dispatchOrder(orderId, providerCode);
       res.json(result);

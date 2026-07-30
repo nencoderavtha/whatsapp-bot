@@ -23,11 +23,12 @@ export class UberDirectDeliveryService {
       customerId: (process.env.UBER_CUSTOMER_ID || "").trim(),
       clientId: (process.env.UBER_CLIENT_ID || "").trim(),
       clientSecret: (process.env.UBER_CLIENT_SECRET || "").trim(),
+      scope: (process.env.UBER_SCOPE || "").trim(),
     };
   }
 
   private async authenticate(): Promise<string | null> {
-    const { clientId, clientSecret } = this.getEnvKeys();
+    const { clientId, clientSecret, scope } = this.getEnvKeys();
 
     if (!clientId || !clientSecret) {
       return null;
@@ -42,19 +43,30 @@ export class UberDirectDeliveryService {
     }
 
     try {
+      const primaryScope = scope || "eats.deliveries";
       const params = new URLSearchParams();
       params.append("client_id", clientId);
       params.append("client_secret", clientSecret);
       params.append("grant_type", "client_credentials");
-      params.append("scope", "eats.deliveries");
+      params.append("scope", primaryScope);
 
-      const res = await fetch("https://auth.uber.com/oauth/v2/token", {
+      let res = await fetch("https://auth.uber.com/oauth/v2/token", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: params.toString(),
       });
+
+      if (!res.ok && !scope) {
+        // Retry with direct.organizations scope if eats.deliveries fails
+        params.set("scope", "direct.organizations");
+        res = await fetch("https://auth.uber.com/oauth/v2/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        });
+      }
 
       if (!res.ok) {
         const errText = await res.text();
@@ -241,9 +253,38 @@ export class UberDirectDeliveryService {
       }
 
       const quoteId = quoteRes.raw.id;
-      const payload = {
-        quote_id: quoteId,
+
+      const formatPhone = (phone?: string) => {
+        const cleaned = (phone ?? "").replace(/\D/g, "");
+        return cleaned ? `+${cleaned}` : "+919999999999";
       };
+
+      const pickupAddress = params.pickupAddress ?? `Hyderabad Pincode ${params.pickupPincode ?? 500081}`;
+      const deliveryAddress = params.deliveryAddress ?? `Hyderabad Pincode ${params.deliveryPincode ?? 500081}`;
+
+      const payload: Record<string, any> = {
+        quote_id: quoteId,
+        pickup_name: params.pickupName || "Restaurant",
+        pickup_address: pickupAddress,
+        pickup_phone_number: formatPhone(params.pickupPhone),
+        dropoff_name: params.customerName || "Customer",
+        dropoff_address: deliveryAddress,
+        dropoff_phone_number: formatPhone(params.customerPhone),
+        manifest_items: (params.items || [{ name: "Food Order", qty: 1, price: 100 }]).map((item: any) => ({
+          name: item.name,
+          quantity: item.qty || 1,
+          price: Math.round((item.price || 100) * 100),
+        })),
+      };
+
+      if (params.pickupLat != null && params.pickupLng != null) {
+        payload.pickup_latitude = Number(params.pickupLat);
+        payload.pickup_longitude = Number(params.pickupLng);
+      }
+      if (params.deliveryLat != null && params.deliveryLng != null) {
+        payload.dropoff_latitude = Number(params.deliveryLat);
+        payload.dropoff_longitude = Number(params.deliveryLng);
+      }
 
       const res = await fetch(`${baseUrl}/v1/customers/${customerId}/deliveries`, {
         method: "POST",
@@ -256,7 +297,12 @@ export class UberDirectDeliveryService {
 
       const rawText = await res.text();
       if (!res.ok) {
-        logger.error(`[Uber Direct Dispatch] HTTP ${res.status}:`, rawText);
+        logger.error(`[Uber Direct Dispatch Error] HTTP ${res.status}: ${rawText}`);
+        let errorMsg = `HTTP ${res.status}`;
+        try {
+          const errObj = JSON.parse(rawText);
+          errorMsg = errObj.message || errObj.code || errorMsg;
+        } catch {}
         return {
           ok: false,
           orderId: params.orderId,
@@ -264,7 +310,7 @@ export class UberDirectDeliveryService {
           dispatchId: null,
           trackingUrl: null,
           status: "FAILED",
-          message: `Uber Direct dispatch failed: HTTP ${res.status}`,
+          message: `Uber Direct dispatch failed: ${errorMsg} (${rawText})`,
         };
       }
 
@@ -292,6 +338,43 @@ export class UberDirectDeliveryService {
         status: "FAILED",
         message: err?.message || String(err),
       };
+    }
+  }
+
+  /**
+   * Cancel a delivery order on Uber Direct
+   */
+  async cancelDelivery(deliveryId: string) {
+    const cleanId = deliveryId.replace(/^UBR-/, "");
+    const token = await this.authenticate();
+    const { env, customerId } = this.getEnvKeys();
+    if (!token || !customerId) {
+      return { ok: false, message: "Missing Uber Direct credentials" };
+    }
+
+    const isTest = env === "test" || env === "sandbox";
+    const baseUrl = isTest ? "https://sandbox-api.uber.com" : "https://api.uber.com";
+
+    try {
+      const res = await fetch(`${baseUrl}/v1/customers/${customerId}/deliveries/${cleanId}/cancel`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const rawText = await res.text();
+      if (!res.ok) {
+        logger.error(`[Uber Direct Cancel Error] HTTP ${res.status}: ${rawText}`);
+        return { ok: false, status: res.status, raw: rawText };
+      }
+
+      const data = rawText ? JSON.parse(rawText) : {};
+      return { ok: true, data };
+    } catch (err: any) {
+      logger.error("[Uber Direct Cancel Exception]", err);
+      return { ok: false, error: err?.message || String(err) };
     }
   }
 }
