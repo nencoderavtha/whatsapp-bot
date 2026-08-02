@@ -277,7 +277,7 @@ export class ShiprocketDeliveryService {
           : orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
 
         const orderData = {
-          order_id: params.orderId.toString(),
+          order_id: `${params.orderId}_${Date.now().toString().slice(-4)}`,
           order_date: new Date().toISOString().split("T")[0],
           pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || "work",
           billing_customer_name: firstName,
