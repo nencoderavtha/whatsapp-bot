@@ -34,7 +34,11 @@ export interface ShiprocketDispatchParams {
   customerName: string;
   customerPhone: string;
   deliveryAddress: string;
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
   pickupAddress?: string;
+  pickupLat?: number | null;
+  pickupLng?: number | null;
   items?: Array<{ name: string; qty: number; price: number }>;
   subTotal?: number;
 }
@@ -108,6 +112,7 @@ export class ShiprocketDeliveryService {
           if (data.data && Array.isArray(data.data)) {
             // Hyperlocal response structure
             couriers = data.data.map((c: any) => ({
+              id: c.courier_company_id || c.courier_id || c.id,
               name: c.courier_name || "Shiprocket Quick",
               rate: Number(c.rates || c.rate || 0),
               etd: c.etd || `${c.etd_hours || 1} hour`,
@@ -116,6 +121,7 @@ export class ShiprocketDeliveryService {
           } else if (data.data?.available_courier_companies) {
             // Standard domestic response structure
             couriers = data.data.available_courier_companies.map((c: any) => ({
+              id: c.courier_company_id || c.courier_id || c.id,
               name: c.courier_name,
               rate: Number(c.rate || c.rates || 0),
               etd: c.etd,
@@ -225,7 +231,6 @@ export class ShiprocketDeliveryService {
    */
   async dispatchOrder(params: ShiprocketDispatchParams) {
     const token = await this.authenticate();
-    const mockDispatchId = `SR-${Date.now().toString().slice(-7)}`;
 
     if (token) {
       try {
@@ -237,8 +242,10 @@ export class ShiprocketDeliveryService {
 
         const cleanAddress = params.deliveryAddress
           .replace(/\b[A-Z0-9]{4}\+[A-Z0-9]{2,4}\b/g, "")
+          .replace(/Telangana|India|- 500\d{3}|500\d{3}/gi, "")
           .replace(/\s+/g, " ")
-          .trim();
+          .trim()
+          .slice(0, 80);
 
         const pincodeMatch = params.deliveryAddress.match(/(\d{6})\s*$/) || params.deliveryAddress.match(/\b(\d{6})\b/);
         const billingPincode = pincodeMatch ? Number(pincodeMatch[1]) : 500081;
@@ -250,7 +257,9 @@ export class ShiprocketDeliveryService {
               price: item.price,
               selling_price: item.price,
               units: item.qty,
-              sku: `ITEM_${idx + 1}`
+              sku: `ITEM_${idx + 1}`,
+              category_name: "Food",
+              category: "Food",
             }))
           : [{
               name: "Food Package",
@@ -258,122 +267,124 @@ export class ShiprocketDeliveryService {
               price: params.subTotal || 1,
               selling_price: params.subTotal || 1,
               units: 1,
-              sku: "FOOD01"
+              sku: "FOOD01",
+              category_name: "Food",
+              category: "Food",
             }];
 
         const orderSubTotal = params.subTotal && params.subTotal > 0
           ? params.subTotal
           : orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
 
-        const res = await fetch(`${this.baseUrl}/orders/create/adhoc`, {
+        const orderData = {
+          order_id: params.orderId.toString(),
+          order_date: new Date().toISOString().split("T")[0],
+          pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || "work",
+          billing_customer_name: firstName,
+          billing_last_name: lastName,
+          billing_phone: cleanPhone,
+          billing_address: cleanAddress,
+          billing_city: "Hyderabad",
+          billing_state: "Telangana",
+          billing_pincode: billingPincode,
+          billing_country: "India",
+          shipping_is_billing: true,
+          shipping_pincode: billingPincode,
+          latitude: params.deliveryLat || 17.420299,
+          longitude: params.deliveryLng || 78.382698,
+          is_hyperlocal: 1,
+          shipping_method: "HL",
+          ...(params.pickupLat && { lat_from: params.pickupLat.toString() }),
+          ...(params.pickupLng && { long_from: params.pickupLng.toString() }),
+          ...(params.deliveryLat && { lat_to: params.deliveryLat.toString() }),
+          ...(params.deliveryLng && { long_to: params.deliveryLng.toString() }),
+          order_items: orderItems,
+          payment_method: "Prepaid",
+          sub_total: orderSubTotal,
+          length: 10,
+          breadth: 10,
+          height: 10,
+          weight: 0.5,
+        };
+
+        logger.info(`Sending Shiprocket Quick Order Payload: ${JSON.stringify(orderData)}`);
+
+        const createRes = await fetch(`${this.baseUrl}/orders/create/adhoc`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            order_id: params.orderId.toString(),
-            order_date: new Date().toISOString().split("T")[0],
-            pickup_location: "Work",
-            billing_customer_name: firstName,
-            billing_last_name: lastName,
-            billing_phone: cleanPhone,
-            billing_address: cleanAddress,
-            billing_city: "Hyderabad",
-            billing_state: "Telangana",
-            billing_pincode: billingPincode,
-            billing_country: "India",
-            shipping_is_billing: true,
-            is_hyperlocal: 1,
-            order_items: orderItems,
-            payment_method: "Prepaid",
-            sub_total: orderSubTotal,
-            length: 10,
-            breadth: 10,
-            height: 10,
-            weight: 0.5,
-          }),
+          body: JSON.stringify(orderData),
         });
 
-        if (res.ok) {
-          const data = (await res.json()) as { shipment_id?: number; order_id?: number };
-          const shipmentId = data.shipment_id;
-
-          let awbCode = "";
-          let courierName = "";
-
-          // Step 2: Auto-assign Courier & Generate AWB
-          if (shipmentId) {
-            try {
-              const awbRes = await fetch(`${this.baseUrl}/courier/assign/awb`, {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ shipment_id: shipmentId }),
-              });
-
-              if (awbRes.ok) {
-                const awbData = (await awbRes.json()) as any;
-                if (awbData.awb_assign_status === 1 || awbData.response?.data?.awb_code) {
-                  awbCode = awbData.response?.data?.awb_code || "";
-                  courierName = awbData.response?.data?.courier_name || "";
-                  logger.info(`✅ [Shiprocket Auto-Ship] Courier assigned: ${courierName} (AWB: ${awbCode})`);
-
-                  // Step 3: Auto-request Pickup
-                  const pickupRes = await fetch(`${this.baseUrl}/courier/generate/pickup`, {
-                    method: "POST",
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                      "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({ shipment_id: [shipmentId] }),
-                  });
-
-                  if (pickupRes.ok) {
-                    logger.info(`✅ [Shiprocket Auto-Ship] Pickup scheduled for shipment ${shipmentId}`);
-                  }
-                } else {
-                  logger.warn(`[Shiprocket AWB Assign Warning] ${JSON.stringify(awbData)}`);
-                }
-              }
-            } catch (awbErr) {
-              logger.error("[Shiprocket Auto-Ship Step 2/3 Error]", awbErr);
-            }
-          }
-
-          const finalDispatchId = awbCode ? `SR-${awbCode}` : (shipmentId ? `SR-${shipmentId}` : mockDispatchId);
-          const trackingId = awbCode || shipmentId || mockDispatchId;
-
-          return {
-            ok: true,
-            orderId: params.orderId,
-            providerCode: "shiprocket",
-            dispatchId: finalDispatchId,
-            trackingUrl: `https://shiprocket.co/tracking/${trackingId}`,
-            status: "BOOKED",
-            message: courierName
-              ? `Successfully auto-shipped via ${courierName} (AWB: ${awbCode}).`
-              : "Successfully booked rider via Shiprocket Quick.",
-          };
-        } else {
-          const text = await res.text();
-          logger.error(`[Shiprocket Dispatch API Error] Status: ${res.status} Response: ${text}`);
+        if (!createRes.ok) {
+          const errText = await createRes.text();
+          logger.error(`Shiprocket Order Creation Error (${createRes.status}): ${errText}`);
+          return { ok: false, error: `Shiprocket API error (${createRes.status}): ${errText}` };
         }
+
+        const createResult = (await createRes.json()) as { shipment_id?: number; order_id?: number };
+        logger.info(`Shiprocket Order Created Response: ${JSON.stringify(createResult)}`);
+
+        const shipmentId = createResult.shipment_id;
+        const externalOrderId = createResult.order_id;
+        let awbCode = "";
+        let courierName = "Shiprocket Quick";
+
+        if (shipmentId) {
+          try {
+            const awbRes = await fetch(`${this.baseUrl}/courier/assign/awb`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ shipment_id: shipmentId, is_hyperlocal: 1 }),
+            });
+
+            if (awbRes.ok) {
+              const awbData = (await awbRes.json()) as any;
+              logger.info(`Shiprocket Quick AWB Response: ${JSON.stringify(awbData)}`);
+              awbCode = awbData.response?.data?.awb_code || "";
+              courierName = awbData.response?.data?.courier_name || "Shiprocket Quick";
+            }
+          } catch (awbErr) {
+            logger.error("[Shiprocket Auto-Ship Error]", awbErr);
+          }
+        }
+
+        return {
+          ok: true,
+          orderId: params.orderId,
+          providerCode: "shiprocket",
+          dispatchId: awbCode || `SR-${externalOrderId || shipmentId}`,
+          trackingUrl: `https://quick.shiprocket.in/tracking/${shipmentId}`,
+          status: "BOOKED",
+          message: `Successfully dispatched order directly to Shiprocket Quick (SEARCHING FOR RIDER).`,
+        };
       } catch (err) {
-        logger.error("[Shiprocket Dispatch Error, using fallback]", err);
+        logger.error("[Shiprocket Dispatch Error]", err);
+        return {
+          ok: false,
+          orderId: params.orderId,
+          providerCode: "shiprocket",
+          dispatchId: null,
+          trackingUrl: null,
+          status: "FAILED",
+          message: `Failed to dispatch order to Shiprocket Quick: ${err}`,
+        };
       }
     }
 
     return {
-      ok: true,
+      ok: false,
       orderId: params.orderId,
       providerCode: "shiprocket",
-      dispatchId: mockDispatchId,
-      trackingUrl: `https://track.delivery.exter.ai/shiprocket/${mockDispatchId}`,
-      status: "RIDER_ASSIGNED",
-      message: "Delivery successfully dispatched via Shiprocket Quick (Rapido Partner).",
+      dispatchId: null,
+      trackingUrl: null,
+      status: "FAILED",
+      message: "Could not create the delivery order on Shiprocket Quick. Check credentials or API availability.",
     };
   }
 

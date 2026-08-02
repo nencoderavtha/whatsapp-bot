@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import { logger } from '../logger.js';
 /**
  * Shadowfax Hyperlocal Delivery Integration Service
@@ -55,16 +58,23 @@ export class ShadowfaxDeliveryService {
       process.env.SHADOWFAX_ENV === "staging" ||
       !process.env.SHADOWFAX_ENV;                    // default to staging until prod creds received
 
-    this.baseUrl = isStaging
-      ? "https://hlbackend.staging.shadowfax.in"
-      : "https://api.shadowfax.in";
+    const customBaseUrl = (process.env.SHADOWFAX_BASE_URL || "").trim().replace(/\/api\/?$/, "").replace(/\/+$/, "");
+    if (customBaseUrl) {
+      this.baseUrl = customBaseUrl;
+    } else {
+      this.baseUrl = isStaging
+        ? "https://hlbackend.staging.shadowfax.in"
+        : "https://dale.shadowfax.in";
+    }
   }
 
   /** Shared auth headers */
   private get authHeaders(): Record<string, string> {
+    const creditsKey = (process.env.SHADOWFAX_CREDITS_KEY || "").trim();
     return {
       Authorization: `Token ${this.apiKey}`,
       "Content-Type": "application/json",
+      ...(creditsKey && { "X-Credits-Key": creditsKey, "credits-key": creditsKey }),
     };
   }
 
@@ -103,7 +113,7 @@ export class ShadowfaxDeliveryService {
         },
       };
 
-      const res = await fetch(`${this.baseUrl}/api/v2/order/serviceability/`, {
+      const res = await fetch(`${this.baseUrl}/api/v3/orders/serviceability/`, {
         method: "POST",
         headers: this.authHeaders,
         body: JSON.stringify(body),
@@ -143,81 +153,188 @@ export class ShadowfaxDeliveryService {
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Create a new delivery order on Shadowfax.
-   * Falls back to a mock response if the API call fails or credentials are absent.
+   * Create a new delivery order on Shadowfax API.
+   * Strictly executes real API calls; fails cleanly if credentials or API calls fail.
    */
   async dispatchOrder(params: ShadowfaxDispatchParams) {
-    const mockDispatchId = `SFX-${Date.now().toString().slice(-7)}`;
-
-    if (this.apiKey) {
-      try {
-        const payload = {
-          order_details: {
-            client_order_id: params.orderId.toString(),
-            payment_mode: "PREPAID",
-            order_value: 500,
-            ...(this.clientCode && { client_code: this.clientCode }),
-          },
-          pickup_details: {
-            name: "Godavari Ruchulu",
-            phone: "9999999999",
-            address_line_1: params.pickupAddress ?? "Godavari Ruchulu, Road No. 45, Jubilee Hills",
-            city: "Hyderabad",
-            state: "Telangana",
-            pincode: "500033",
-          },
-          drop_details: {
-            name: params.customerName,
-            phone: params.customerPhone.replace(/\D/g, "").slice(-10),
-            address_line_1: params.deliveryAddress,
-            city: "Hyderabad",
-            state: "Telangana",
-            pincode: "500081",   // default; real integrations should resolve from address
-          },
-        };
-
-        const res = await fetch(`${this.baseUrl}/api/v2/order/`, {
-          method: "POST",
-          headers: this.authHeaders,
-          body: JSON.stringify(payload),
-        });
-
-        if (res.ok) {
-          const data = (await res.json()) as {
-            sfx_order_id?: string;
-            order_id?: string;
-            status?: string;
-          };
-
-          const sfxId = data.sfx_order_id ?? data.order_id ?? mockDispatchId;
-          return {
-            ok: true,
-            orderId: params.orderId,
-            providerCode: "shadowfax",
-            dispatchId: sfxId,
-            trackingUrl: `https://track.shadowfax.in/${sfxId}`,
-            status: "SEARCHING_RIDER",
-            message: "Order successfully dispatched to Shadowfax rider network.",
-          };
-        } else {
-          const errText = await res.text().catch(() => "");
-          logger.error(`[Shadowfax Dispatch] HTTP ${res.status}:`, errText);
-        }
-      } catch (err) {
-        logger.error("[Shadowfax Dispatch Error, using fallback]", err);
-      }
+    if (!this.apiKey) {
+      logger.error("[Shadowfax Dispatch] SHADOWFAX_API_KEY is not configured.");
+      return {
+        ok: false,
+        orderId: params.orderId,
+        providerCode: "shadowfax",
+        message: "SHADOWFAX_API_KEY missing in environment.",
+      };
     }
 
-    // Graceful fallback — returns a local mock so the rest of the flow continues
-    return {
-      ok: true,
-      orderId: params.orderId,
-      providerCode: "shadowfax",
-      dispatchId: mockDispatchId,
-      trackingUrl: `https://track.delivery.exter.ai/shadowfax/${mockDispatchId}`,
-      status: "SEARCHING_RIDER",
-      message: "Order queued for Shadowfax dispatch (mock — add real creds via SHADOWFAX_API_KEY).",
-    };
+    try {
+      let pickupPincode = Number(params.pickupPincode ?? 500033) || 500033;
+      if (pickupPincode === 500081) pickupPincode = 500033;
+      const deliveryPincode = Number(params.deliveryPincode ?? 500104) || 500104;
+
+      const isHyperlocalMode = this.baseUrl.includes("api.shadowfax.in") || this.baseUrl.includes("flash") || this.baseUrl.includes("now");
+      const dispatchEndpoint = isHyperlocalMode 
+        ? `${this.baseUrl}/api/v2/orders/` 
+        : `${this.baseUrl}/api/v3/clients/orders/`;
+
+      const payload = isHyperlocalMode
+        ? {
+            order_details: {
+              client_order_id: params.orderId.toString(),
+              payment_mode: "PREPAID",
+              order_value: params.subTotal ?? 500,
+              ...(this.clientCode && { client_code: this.clientCode }),
+            },
+            pickup_details: {
+              name: params.pickupName || "Godavari Ruchulu",
+              phone: (params.pickupPhone || "916305500512").replace(/\D/g, "").slice(-10),
+              address_line_1: params.pickupAddress || "100 Feet Rd, Ayyappa Society, Madhapur",
+              city: "Hyderabad",
+              state: "Telangana",
+              pincode: (params.pickupPincode ?? 500081).toString(),
+              ...(params.pickupLat && { latitude: params.pickupLat }),
+              ...(params.pickupLng && { longitude: params.pickupLng }),
+            },
+            drop_details: {
+              name: params.customerName,
+              phone: params.customerPhone.replace(/\D/g, "").slice(-10),
+              address_line_1: params.deliveryAddress,
+              city: "Hyderabad",
+              state: "Telangana",
+              pincode: (params.deliveryPincode ?? 500104).toString(),
+              ...(params.deliveryLat && { latitude: params.deliveryLat }),
+              ...(params.deliveryLng && { longitude: params.deliveryLng }),
+            },
+          }
+        : {
+            order_type: "marketplace",
+            order_details: {
+              client_order_id: params.orderId.toString(),
+              actual_weight: 100,
+              volumetric_weight: 100,
+              product_value: params.subTotal ?? 500,
+              payment_mode: "Prepaid",
+              cod_amount: "0",
+              total_amount: params.subTotal ?? 500,
+            },
+            customer_details: {
+              name: params.customerName,
+              contact: params.customerPhone.replace(/\D/g, "").slice(-10),
+              address_line_1: params.deliveryAddress,
+              city: "Hyderabad",
+              state: "Telangana",
+              pincode: deliveryPincode,
+              ...(params.deliveryLat && { latitude: params.deliveryLat.toString() }),
+              ...(params.deliveryLng && { longitude: params.deliveryLng.toString() }),
+            },
+            pickup_details: {
+              name: params.pickupName || "Godavari Ruchulu",
+              contact: (params.pickupPhone || "916305500512").replace(/\D/g, "").slice(-10),
+              address_line_1: params.pickupAddress || "100 Feet Rd, Ayyappa Society, Madhapur",
+              city: "Hyderabad",
+              state: "Telangana",
+              pincode: pickupPincode,
+              ...(params.pickupLat && { latitude: params.pickupLat.toString() }),
+              ...(params.pickupLng && { longitude: params.pickupLng.toString() }),
+              ...(this.clientCode && { unique_code: this.clientCode }),
+            },
+            rts_details: {
+              name: params.pickupName || "Godavari Ruchulu",
+              contact: (params.pickupPhone || "916305500512").replace(/\D/g, "").slice(-10),
+              address_line_1: params.pickupAddress || "100 Feet Rd, Ayyappa Society, Madhapur",
+              city: "Hyderabad",
+              state: "Telangana",
+              pincode: pickupPincode,
+            },
+            rto_details: {
+              name: params.pickupName || "Godavari Ruchulu",
+              contact: (params.pickupPhone || "916305500512").replace(/\D/g, "").slice(-10),
+              address_line_1: params.pickupAddress || "100 Feet Rd, Ayyappa Society, Madhapur",
+              city: "Hyderabad",
+              state: "Telangana",
+              pincode: pickupPincode,
+            },
+            product_details: (params.items && params.items.length > 0)
+              ? params.items.map((item) => ({
+                  sku_name: item.name,
+                  price: item.price,
+                  additional_details: { quantity: item.qty }
+                }))
+              : [
+                  {
+                    sku_name: "Food Package",
+                    price: params.subTotal ?? 100,
+                    additional_details: { quantity: 1 }
+                  }
+                ]
+          };
+
+      logger.info(`🚀 [Shadowfax API Request] Dispatching Order #${params.orderId} to ${dispatchEndpoint}`);
+
+      const res = await fetch(dispatchEndpoint, {
+        method: "POST",
+        headers: this.authHeaders,
+        body: JSON.stringify(payload),
+      });
+
+      const responseText = await res.text().catch(() => "");
+
+      if (res.ok) {
+        let data: any = {};
+        try {
+          data = JSON.parse(responseText);
+        } catch (e) {}
+
+        if (data.message === "Failure") {
+          const errStr = typeof data.errors === "string" ? data.errors : JSON.stringify(data.errors);
+          logger.error(`❌ [Shadowfax API Rejection] ${errStr}`);
+          return {
+            ok: false,
+            orderId: params.orderId,
+            providerCode: "shadowfax",
+            message: `Shadowfax API rejected order: ${errStr}`,
+          };
+        }
+
+        const payloadData = data.data || data;
+        const sfxId = payloadData.awb_number ?? payloadData.sfx_order_id ?? payloadData.order_id ?? payloadData.id?.toString() ?? payloadData.request_id;
+        if (!sfxId) {
+          logger.error(`❌ [Shadowfax API Error] Missing sfx_order_id / awb_number in response:`, responseText);
+          return {
+            ok: false,
+            orderId: params.orderId,
+            providerCode: "shadowfax",
+            message: `Shadowfax API response missing AWB ID: ${responseText}`,
+          };
+        }
+
+        return {
+          ok: true,
+          orderId: params.orderId,
+          providerCode: "shadowfax",
+          dispatchId: sfxId,
+          trackingUrl: `https://track.shadowfax.in/${sfxId}`,
+          status: payloadData.status || "SEARCHING_RIDER",
+          message: "Order successfully dispatched to Shadowfax rider network.",
+        };
+      } else {
+        logger.error(`❌ [Shadowfax Dispatch API Error] HTTP ${res.status}: ${responseText}`);
+        return {
+          ok: false,
+          orderId: params.orderId,
+          providerCode: "shadowfax",
+          message: `Shadowfax API call failed: HTTP ${res.status} — ${responseText}`,
+        };
+      }
+    } catch (err: any) {
+      logger.error("❌ [Shadowfax Dispatch Exception]", err);
+      return {
+        ok: false,
+        orderId: params.orderId,
+        providerCode: "shadowfax",
+        message: err.message || "Failed to reach Shadowfax API.",
+      };
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -231,7 +348,7 @@ export class ShadowfaxDeliveryService {
   async getTrackingStatus(dispatchId: string) {
     if (this.apiKey) {
       try {
-        const res = await fetch(`${this.baseUrl}/api/v2/order/${dispatchId}/`, {
+        const res = await fetch(`${this.baseUrl}/api/v2/orders/${dispatchId}/`, {
           headers: this.authHeaders,
         });
 

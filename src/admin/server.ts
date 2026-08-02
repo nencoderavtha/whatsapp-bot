@@ -42,6 +42,7 @@ import { logger } from '../services/logger.js';
 import { BorzoDeliveryService } from "../services/delivery/borzo.js";
 import { ShiprocketDeliveryService } from "../services/delivery/shiprocket.js";
 import { UberDirectDeliveryService } from "../services/delivery/uber-direct.js";
+import { ShadowfaxDeliveryService } from "../services/delivery/shadowfax.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -514,6 +515,23 @@ export function buildAdminApp() {
       results.uber = quote;
     } catch (err: any) {
       results.uber = { available: false, error: err?.message ?? err };
+    }
+
+    // 4. Shadowfax Quote Query
+    const shadowfax = new ShadowfaxDeliveryService();
+    try {
+      const quote = await shadowfax.getQuote({
+        pickupPincode: pickup,
+        deliveryPincode: drop,
+        weightKg: 0.5,
+        pickupLat: pLat,
+        pickupLng: pLng,
+        deliveryLat: dLat,
+        deliveryLng: dLng,
+      });
+      results.shadowfax = quote;
+    } catch (err: any) {
+      results.shadowfax = { available: false, error: err?.message ?? err };
     }
 
     res.json(results);
@@ -1180,7 +1198,7 @@ export function buildAdminApp() {
     // better move; this is the safety net for when nobody did.
     if (status === "ready" && order.type === "delivery") {
       try {
-        const result: any = await DeliveryManager.dispatchOrder(orderId, "uber");
+        const result: any = await DeliveryManager.dispatchOrder(orderId, "shadowfax");
         logger.info(
           result?.alreadyDispatched
             ? `[Auto-Dispatch] Order #${orderId} already had a courier booked.`
@@ -1207,7 +1225,7 @@ export function buildAdminApp() {
 
   api.post("/orders/:id/dispatch", async (req, res) => {
     const orderId = Number(req.params.id);
-    const providerCode = req.body.providerCode || "uber";
+    const providerCode = req.body.providerCode || "shadowfax";
     try {
       const result = await DeliveryManager.dispatchOrder(orderId, providerCode);
       res.json(result);

@@ -58,19 +58,12 @@ export class UberDirectDeliveryService {
         body: params.toString(),
       });
 
-      if (!res.ok && !scope) {
-        // Retry with direct.organizations scope if eats.deliveries fails
-        params.set("scope", "direct.organizations");
-        res = await fetch("https://auth.uber.com/oauth/v2/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: params.toString(),
-        });
-      }
-
       if (!res.ok) {
         const errText = await res.text();
-        logger.error(`[Uber Direct Auth] Failed to authenticate: HTTP ${res.status}`, errText);
+        logger.error(`[Uber Direct Auth] Failed to authenticate with scope '${primaryScope}': HTTP ${res.status}`, errText);
+        if (errText.includes("invalid_scope")) {
+          logger.error("⚠️ [Uber Direct Setup Required] Enable the 'eats.deliveries' scope in your Uber Developer Dashboard (developer.uber.com -> Your App -> Products/Scopes).");
+        }
         return null;
       }
 

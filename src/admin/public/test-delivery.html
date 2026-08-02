@@ -167,6 +167,22 @@
                 <div id="uberPickup" class="text-[10px] text-emerald-400 font-semibold mt-0.5"></div>
               </div>
             </div>
+
+            <!-- Shadowfax Results Card -->
+            <div id="shadowfaxCard" class="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 flex justify-between items-center transition-all hover:border-slate-700">
+              <div class="space-y-1">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xl">🦊</span>
+                  <h3 class="font-bold text-slate-100">Shadowfax Hyperlocal</h3>
+                </div>
+                <p id="shadowfaxDetails" class="text-xs text-slate-400">2-Wheeler (Thermal Bag)</p>
+                <div id="shadowfaxBadge" class="inline-flex"></div>
+              </div>
+              <div class="text-right">
+                <div id="shadowfaxPrice" class="text-2xl font-black text-indigo-400">₹0</div>
+                <div id="shadowfaxTime" class="text-xs text-slate-400">-- mins</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -196,6 +212,10 @@
             class="flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all">
             Uber Response
           </button>
+          <button id="tabShadowfax" onclick="switchJsonTab('shadowfax')" 
+            class="flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 focus:outline-none transition-all">
+            Shadowfax Response
+          </button>
         </div>
 
         <!-- JSON View Area -->
@@ -218,8 +238,12 @@
         return;
       }
       
-      const quote = activeTab === 'borzo' ? lastFetchedQuotes.borzo : (activeTab === 'shiprocket' ? lastFetchedQuotes.shiprocket : lastFetchedQuotes.uber);
-      const payload = quote ? quote.raw : null;
+      const quote = activeTab === 'borzo' ? lastFetchedQuotes.borzo 
+        : (activeTab === 'shiprocket' ? lastFetchedQuotes.shiprocket 
+        : (activeTab === 'uber' ? lastFetchedQuotes.uber 
+        : lastFetchedQuotes.shadowfax));
+        
+      const payload = quote ? (quote.raw || quote) : null;
       if (payload) {
         viewer.textContent = JSON.stringify(payload, null, 2);
         viewer.className = "flex-1 bg-slate-950/80 border border-slate-900 rounded-xl p-4 text-xs font-mono text-emerald-400 overflow-auto whitespace-pre-wrap break-all h-[340px]";
@@ -234,7 +258,8 @@
       const tabs = {
         borzo: document.getElementById("tabBorzo"),
         shiprocket: document.getElementById("tabShiprocket"),
-        uber: document.getElementById("tabUber")
+        uber: document.getElementById("tabUber"),
+        shadowfax: document.getElementById("tabShadowfax")
       };
       
       Object.keys(tabs).forEach(k => {
@@ -366,12 +391,28 @@
           log(`Uber Direct Quote Failed: ${data.uber?.error || "unserviceable"}`, "error");
         }
 
+        // 4. Shadowfax Render
+        if (data.shadowfax && data.shadowfax.available) {
+          document.getElementById("shadowfaxPrice").textContent = `₹${data.shadowfax.quotedFee}`;
+          document.getElementById("shadowfaxTime").textContent = formatDuration(data.shadowfax.estimatedMinutes);
+          document.getElementById("shadowfaxDetails").textContent = data.shadowfax.vehicleType || "2-Wheeler (Thermal Bag)";
+          document.getElementById("shadowfaxCard").classList.remove("opacity-50");
+          document.getElementById("shadowfaxBadge").innerHTML = "";
+        } else {
+          document.getElementById("shadowfaxPrice").textContent = "N/A";
+          document.getElementById("shadowfaxTime").textContent = "-- mins";
+          document.getElementById("shadowfaxDetails").textContent = "Unavailable";
+          document.getElementById("shadowfaxCard").classList.add("opacity-50");
+          log(`Shadowfax Quote Failed: ${data.shadowfax?.error || "unserviceable"}`, "error");
+        }
+
         // Highlight Cheapest
         const borzoFee = data.borzo?.available ? data.borzo.quotedFee : Infinity;
         const srFee = data.shiprocket?.available ? data.shiprocket.quotedFee : Infinity;
         const uberFee = data.uber?.available ? data.uber.quotedFee : Infinity;
+        const shadowfaxFee = data.shadowfax?.available ? data.shadowfax.quotedFee : Infinity;
 
-        const minFee = Math.min(borzoFee, srFee, uberFee);
+        const minFee = Math.min(borzoFee, srFee, uberFee, shadowfaxFee);
         if (minFee < Infinity) {
           if (minFee === borzoFee) {
             document.getElementById("borzoBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
@@ -379,6 +420,8 @@
             document.getElementById("shiprocketBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
           } else if (minFee === uberFee) {
             document.getElementById("uberBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
+          } else if (minFee === shadowfaxFee) {
+            document.getElementById("shadowfaxBadge").innerHTML = `<span class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5">🏆 Cheapest</span>`;
           }
         }
 
@@ -389,7 +432,8 @@
         lastFetchedQuotes = { 
           borzo: { error: err.message }, 
           shiprocket: { error: err.message },
-          uber: { error: err.message }
+          uber: { error: err.message },
+          shadowfax: { error: err.message }
         };
         renderRawJson();
         log(`Calculation error: ${err.message}`, "error");

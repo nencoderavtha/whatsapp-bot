@@ -1,19 +1,12 @@
 /**
  * Unified Delivery Orchestrator Service
  *
- * Aggregates quotes and handles dispatch across:
- *   - Shiprocket Quick (aggregating Rapido Parcel)
- *   - Shadowfax Hyperlocal
- *   - Borzo Express
- *
- * Features: parallel fan-out, sort by fee/ETA, graceful failovers.
+ * Routes all quotes and dispatches exclusively through Shiprocket Quick
+ * (aggregates Rapido Parcel, Dunzo, Shadowfax hyperlocal riders).
  */
 
 import { prisma } from "../../db.js";
 import { ShiprocketDeliveryService } from "./shiprocket.js";
-import { ShadowfaxDeliveryService, ShadowfaxQuoteParams } from "./shadowfax.js";
-import { BorzoDeliveryService } from "./borzo.js";
-import { UberDirectDeliveryService } from "./uber-direct.js";
 import { logger } from "../logger.js";
 
 export type DeliveryProviderCode = "rapido" | "shiprocket" | "shadowfax" | "borzo" | "porter" | "uber";
@@ -33,7 +26,6 @@ export interface QuoteParams {
   pickupPincode: number;
   deliveryPincode: number;
   weightKg?: number;
-  /** Optional lat/lng for improved Shadowfax geo-accuracy */
   pickupLat?: number | null;
   pickupLng?: number | null;
   deliveryLat?: number | null;
@@ -65,12 +57,9 @@ export interface DispatchRequest {
 
 export class DeliveryOrchestrator {
   private shiprocket = new ShiprocketDeliveryService();
-  private shadowfax = new ShadowfaxDeliveryService();
-  private borzo = new BorzoDeliveryService();
-  private uber = new UberDirectDeliveryService();
 
   /**
-   * Fetch quotes from all active providers concurrently and return sorted results.
+   * Fetch quotes exclusively from Shiprocket Quick.
    */
   async getAllQuotes(params: QuoteParams): Promise<{
     ok: boolean;
@@ -86,34 +75,20 @@ export class DeliveryOrchestrator {
       `   🏁 Drop Address   : ${params.deliveryAddress ?? "Pincode " + params.deliveryPincode} (Lat: ${params.deliveryLat ?? "N/A"}, Lng: ${params.deliveryLng ?? "N/A"})\n`
     );
 
-    // Only ask providers that actually have credentials. Unconfigured providers
-    // used to return invented simulation fees marked available, and since the
-    // cheapest quote wins, a made-up number would routinely undercut the one
-    // real quote and become the fee charged to the customer.
-    // Active providers query (Unplugged Shiprocket and Borzo for testing Uber Direct)
-    const pending: Array<Promise<UnifiedQuote | null>> = [];
-    
-    // Enable Uber Direct for testing
-    pending.push(this.uber.getQuote(params) as Promise<UnifiedQuote | null>);
-
-    /*
-    // Shiprocket & Borzo unplugged per user request
-    if (process.env.SHIPROCKET_API_EMAIL && process.env.SHIPROCKET_API_PASSWORD) {
-      pending.push(this.shiprocket.getQuote(params) as Promise<UnifiedQuote | null>);
-    }
-    if (process.env.BORZO_API_TOKEN || process.env.BORZO_PROD_API_TOKEN) {
-      pending.push(this.borzo.getQuote(params) as Promise<UnifiedQuote | null>);
-    }
-    */
-
-    const results = await Promise.allSettled(pending);
+    // Exclusively Shiprocket Quick
+    const shiprocketQuote = await this.shiprocket.getQuote({
+      pickupPincode: params.pickupPincode,
+      deliveryPincode: params.deliveryPincode,
+      weightKg: params.weightKg,
+      pickupLat: params.pickupLat ?? undefined,
+      pickupLng: params.pickupLng ?? undefined,
+      deliveryLat: params.deliveryLat ?? undefined,
+      deliveryLng: params.deliveryLng ?? undefined,
+    });
 
     const quotes: UnifiedQuote[] = [];
-
-    for (const res of results) {
-      if (res.status === "fulfilled" && res.value && res.value.available) {
-        quotes.push(res.value as UnifiedQuote);
-      }
+    if (shiprocketQuote.available) {
+      quotes.push(shiprocketQuote as UnifiedQuote);
     }
 
     if (quotes.length === 0) {
@@ -134,20 +109,27 @@ export class DeliveryOrchestrator {
   }
 
   /**
-   * Dispatch delivery order (Exclusively routed to Uber Direct)
+   * Dispatch delivery order exclusively via Shiprocket Quick.
    */
   async dispatchOrder(request: DispatchRequest) {
-    logger.info(`🚚 [Orchestrator] Directing dispatch for Order #${request.orderId} exclusively to Uber Direct`);
-    return this.uber.dispatchOrder(request);
+    logger.info(`🚚 [Orchestrator] Directing dispatch for Order #${request.orderId} exclusively to Shiprocket Quick`);
+    return this.shiprocket.dispatchOrder({
+      orderId: request.orderId,
+      customerName: request.customerName,
+      customerPhone: request.customerPhone,
+      deliveryAddress: request.deliveryAddress,
+      deliveryLat: request.deliveryLat,
+      deliveryLng: request.deliveryLng,
+      pickupAddress: request.pickupAddress,
+      pickupLat: request.pickupLat,
+      pickupLng: request.pickupLng,
+      items: request.items,
+      subTotal: request.subTotal,
+    });
   }
 
   /**
    * Live rider details for a dispatch.
-   *
-   * Reads the DeliveryDispatch row, which the provider status webhooks keep up
-   * to date. The per-provider implementations this replaced returned hardcoded
-   * placeholder riders ("Vikram Reddy" and friends), so callers were shown a
-   * confident answer that had nothing to do with the real courier.
    */
   async getTrackingStatus(dispatchId: string) {
     const dispatch = await prisma.deliveryDispatch.findFirst({

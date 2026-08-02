@@ -14,6 +14,7 @@ dotenv.config();
 import { prisma } from "../src/db.js";
 import { BorzoDeliveryService } from "../src/services/delivery/borzo.js";
 import { ShiprocketDeliveryService } from "../src/services/delivery/shiprocket.js";
+import { ShadowfaxDeliveryService } from "../src/services/delivery/shadowfax.js";
 
 // Helper function to extract pincode from address string
 function pincodeFromAddress(address?: string | null): number | null {
@@ -112,6 +113,28 @@ async function run() {
   } catch (err: any) {
     console.error("❌ Shiprocket Quote Failed:", err?.message ?? err);
     results.shiprocket = { error: err?.message ?? err };
+  }
+
+  console.log("\n--------------------------------------------------\n");
+
+  // 3. Shadowfax Quote Query
+  console.log("🚀 Requesting live quote from Shadowfax Hyperlocal API...");
+  const shadowfax = new ShadowfaxDeliveryService();
+  try {
+    const quote = await shadowfax.getQuote({
+      pickupPincode,
+      deliveryPincode,
+      weightKg: 0.5,
+      pickupLat: restaurant?.restaurantLat ?? undefined,
+      pickupLng: restaurant?.restaurantLng ?? undefined,
+      deliveryLat,
+      deliveryLng,
+    });
+    results.shadowfax = quote;
+    console.log("✅ Shadowfax Quote Succeeded!");
+  } catch (err: any) {
+    console.error("❌ Shadowfax Quote Failed:", err?.message ?? err);
+    results.shadowfax = { error: err?.message ?? err };
   }
 
   console.log("\n==================================================");
