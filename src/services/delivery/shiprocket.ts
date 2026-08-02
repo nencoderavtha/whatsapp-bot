@@ -244,8 +244,7 @@ export class ShiprocketDeliveryService {
           .replace(/\b[A-Z0-9]{4}\+[A-Z0-9]{2,4}\b/g, "")
           .replace(/Telangana|India|- 500\d{3}|500\d{3}/gi, "")
           .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 80);
+          .trim();
 
         const pincodeMatch = params.deliveryAddress.match(/(\d{6})\s*$/) || params.deliveryAddress.match(/\b(\d{6})\b/);
         const billingPincode = pincodeMatch ? Number(pincodeMatch[1]) : 500081;

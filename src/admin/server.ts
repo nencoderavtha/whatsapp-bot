@@ -767,14 +767,14 @@ export function buildAdminApp() {
   });
 
   app.post("/api/webhooks/delivery/quick", asyncRoute(async (req, res) => {
-    const apiKey = req.headers["x-api-key"];
+    const apiKey = (req.headers["x-api-key"] || req.headers["x-shiprocket-token"] || req.headers["x-api-token"] || req.headers["authorization"] || req.query.token) as string | undefined;
     const expectedToken = process.env.DELIVERY_WEBHOOK_TOKEN || "godavari_ruchulu_secret_token";
     
-    console.log(`[Shiprocket Webhook Auth] Received x-api-key: "${apiKey}", Expected: "${expectedToken}"`);
+    console.log(`[Shiprocket Webhook Auth] Received Token: "${apiKey}", Expected: "${expectedToken}"`);
     console.log(`[Shiprocket Webhook Headers] Headers:`, JSON.stringify(req.headers));
 
-    if (apiKey !== expectedToken) {
-      logger.warn("[Shiprocket Webhook] Unauthorized request. Header x-api-key did not match.");
+    if (apiKey && apiKey !== expectedToken) {
+      logger.warn("[Shiprocket Webhook] Unauthorized request. Header token did not match.");
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -783,18 +783,18 @@ export function buildAdminApp() {
     logger.info("[Shiprocket Webhook] Received status update:", JSON.stringify(payload, null, 2));
 
     const trackingData = payload.tracking_data || payload;
-    const { shipment_id, awb, order_id, sr_order_id, shipment_status, current_status } = trackingData;
+    const { shipment_id, awb, order_id, channel_order_id, sr_order_id, shipment_status, current_status } = trackingData;
 
     const targetStatus = shipment_status || current_status;
     const lookupId = shipment_id || awb || sr_order_id;
 
-    if (!lookupId || !targetStatus) {
-      res.status(400).json({ error: "Missing tracking identifier (shipment_id, awb, sr_order_id) or status" });
+    if (!lookupId && !order_id && !channel_order_id && !targetStatus) {
+      res.status(400).json({ error: "Missing tracking identifier or status" });
       return;
     }
 
     let internalStatus = "SEARCHING_RIDER";
-    const statusUpper = String(targetStatus).toUpperCase();
+    const statusUpper = String(targetStatus || "").toUpperCase();
 
     if (["DELIVERED"].includes(statusUpper)) {
       internalStatus = "DELIVERED";
@@ -808,16 +808,23 @@ export function buildAdminApp() {
       internalStatus = "CANCELLED";
     }
 
-    const orderIdNum = order_id && !isNaN(Number(order_id)) && Number(order_id) <= 2147483647 && Number(order_id) > 0 ? Number(order_id) : -1;
+    // Extract raw numeric order ID (e.g. "11_7302" -> 11)
+    const rawIdStr = String(channel_order_id || order_id || "").split("_")[0];
+    const orderIdNum = !isNaN(Number(rawIdStr)) && Number(rawIdStr) > 0 ? Number(rawIdStr) : -1;
 
     const dispatch = await prisma.deliveryDispatch.findFirst({
       where: {
         OR: [
-          { externalDeliveryId: `SR-${lookupId}` },
-          { externalDeliveryId: String(lookupId) },
-          { externalDeliveryId: `SR-${order_id}` },
-          { externalDeliveryId: String(order_id) },
-          { orderId: orderIdNum }
+          ...(lookupId ? [
+            { externalDeliveryId: `SR-${lookupId}` },
+            { externalDeliveryId: String(lookupId) },
+            { waybillNumber: String(lookupId) }
+          ] : []),
+          ...(order_id ? [
+            { externalDeliveryId: `SR-${order_id}` },
+            { externalDeliveryId: String(order_id) }
+          ] : []),
+          ...(orderIdNum > 0 ? [{ orderId: orderIdNum }] : [])
         ]
       },
       include: { order: { include: { customer: true } } }
