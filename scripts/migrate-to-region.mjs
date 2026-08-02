@@ -154,11 +154,20 @@ console.log("\nverifying row counts");
 let mismatch = 0;
 for (const m of models) {
   const [a, b] = await Promise.all([
-    source[delegateOf(m)].count().catch(() => -1),
-    target[delegateOf(m)].count().catch(() => -1),
+    source[delegateOf(m)].count().catch(() => null),
+    target[delegateOf(m)].count().catch(() => null),
   ]);
+
+  // A table the source does not have is a model added since that project was
+  // last pushed — the target gets it empty, which is correct rather than a
+  // discrepancy. Only a table missing from the *target*, or a genuine count
+  // difference, means something went wrong.
+  if (a === null && b !== null) {
+    console.log(`  new on target  ${m}: not present on source, created empty`);
+    continue;
+  }
   if (a !== b) {
-    console.error(`  MISMATCH  ${m}: source ${a}, target ${b}`);
+    console.error(`  MISMATCH  ${m}: source ${a ?? "absent"}, target ${b ?? "absent"}`);
     mismatch++;
   }
 }
