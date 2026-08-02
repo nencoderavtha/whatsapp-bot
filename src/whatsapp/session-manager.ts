@@ -29,6 +29,7 @@ import {
 } from "./renderers.js";
 import { getCached } from "../services/cache.js";
 import { suggestPairing } from "../services/recommendations.js";
+import { captureAllergyNote, allergyLines } from "../services/allergy.js";
 import { send, applyCartEdit, isLocked, clearFinishedCart } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
@@ -388,7 +389,13 @@ async function notifyOwner(adapter: CloudAdapter, _restaurantId: number, orderId
   if (!order) return;
 
   const ownerNumbers = (cfg?.ownerNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const text = ownerNewOrderMsg(order);
+
+  // A recorded allergy is only worth recording if it reaches whoever cooks.
+  // The dashboard shows it, but the kitchen works from this message.
+  const allergies = allergyLines((order as any).customer?.notes);
+  const text = allergies.length
+    ? `${ownerNewOrderMsg(order)}\n\n${allergies.join("\n")}`
+    : ownerNewOrderMsg(order);
 
   for (const num of ownerNumbers) {
     try {
@@ -830,6 +837,12 @@ export class BotSessionManager {
           void logMessage(customer.id, "user", humanizeInbound(msg.text)).catch((e) =>
             logger.error("[inbound] Could not log the customer's message:", e),
           );
+
+          // An allergy mentioned in passing has to outlive the conversation and
+          // reach the kitchen. Off the critical path — it must not delay a reply
+          // — but before any handler returns, so it is captured whether the turn
+          // goes to the model or to a direct action.
+          void captureAllergyNote(customer.id, msg.text);
 
           // ── Human handoff active: AI is paused for this customer ────────────────
           // Staff reply from the dashboard until they hit "Resume AI".

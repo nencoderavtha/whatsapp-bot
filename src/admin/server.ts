@@ -31,6 +31,7 @@ import { send } from "../whatsapp/stage.js";
 import { DEFAULT_RESTAURANT_ID, resolveRestaurantId } from "../tenancy.js";
 import { notifyAdminOfEvent, eventBus } from "../services/events.js";
 import { logActivity } from "../services/activity.js";
+import { allergyLines } from "../services/allergy.js";
 import { createPaymentLink, verifyWebhookSignature } from "../services/razorpay.js";
 import { transcribeAudio } from "../services/transcription.js";
 import { fetchMetaMedia } from "../whatsapp/media.js";
@@ -432,8 +433,6 @@ export function buildAdminApp() {
         "🛒 Order Summary",
         "Tap button to confirm or message to add items"
       );
-
-      await logMessage(customer.id, "assistant", stagedMsg);
     }
 
     res.json({ ok: true });
@@ -806,7 +805,6 @@ export function buildAdminApp() {
 
       if (notifMsg) {
         await session.sendText(dispatch.order.customer.phone, notifMsg);
-        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
       }
     }
 
@@ -889,7 +887,6 @@ export function buildAdminApp() {
 
       if (notifMsg) {
         await session.sendText(dispatch.order.customer.phone, notifMsg);
-        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
       }
     }
 
@@ -1271,12 +1268,118 @@ export function buildAdminApp() {
     res.json(result);
   });
 
+  /**
+   * Attach spend and ordering history to a page of customers.
+   *
+   * Computed from Order rather than read from Customer.totalOrdersCount,
+   * totalSpentRupees, lastOrderedAt and favoriteDish. Those columns exist in the
+   * schema and are written by nothing — showing them would have displayed zero
+   * for every customer. Orders are the source of truth and cannot drift from
+   * themselves.
+   *
+   * Two aggregate queries for the whole page, not per customer, so this stays
+   * one round trip regardless of how many contacts are listed. Cancelled orders
+   * are excluded: a cancelled order is not spend, and counting it would inflate
+   * both the total and the "repeat customer" flag.
+   */
+  async function withInsights<T extends { id: number; notes?: string | null }>(customers: T[]) {
+    const ids = customers.map((c) => c.id);
+    if (ids.length === 0) return customers;
+
+    const [totals, favourites] = await Promise.all([
+      prisma.order.groupBy({
+        by: ["customerId"],
+        where: { customerId: { in: ids }, status: { not: "cancelled" } },
+        _count: { _all: true },
+        _sum: { total: true },
+        _max: { createdAt: true },
+      }),
+      prisma.$queryRawUnsafe<Array<{ customerId: number; name: string; times: number }>>(
+        `SELECT t."customerId", t.name, t.times FROM (
+           SELECT o."customerId", mi.name,
+                  COUNT(*)::int AS times,
+                  ROW_NUMBER() OVER (PARTITION BY o."customerId" ORDER BY COUNT(*) DESC, mi.name) AS rn
+             FROM "OrderItem" oi
+             JOIN "Order" o  ON o.id = oi."orderId"
+             JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+            WHERE o."customerId" = ANY($1::int[]) AND o.status <> 'cancelled'
+            GROUP BY o."customerId", mi.name
+         ) t WHERE t.rn = 1`,
+        ids,
+      ).catch(() => []),
+    ]);
+
+    const byId = new Map(totals.map((t) => [t.customerId, t]));
+    const favById = new Map(favourites.map((f) => [f.customerId, f]));
+
+    return customers.map((c) => {
+      const t = byId.get(c.id);
+      const orders = t?._count._all ?? 0;
+      const spent = t?._sum.total ?? 0;
+      const fav = favById.get(c.id);
+      return {
+        ...c,
+        insights: {
+          orders,
+          totalSpent: Math.round(spent),
+          avgOrder: orders > 0 ? Math.round(spent / orders) : 0,
+          lastOrderAt: t?._max.createdAt ?? null,
+          isRepeat: orders > 1,
+          favouriteDish: fav ? { name: fav.name, times: fav.times } : null,
+          // Surfaced separately from notes so the dashboard can make it loud —
+          // it is the one thing on this card that can hurt someone.
+          allergies: allergyLines(c.notes),
+        },
+      };
+    });
+  }
+
+  /**
+   * Contacts for the chat list, most recently active first.
+   *
+   * This used to order by Customer.createdAt — when the record was first
+   * created, not when they last said anything. A regular who ordered every week
+   * sat frozen at the bottom of the list while a one-time contact from
+   * yesterday stayed pinned to the top, and a new message never moved a thread.
+   *
+   * The ordering is derived from the messages table rather than the customer
+   * row, so the 200 cap keeps the 200 most recently active conversations. Taking
+   * the newest 200 customers and sorting those would still hide an old regular
+   * who just messaged, which is precisely the person staff need to see.
+   */
   api.get("/customers", async (_req, res) => {
-    res.json(await prisma.customer.findMany({
-      orderBy: { createdAt: "desc" },
-      include: { _count: { select: { orders: true } } },
+    const recent = await prisma.message.groupBy({
+      by: ["customerId"],
+      _max: { createdAt: true },
+      orderBy: { _max: { createdAt: "desc" } },
       take: 200,
-    }));
+    });
+
+    const lastAt = new Map(recent.map((r) => [r.customerId, r._max.createdAt]));
+
+    const customers = await prisma.customer.findMany({
+      where: { id: { in: recent.map((r) => r.customerId) } },
+      include: { _count: { select: { orders: true } } },
+    });
+
+    // findMany does not preserve the order of an `in` list.
+    const ordered = customers
+      .map((c) => ({ ...c, lastMessageAt: lastAt.get(c.id) ?? c.createdAt }))
+      .sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
+
+    // Contacts who have never exchanged a message still belong in the list —
+    // staff create them by hand — but they sort below anyone who has.
+    if (ordered.length < 200) {
+      const silent = await prisma.customer.findMany({
+        where: { id: { notIn: recent.map((r) => r.customerId) } },
+        include: { _count: { select: { orders: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 200 - ordered.length,
+      });
+      ordered.push(...silent.map((c) => ({ ...c, lastMessageAt: c.createdAt })));
+    }
+
+    res.json(await withInsights(ordered));
   });
 
   api.get("/customers/:id/messages", async (req, res) => {
@@ -1308,8 +1411,7 @@ export function buildAdminApp() {
     if (!session) { res.status(503).json({ error: "bot session not running" }); return; }
 
     await session.sendText(customer.phone, text);
-    const msg = await logMessage(customer.id, "assistant", text);
-    res.json(msg);
+    res.json({ ok: true });
   }));
 
   api.put("/customers/:id/resume-ai", asyncRoute(async (req, res) => {
