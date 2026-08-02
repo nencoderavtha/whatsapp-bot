@@ -255,8 +255,12 @@ function handleSSE(type, data) {
       if (isTabActive("orders")) loadOrders();
       break;
     case "message_created":
-      loadChatThreads();
-      if (isTabActive("livechat") && getSelectedCustomerId() === data.customerId) appendChatMessage(data);
+      // Only refresh the list while it's on screen — switching to the tab
+      // reloads it anyway, and this fires on every message in every thread.
+      if (isTabActive("livechat")) {
+        loadChatThreads();
+        if (getSelectedCustomerId() === data.customerId) appendChatMessage(data);
+      }
       break;
     case "customer_updated":
       if (isTabActive("customers")) loadCustomers();

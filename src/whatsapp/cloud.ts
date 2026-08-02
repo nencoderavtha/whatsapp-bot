@@ -1,5 +1,66 @@
 import type { WhatsAppAdapter, InboundMessage } from "./adapter.js";
 import { logger } from '../services/logger.js';
+import { logOutboundMessage } from "../services/customer.js";
+
+/**
+ * Flatten an outgoing Meta payload into the line staff should see in the
+ * dashboard.
+ *
+ * The body text alone loses what the message actually was: a cart summary and
+ * a payment prompt can read almost identically until you can see that one
+ * carried a "Pay now" button. The affordances are appended so a staff member
+ * reading the thread knows what the customer was looking at when they replied
+ * with a tap.
+ */
+export function transcriptOf(payload: Record<string, unknown>): string {
+  const type = payload.type as string;
+
+  if (type === "text") {
+    return String((payload.text as any)?.body ?? "");
+  }
+
+  if (type === "image") {
+    const caption = (payload.image as any)?.caption;
+    return caption ? `🖼 ${caption}` : "🖼 [photo]";
+  }
+
+  if (type !== "interactive") return `[${type}]`;
+
+  const i = payload.interactive as any;
+  const body = String(i?.body?.text ?? "").trim();
+  const action = i?.action ?? {};
+  let affordance = "";
+
+  switch (i?.type) {
+    case "button":
+      affordance = `[Buttons: ${(action.buttons ?? [])
+        .map((b: any) => b.reply?.title)
+        .filter(Boolean)
+        .join(" | ")}]`;
+      break;
+    case "list": {
+      const rows = (action.sections ?? []).flatMap((s: any) => s.rows ?? []);
+      affordance = `[List "${action.button}": ${rows.length} option(s)]`;
+      break;
+    }
+    case "cta_url":
+      affordance = `[Link "${action.parameters?.display_text}": ${action.parameters?.url}]`;
+      break;
+    case "carousel":
+      affordance = `[Carousel: ${(action.cards ?? []).length} card(s)]`;
+      break;
+    case "location_request_message":
+      affordance = "[Share location button]";
+      break;
+    case "address_message":
+      affordance = "[Address form]";
+      break;
+    default:
+      affordance = `[${i?.type}]`;
+  }
+
+  return body ? `${body}\n${affordance}` : affordance;
+}
 
 /**
  * Official Meta WhatsApp Cloud API adapter — one instance per restaurant.
@@ -49,7 +110,20 @@ export class CloudAdapter implements WhatsAppAdapter {
     }
   }
 
-  async sendText(phone: string, text: string): Promise<void> {
+  /**
+   * The only path to the Graph API for anything the customer will read.
+   *
+   * Recording the transcript here rather than at each call site is the point:
+   * there are dozens of send call sites across the session manager and the
+   * renderers, and every one that forgot to log left a hole in the dashboard.
+   * A new message type added later is recorded without anyone remembering to.
+   */
+  private async post(
+    phone: string,
+    payload: Record<string, unknown>,
+    label: string,
+    throwOnError = false,
+  ): Promise<void> {
     const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
     const resp = await fetch(url, {
       method: "POST",
@@ -57,63 +131,43 @@ export class CloudAdapter implements WhatsAppAdapter {
         Authorization: `Bearer ${this.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: phone,
-        type: "text",
-        text: { body: text },
-      }),
+      body: JSON.stringify({ messaging_product: "whatsapp", to: phone, ...payload }),
     });
+
     if (!resp.ok) {
       const err = await resp.text();
-      logger.error(`[Cloud ${this.phoneNumberId}] sendText failed (${resp.status}):`, err);
+      logger.error(`[Cloud ${this.phoneNumberId}] ${label} failed (${resp.status}):`, err);
+      if (throwOnError) {
+        throw new Error(`Meta Cloud API ${label} failed (${resp.status}): ${err}`);
+      }
+      // A message that never arrived must not appear in the transcript as sent.
+      return;
     }
+
+    await logOutboundMessage(phone, transcriptOf(payload));
+  }
+
+  async sendText(phone: string, text: string): Promise<void> {
+    await this.post(phone, { type: "text", text: { body: text } }, "sendText");
   }
 
   /** Send a dish photo (by public URL) with an optional short caption. */
   async sendImage(phone: string, imageUrl: string, caption?: string): Promise<void> {
-    const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: phone,
-        type: "image",
-        image: { link: imageUrl, ...(caption ? { caption } : {}) },
-      }),
-    });
-    if (!resp.ok) {
-      const err = await resp.text();
-      logger.error(`[Cloud ${this.phoneNumberId}] sendImage failed (${resp.status}):`, err);
-    }
+    await this.post(
+      phone,
+      { type: "image", image: { link: imageUrl, ...(caption ? { caption } : {}) } },
+      "sendImage",
+    );
   }
 
   /** POST a raw `interactive` block via the official Meta Graph API — same message types Kapso proxies. */
   private async sendInteractive(phone: string, interactive: Record<string, unknown>): Promise<void> {
-    const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: phone,
-        type: "interactive",
-        interactive,
-      }),
-    });
-    if (!resp.ok) {
-      const err = await resp.text();
-      logger.error(`[Cloud ${this.phoneNumberId}] sendInteractive (${interactive.type}) failed (${resp.status}):`, err);
-      throw new Error(`Meta Cloud API sendInteractive (${interactive.type}) failed (${resp.status}): ${err}`);
-    }
+    await this.post(
+      phone,
+      { recipient_type: "individual", type: "interactive", interactive },
+      `sendInteractive (${interactive.type})`,
+      true,
+    );
   }
 
   async sendInteractiveCtaUrl(

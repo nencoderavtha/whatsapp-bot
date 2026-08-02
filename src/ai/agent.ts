@@ -305,7 +305,8 @@ async function processIncoming(
     return { reply: "", placedOrderId, humanHandoffRequested, mediaReply, renderAction };
   }
 
-  await logMessage(customer.id, "assistant", finalText);
+  // Not logged here — the adapter records the transcript as the message goes
+  // out, so logging it again would double every reply in the dashboard.
   return { reply: finalText, placedOrderId, humanHandoffRequested, mediaReply };
 }
 

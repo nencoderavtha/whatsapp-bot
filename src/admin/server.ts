@@ -429,8 +429,6 @@ export function buildAdminApp() {
         "🛒 Order Summary",
         "Tap button to confirm or message to add items"
       );
-
-      await logMessage(customer.id, "assistant", stagedMsg);
     }
 
     res.json({ ok: true });
@@ -756,7 +754,6 @@ export function buildAdminApp() {
 
       if (notifMsg) {
         await session.sendText(dispatch.order.customer.phone, notifMsg);
-        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
       }
     }
 
@@ -1138,12 +1135,52 @@ export function buildAdminApp() {
     res.json(result);
   });
 
+  /**
+   * Contacts for the chat list, most recently active first.
+   *
+   * This used to order by Customer.createdAt — when the record was first
+   * created, not when they last said anything. A regular who ordered every week
+   * sat frozen at the bottom of the list while a one-time contact from
+   * yesterday stayed pinned to the top, and a new message never moved a thread.
+   *
+   * The ordering is derived from the messages table rather than the customer
+   * row, so the 200 cap keeps the 200 most recently active conversations. Taking
+   * the newest 200 customers and sorting those would still hide an old regular
+   * who just messaged, which is precisely the person staff need to see.
+   */
   api.get("/customers", async (_req, res) => {
-    res.json(await prisma.customer.findMany({
-      orderBy: { createdAt: "desc" },
-      include: { _count: { select: { orders: true } } },
+    const recent = await prisma.message.groupBy({
+      by: ["customerId"],
+      _max: { createdAt: true },
+      orderBy: { _max: { createdAt: "desc" } },
       take: 200,
-    }));
+    });
+
+    const lastAt = new Map(recent.map((r) => [r.customerId, r._max.createdAt]));
+
+    const customers = await prisma.customer.findMany({
+      where: { id: { in: recent.map((r) => r.customerId) } },
+      include: { _count: { select: { orders: true } } },
+    });
+
+    // findMany does not preserve the order of an `in` list.
+    const ordered = customers
+      .map((c) => ({ ...c, lastMessageAt: lastAt.get(c.id) ?? c.createdAt }))
+      .sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
+
+    // Contacts who have never exchanged a message still belong in the list —
+    // staff create them by hand — but they sort below anyone who has.
+    if (ordered.length < 200) {
+      const silent = await prisma.customer.findMany({
+        where: { id: { notIn: recent.map((r) => r.customerId) } },
+        include: { _count: { select: { orders: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 200 - ordered.length,
+      });
+      ordered.push(...silent.map((c) => ({ ...c, lastMessageAt: c.createdAt })));
+    }
+
+    res.json(ordered);
   });
 
   api.get("/customers/:id/messages", async (req, res) => {
@@ -1174,9 +1211,10 @@ export function buildAdminApp() {
     const session = botSessionManager.getSession(req.restaurantId);
     if (!session) { res.status(503).json({ error: "bot session not running" }); return; }
 
+    // sendText records the transcript itself and broadcasts message_created,
+    // which is what appends the bubble in the dashboard.
     await session.sendText(customer.phone, text);
-    const msg = await logMessage(customer.id, "assistant", text);
-    res.json(msg);
+    res.json({ ok: true });
   }));
 
   api.put("/customers/:id/resume-ai", asyncRoute(async (req, res) => {

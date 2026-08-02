@@ -6,6 +6,18 @@ let activeConversations = [];
 
 export function getSelectedCustomerId() { return selectedCustomerId; }
 
+// Short relative time for the thread list — the list is sorted by this, so it
+// has to be visible or the order looks arbitrary.
+function timeAgo(iso) {
+  if (!iso) return "";
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return "now";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+  if (secs < 604800) return `${Math.floor(secs / 86400)}d`;
+  return new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
 export async function loadChatThreads() {
   const cs = await api("/customers");
   activeConversations = cs;
@@ -24,10 +36,14 @@ export async function loadChatThreads() {
           ${c.name ? c.name[0].toUpperCase() : "?"}
         </div>
         <div class="flex-1 min-w-0">
-          <div class="font-bold text-xs truncate text-slate-200">${esc(c.name) || "(No Name)"}</div>
+          <div class="flex items-center gap-2">
+            <div class="font-bold text-xs truncate text-slate-200 flex-1">${esc(c.name) || "(No Name)"}</div>
+            <span class="text-[9px] text-slate-500 shrink-0">${timeAgo(c.lastMessageAt)}</span>
+          </div>
           <p class="text-[10px] text-slate-400 font-mono truncate mt-0.5">${c.phone}</p>
         </div>
-        <span class="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-1.5 py-0.5 rounded">${c._count.orders}ord</span>
+        ${c.humanRequestedAt ? '<span class="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded shrink-0">staff</span>' : ""}
+        <span class="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-1.5 py-0.5 rounded shrink-0">${c._count.orders}ord</span>
       </div>`;
   }).join("");
 }
