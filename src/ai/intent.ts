@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { completeChat } from "./llm.js";
+import { logger } from "../services/logger.js";
 
 export const INTENTS = [
   "ADD_ITEM", "REMOVE_ITEM", "UPDATE_QUANTITY", "CLEAR_CART",
@@ -89,10 +90,15 @@ Your ONLY job is to analyze the user's latest message in the context of the conv
 
 Do not generate conversational text. Only output JSON matching this structure:
 {
-  "intent": "...", 
-  "items": [{ "name": "...", "qty": 1, "variant": "...", "note": "..." }],
+  "intent": "ADD_ITEM",
+  "items": [{ "menuItemId": 22, "qty": 2, "variantId": 4, "note": "less spicy" }],
   "confidence": 0.95
 }
+
+Use the numeric "menuItemId" and "variantId" fields exactly as shown. Do NOT
+emit "name" or "variant" — output using those is rejected and the customer is
+told the bot did not understand them.
+Omit "items" entirely for intents that do not modify the cart.
 
 ### CATEGORIES
 Classify the intent into exactly ONE of the following categories:
@@ -130,6 +136,10 @@ ${menuText}
     { role: "user", content: latestMessage }
   ];
 
+  // Kept outside the try so the failure log can show what the model actually
+  // returned, rather than just that parsing failed.
+  let rawContent: string | null | undefined;
+
   try {
     const res = await completeChat({
       messages,
@@ -137,7 +147,8 @@ ${menuText}
       temperature: 0, // Deterministic
       maxTokens: 500,
     });
-    
+    rawContent = res.content;
+
     if (res.content) {
       // Find JSON block if wrapped in markdown
       let jsonStr = res.content.trim();
@@ -150,9 +161,17 @@ ${menuText}
       const validated = IntentSchema.parse(parsed);
       return validated;
     }
+
+    logger.warn("[intent] Model returned no content — treating as UNKNOWN");
   } catch (e) {
-    // Return unknown on any parsing or validation failure
-    // We log it later in the shadow log
+    // This used to be swallowed with a comment claiming it was logged later; it
+    // wasn't. A rejected-but-valid-looking response and a genuinely confused
+    // customer both surfaced as "ardam kaledu", which made a fifth of all turns
+    // impossible to explain. Log what we actually got.
+    logger.warn("[intent] Could not parse classifier output — treating as UNKNOWN", {
+      error: e instanceof Error ? e.message : String(e),
+      raw: String(rawContent ?? "").slice(0, 400),
+    });
   }
 
   return { intent: "UNKNOWN", confidence: 0 };
