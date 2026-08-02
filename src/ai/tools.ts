@@ -11,6 +11,7 @@ import { getCached } from "../services/cache.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import { searchMenu } from "../services/menu.js";
+import { searchKnowledge } from "../services/knowledge.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 import { logger } from '../services/logger.js';
@@ -586,6 +587,57 @@ export async function runTool(
                   note: `Showing ${res.items.length} of ${res.totalMatches} matches. If the customer asked how many, answer ${res.totalMatches} — do NOT present this list as the full set. Ask them to narrow it down.`,
                 }
               : {}),
+          },
+        };
+      }
+
+      case "search_knowledge": {
+        const q = typeof args.query === "string" ? args.query.trim() : "";
+        if (!q) return { output: { ok: false, error: "query is required" } };
+
+        const hits = await searchKnowledge(q, restaurantId);
+
+        // The dangerous answer here is an invented one. If the restaurant has
+        // not written it down, the bot does not know it — say so and offer
+        // staff, rather than reasoning a plausible answer about allergens or
+        // refunds from thin air.
+        if (hits.length === 0) {
+          return {
+            output: {
+              ok: true,
+              found: false,
+              note:
+                "No answer on file for that. Do NOT guess, infer, or answer from general knowledge. " +
+                "Tell the customer plainly that you'll check with the restaurant, and call " +
+                "request_human_handoff if they need it now.",
+            },
+          };
+        }
+
+        const best = hits[0];
+
+        // Allergen and refund answers are stored the way they must be said.
+        // A rephrase that drops "may contain traces" is a real harm, so these
+        // bypass the model entirely.
+        if (best.isVerbatim) {
+          return {
+            output: {
+              ok: true,
+              found: true,
+              note: "Answer sent verbatim via templateReply — do NOT restate or embellish it.",
+            },
+            templateReply: best.answer,
+          };
+        }
+
+        return {
+          output: {
+            ok: true,
+            found: true,
+            answers: hits.map((h) => ({ question: h.question, answer: h.answer })),
+            note:
+              "Answer using ONLY what is written above, in your normal voice. " +
+              "Do not add details that are not there.",
           },
         };
       }

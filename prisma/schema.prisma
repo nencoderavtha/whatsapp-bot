@@ -481,6 +481,41 @@ model PromptTemplate {
   updatedAt DateTime @updatedAt
 }
 
+/// Answers to the questions customers ask that are not about the menu:
+/// allergens, timings, parking, delivery radius, bulk orders, refunds.
+///
+/// These have nowhere to live today — PromptTemplate is a single free-text row,
+/// and growing it until it dominates every prompt is the same scaling problem
+/// the menu already has.
+///
+/// restaurantId is carried from the start. The rest of the schema is
+/// single-tenant (see src/tenancy.ts) and retrofitting a tenant key onto a live
+/// orders table is a real migration; this table has no rows yet, so the column
+/// is free here and one less thing to unpick when the second restaurant lands.
+///
+/// isPublished defaults to false deliberately. An answer nobody at the
+/// restaurant has confirmed must never reach a customer — especially an
+/// allergen answer. Drafts are invisible to the bot until somebody signs off.
+model KnowledgeArticle {
+  id           Int      @id @default(autoincrement())
+  restaurantId Int      @default(1)
+  question     String   // The canonical phrasing, e.g. "Do you have parking?"
+  answer       String   // Exactly what the bot may tell a customer. Blank = unanswered draft.
+  keywords     String   @default("") // Comma-separated extra search terms
+  category     String?  // "allergens" | "hours" | "location" | "delivery" | "payment" | "policy"
+  /// Send the answer word-for-word instead of letting the model rephrase it.
+  /// Use for anything where a paraphrase could be wrong in a way that matters:
+  /// allergens, refund terms, delivery radius.
+  isVerbatim   Boolean  @default(false)
+  isPublished  Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([restaurantId, question])
+  @@index([restaurantId, isPublished])
+}
+
 model ToolDefinition {
   id               Int      @id @default(autoincrement())
   name             String   @unique
