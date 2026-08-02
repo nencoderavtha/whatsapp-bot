@@ -42,6 +42,74 @@ import { logger, runWithContext } from '../services/logger.js';
  * plain text list for any day where photos aren't uploaded yet.
  */
 /** Build the public web-menu URL from the auto-detected runtime server URL or fallback config. */
+/**
+ * Readable form of an inbound message for the dashboard transcript.
+ *
+ * Button taps arrive as the ids we chose ourselves. Logging "confirm_order_btn"
+ * verbatim leaves staff reading machine identifiers next to the customer's own
+ * words, with no way to tell a tap from something typed.
+ */
+function humanizeInbound(raw: string): string {
+  const text = raw.trim();
+  const taps: Record<string, string> = {
+    confirm_order_btn: "✅ Confirm Order",
+    add_more_items_btn: "➕ Add More Items",
+    view_menu: "📋 Menu",
+    location_info: "📍 Location & Hours",
+    change_address: "Change address",
+    pin_new_location_btn: "Pin a new location",
+    use_saved_address_btn: "Use saved address",
+    confirm_delivery_addr_btn: "Confirm delivery address",
+  };
+  if (taps[text]) return `[tapped] ${taps[text]}`;
+  if (/^menu_item_\d+(?:_v_\d+)?$/.test(text)) return `[tapped] Add item (${text})`;
+  if (/^(?:use_addr|saved_addr)_\d+$/.test(text)) return "[tapped] Selected a saved address";
+  return text;
+}
+
+/** The schema default names a suburb the kitchen is not in. */
+const PLACEHOLDER_RESTAURANT_ADDRESS = "Plot 12, Main Road, Gachibowli, Hyderabad";
+
+/**
+ * Is this asking where the RESTAURANT is, rather than where to deliver?
+ *
+ * Both questions contain the word "address", and the delivery-address handler
+ * matched on that word alone — so "mee restaurant address enti?" was answered
+ * with the customer's own doorstep. This decides the question once, and both
+ * handlers consult it, so they cannot disagree.
+ *
+ * The possessive is what separates them: "mee"/"your"/"restaurant" points at the
+ * kitchen, "naa"/"my"/"delivery" points at the customer. A customer's own
+ * address question must never match here, so "naa address" and friends veto.
+ */
+export function asksRestaurantLocation(rawText: string, lowerText: string): boolean {
+  if (rawText === "location_info") return true;
+
+  const t = lowerText.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+
+  // Explicitly about the customer's own address — never the restaurant's.
+  if (/\b(naa|na|nha|my|delivery|deliver)\b\s*(address|adress)\b/.test(t)) return false;
+  if (/\bekkada deliver\b/.test(t)) return false;
+
+  const aboutRestaurant =
+    /\b(mee|meeru|your|restaurant|hotel|shop|store|kitchen|outlet)\b/.test(t);
+  const aboutPlace =
+    /\b(address|adress|location|ekkada|elaa raavali|ela ravali|directions?|maps?|hours?|timings?|open)\b/.test(t);
+
+  if (aboutRestaurant && aboutPlace) return true;
+
+  // Phrasings that name no owner but can only mean the restaurant.
+  return (
+    t === "location hours" ||
+    /\bwhere are you\b/.test(t) ||
+    /\bwhere is the (restaurant|shop|hotel|store)\b/.test(t) ||
+    /\brestaurant (location|address)\b/.test(t) ||
+    /\bopening hours\b/.test(t) ||
+    /\bmeeru ekkada\b/.test(t) ||
+    /\bshop ekkada\b/.test(t)
+  );
+}
+
 function webMenuUrlFor(restaurantId: number, phone: string): string {
   const base = botSessionManager.getPublicServerUrl().replace(/\/+$/, "");
   return `${base}/menu?r=${restaurantId}&phone=${encodeURIComponent(phone)}`;
@@ -687,6 +755,13 @@ export class BotSessionManager {
                   restaurantCity: true,
                   botPaused: true,
                   pauseMessage: true,
+                  // Needed to answer "where are you?" with an actual address and
+                  // a map link rather than just the city name. Scalars only —
+                  // this cache round-trips through JSON in Redis, so a Date
+                  // column here would come back as a string.
+                  restaurantAddress: true,
+                  restaurantLat: true,
+                  restaurantLng: true,
                 },
               }),
             30_000,
@@ -722,11 +797,19 @@ export class BotSessionManager {
 
           const customer = await getOrCreateCustomer(msg.phone, msg.name);
 
+          // Log the inbound message here, before any handler can return.
+          // Previously only the agent logged it, and every direct action below —
+          // menu, location, address, dish photo, item taps — returns before
+          // reaching the agent. Those turns appeared in the dashboard as a reply
+          // with no question, which is how the restaurant-address bug looked like
+          // the bot talking to itself.
+          void logMessage(customer.id, "user", humanizeInbound(msg.text)).catch((e) =>
+            logger.error("[inbound] Could not log the customer's message:", e),
+          );
+
           // ── Human handoff active: AI is paused for this customer ────────────────
-          // Staff reply from the dashboard until they hit "Resume AI". We still log
-          // the inbound message so it shows live in the dashboard chat.
+          // Staff reply from the dashboard until they hit "Resume AI".
           if (customer?.humanRequestedAt) {
-            await logMessage(customer.id, "user", msg.text);
             return;
           }
 
@@ -760,13 +843,24 @@ export class BotSessionManager {
           }
 
           // ── Direct Action 2: Location & Hours ────────────────────────────────
-          if (
-            rawText !== "pin_new_location_btn" &&
-            (rawText === "location_info" || lowerText === "location & hours" || lowerText.includes("where are you located") || lowerText.includes("restaurant location") || lowerText.includes("opening hours") || lowerText.includes("your location"))
-          ) {
+          // "Where are YOU?" and "where am I?" are different questions that both
+          // contain the word "address". This has to win before the delivery
+          // address handler further down, which answers anything mentioning an
+          // address with the customer's own — so asking for the restaurant's
+          // address returned the customer their own doorstep.
+          if (rawText !== "pin_new_location_btn" && asksRestaurantLocation(rawText, lowerText)) {
             const city = cfg?.restaurantCity ?? "Hyderabad";
-            const locationMsg = `*${rName}*, ${city}\nEvening service 7:30 PM nunchi andi.`;
-            await adapter.sendText(msg.phone, locationMsg);
+            const addr = cfg?.restaurantAddress?.trim();
+            const lines = [`*${rName}*`];
+            // The address was on file and never actually sent — the reply named
+            // the city and nothing else, which is not an answer to "where are you".
+            if (addr && addr !== PLACEHOLDER_RESTAURANT_ADDRESS) lines.push(`📍 ${addr}`);
+            else lines.push(`📍 ${city}`);
+            if (cfg?.restaurantLat != null && cfg?.restaurantLng != null) {
+              lines.push(`https://maps.google.com/?q=${cfg.restaurantLat},${cfg.restaurantLng}`);
+            }
+            lines.push(`Evening service 7:30 PM nunchi andi.`);
+            await adapter.sendText(msg.phone, lines.join("\n"));
             return;
           }
 
@@ -1213,11 +1307,17 @@ export class BotSessionManager {
           // payment link had already been issued, then offered a change_address
           // button it had invented, which called save_customer_info with an empty
           // address and tried to wipe the record.
+          // Mentioning "address" is not the same as asking where to deliver.
+          // "Mee restaurant address enti?" matched here and was answered with the
+          // customer's own delivery address; the restaurant-location handler
+          // above now claims those first, and this guard keeps anything that is
+          // clearly about the restaurant from falling through to here.
           const asksAddress =
-            rawText === "change_address" ||
-            /\b(address|adress)\b/i.test(cleanText) ||
-            cleanText.includes("ekkada deliver") ||
-            cleanText.includes("ey address");
+            !asksRestaurantLocation(rawText, lowerText) &&
+            (rawText === "change_address" ||
+              /\b(address|adress)\b/i.test(cleanText) ||
+              cleanText.includes("ekkada deliver") ||
+              cleanText.includes("ey address"));
 
           if (asksAddress) {
             const cust = await getOrCreateCustomer(msg.phone, restaurantId);

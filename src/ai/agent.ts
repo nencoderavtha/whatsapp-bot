@@ -86,7 +86,9 @@ async function processIncoming(
   }
 
   await clearFinishedCart(customer.id);
-  await logMessage(customer.id, "user", userText);
+  // Not logged here — the session manager records every inbound message before
+  // any direct-action handler can return, so logging again would double the
+  // customer's half of every conversation that reaches the agent.
 
   const history = await conversationWindow(customer.id, 6);
   const isFirstMessage = history.length === 1;
