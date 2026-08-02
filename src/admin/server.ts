@@ -693,6 +693,11 @@ export function buildAdminApp() {
 
           if (text.trim()) {
             const inbound: InboundMessage = {
+              // The wamid Meta sends with every inbound message. markRead needs
+              // it to send the read receipt, and the session manager guards on
+              // `msg.id` being present — so dropping this field does not fail
+              // loudly, it just silently stops every blue tick.
+              id: msg.id as string | undefined,
               phone: msg.from as string,
               text: text.trim(),
               name: entry?.contacts?.[0]?.profile?.name as string | undefined,
