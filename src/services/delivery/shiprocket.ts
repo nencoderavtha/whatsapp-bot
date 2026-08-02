@@ -334,20 +334,63 @@ export class ShiprocketDeliveryService {
 
         if (shipmentId) {
           try {
+            // 1. Fetch recommended courier ID via rate quote/serviceability check
+            let targetCourierId: number | string | undefined;
+            try {
+              const quote = await this.getQuote({
+                pickupPincode: 500072,
+                deliveryPincode: billingPincode,
+                weightKg: 0.5,
+                pickupLat: params.pickupLat,
+                pickupLng: params.pickupLng,
+                deliveryLat: params.deliveryLat,
+                deliveryLng: params.deliveryLng,
+              });
+              if (quote.available && quote.raw) {
+                const couriers = quote.raw.data?.available_courier_companies || quote.raw.data?.courier_companies || [];
+                if (couriers.length > 0) {
+                  const cheapest = couriers.reduce((prev: any, curr: any) => (Number(curr.rate || curr.rates || 0) < Number(prev.rate || prev.rates || 0) ? curr : prev));
+                  targetCourierId = cheapest.courier_company_id || cheapest.courier_id || cheapest.id;
+                }
+              }
+            } catch (quoteErr) {
+              logger.error("[Shiprocket Auto-Ship Quote Lookup Error]", quoteErr);
+            }
+
+            // 2. Call AWB Assignment API with target courier ID & hyperlocal flag
+            const awbPayload: Record<string, any> = {
+              shipment_id: shipmentId,
+              is_hyperlocal: 1,
+            };
+            if (targetCourierId) {
+              awbPayload.courier_id = targetCourierId;
+            }
+
+            logger.info(`Sending Shiprocket AWB Assignment Payload: ${JSON.stringify(awbPayload)}`);
+
             const awbRes = await fetch(`${this.baseUrl}/courier/assign/awb`, {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${token}`,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({ shipment_id: shipmentId, is_hyperlocal: 1 }),
+              body: JSON.stringify(awbPayload),
             });
 
+            const awbText = await awbRes.text();
+            logger.info(`Shiprocket Quick AWB Response (${awbRes.status}): ${awbText}`);
+
             if (awbRes.ok) {
-              const awbData = (await awbRes.json()) as any;
-              logger.info(`Shiprocket Quick AWB Response: ${JSON.stringify(awbData)}`);
-              awbCode = awbData.response?.data?.awb_code || "";
-              courierName = awbData.response?.data?.courier_name || "Shiprocket Quick";
+              try {
+                const awbData = JSON.parse(awbText);
+                const responseData = awbData.response?.data || awbData.data || awbData;
+                awbCode = responseData.awb_code || responseData.awb || "";
+                courierName = responseData.courier_name || responseData.courier || "Shiprocket Quick";
+              } catch (parseErr) {
+                logger.error("[Shiprocket AWB Response Parse Error]", parseErr);
+              }
+            } else {
+              logger.error(`Shiprocket AWB Assignment HTTP Error (${awbRes.status}): ${awbText}`);
             }
           } catch (awbErr) {
             logger.error("[Shiprocket Auto-Ship Error]", awbErr);
