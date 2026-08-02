@@ -22,6 +22,192 @@ export async function getMenu(
   return categories.filter((c) => c.items.length > 0);
 }
 
+/**
+ * Minimal name → id index for the intent classifier.
+ *
+ * The classifier's only job with the menu is mapping "two parottas" onto
+ * menuItemId 31 and a variant id. It does not need prices, spice levels,
+ * descriptions or piece counts — but it was being handed the full menuAsText,
+ * the same block the responder gets, so every turn shipped the menu twice.
+ *
+ * Sold-out items are still listed, briefly: the classifier should recognise a
+ * request for one so it can be refused properly, rather than failing to map it
+ * and falling through to UNKNOWN.
+ */
+export async function menuAsCompactIndex(_restaurantId?: number): Promise<string> {
+  const cats = await getMenu();
+
+  const lines: string[] = [];
+  const soldOut: string[] = [];
+
+  for (const c of cats) {
+    for (const i of c.items) {
+      if (i.stockCount !== null && i.stockCount === 0) {
+        soldOut.push(`[${i.id}] ${i.name}`);
+        continue;
+      }
+      const variants = i.variants.length
+        ? ` (${i.variants.map((v) => `${v.name}[v${v.id}]`).join(" | ")})`
+        : "";
+      lines.push(`[${i.id}] ${i.name}${variants}`);
+    }
+  }
+
+  const unavailable = await prisma.menuItem.findMany({
+    where: { available: false },
+    select: { id: true, name: true },
+  });
+  for (const u of unavailable) soldOut.push(`[${u.id}] ${u.name}`);
+
+  const body = lines.length ? lines.join("\n") : "(no items available)";
+  return soldOut.length
+    ? `${body}\n\nSOLD OUT (recognise but do not add): ${soldOut.join(", ")}`
+    : body;
+}
+
+export interface MenuSearchFilters {
+  query?: string;
+  isVeg?: boolean;
+  category?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  limit?: number;
+}
+
+export interface MenuSearchResult {
+  /** How many items matched in total — not how many are listed below. */
+  totalMatches: number;
+  truncated: boolean;
+  items: string[];
+}
+
+/** Cheapest and dearest way to buy an item, accounting for variants. */
+function priceRange(item: { price: number; variants: { price: number }[] }) {
+  if (item.variants.length === 0) return { min: item.price, max: item.price };
+  const prices = item.variants.map((v) => v.price);
+  return { min: Math.min(...prices), max: Math.max(...prices) };
+}
+
+/**
+ * Score an item against the query words.
+ *
+ * Whole-string matching breaks on word order — "chicken biryani" would miss
+ * "Biryani Chicken Special" — so each word is matched separately and the score
+ * is how many of them landed. An item matching both words outranks one
+ * matching either, which is the ordering a customer expects.
+ */
+function relevance(haystack: string, words: string[], name: string): number {
+  let score = 0;
+  for (const w of words) if (haystack.includes(w)) score++;
+  if (score === 0) return 0;
+  const n = name.toLowerCase();
+  const joined = words.join(" ");
+  if (n === joined) score += 100;
+  else if (n.startsWith(joined)) score += 50;
+  return score;
+}
+
+/**
+ * Structured search over the menu.
+ *
+ * The whole menu is pasted into the system prompt today, which works at 11
+ * items and stops working well before a few hundred. This is the replacement:
+ * the model asks for what it needs instead of carrying everything.
+ *
+ * Filters are applied by the database where it can (availability, veg,
+ * category) and in memory where the schema can't express it — price has to
+ * account for variants, so the comparison is against the item's real cheapest
+ * and dearest options rather than the base price, which is meaningless for a
+ * dish sold only in Half/Full.
+ *
+ * totalMatches is deliberately the count BEFORE the limit is applied. Without
+ * it the model sees ten results, assumes that is the whole answer, and tells a
+ * customer asking "what veg dishes do you have" that there are ten when there
+ * are forty. Truncated results say so.
+ */
+export async function searchMenu(
+  filters: MenuSearchFilters,
+  _restaurantId?: number,
+): Promise<MenuSearchResult> {
+  const limit = Math.min(Math.max(1, filters.limit ?? 12), 30);
+
+  const candidates = await prisma.menuItem.findMany({
+    where: {
+      available: true,
+      ...(filters.isVeg !== undefined ? { isVeg: filters.isVeg } : {}),
+      ...(filters.category
+        ? { category: { name: { contains: filters.category, mode: "insensitive" } } }
+        : {}),
+    },
+    include: {
+      variants: { where: { available: true }, orderBy: { sortOrder: "asc" } },
+      category: { select: { name: true } },
+    },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  const words = (filters.query ?? "")
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+
+  const scored: { item: (typeof candidates)[number]; score: number }[] = [];
+
+  for (const item of candidates) {
+    if (item.stockCount !== null && item.stockCount === 0) continue;
+
+    const { min, max } = priceRange(item);
+    if (filters.maxPrice !== undefined && min > filters.maxPrice) continue;
+    if (filters.minPrice !== undefined && max < filters.minPrice) continue;
+
+    let score = 0;
+    if (words.length > 0) {
+      const haystack = [
+        item.name,
+        item.description ?? "",
+        item.category.name,
+        ...item.variants.map((v) => v.name),
+      ]
+        .join(" ")
+        .toLowerCase();
+      score = relevance(haystack, words, item.name);
+      if (score === 0) continue;
+    }
+
+    scored.push({ item, score });
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.item.sortOrder - b.item.sortOrder);
+
+  const items = scored.slice(0, limit).map(({ item }) => {
+    const flags = [
+      item.isVeg ? "veg" : "non-veg",
+      item.spiceLevel ?? "",
+      item.stockCount !== null ? `only ${item.stockCount} left` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    const price =
+      item.variants.length > 0
+        ? item.variants.map((v) => `${v.name}[v${v.id}]₹${v.price}`).join(" | ")
+        : `₹${item.price}`;
+
+    const desc = item.description
+      ? ` — ${item.description.length > 80 ? item.description.slice(0, 77) + "…" : item.description}`
+      : "";
+
+    return `[${item.id}] ${item.name} — ${price} (${flags})${desc}`;
+  });
+
+  return {
+    totalMatches: scored.length,
+    truncated: scored.length > items.length,
+    items,
+  };
+}
+
 export async function menuAsText(_restaurantId?: number): Promise<string> {
   const cats = await getMenu();
 

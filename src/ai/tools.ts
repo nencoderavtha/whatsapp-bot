@@ -10,6 +10,7 @@ import { logActivity } from "../services/activity.js";
 import { getCached } from "../services/cache.js";
 import { notifyAdminOfEvent } from "../services/events.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
+import { searchMenu } from "../services/menu.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 import { logger } from '../services/logger.js';
@@ -551,6 +552,42 @@ export async function runTool(
 
       case "generate_payment_link": {
         return await handleGeneratePaymentLink(customerId, restaurantId);
+      }
+
+      case "search_menu": {
+        const res = await searchMenu({
+          query: typeof args.query === "string" ? args.query : undefined,
+          isVeg: typeof args.isVeg === "boolean" ? args.isVeg : undefined,
+          category: typeof args.category === "string" ? args.category : undefined,
+          minPrice: args.minPrice !== undefined ? Number(args.minPrice) : undefined,
+          maxPrice: args.maxPrice !== undefined ? Number(args.maxPrice) : undefined,
+          limit: args.limit !== undefined ? Number(args.limit) : undefined,
+        });
+
+        if (res.totalMatches === 0) {
+          return {
+            output: {
+              ok: true,
+              totalMatches: 0,
+              note: "Nothing on today's menu matches that. Say so plainly — do not invent a dish or promise to check.",
+            },
+          };
+        }
+
+        return {
+          output: {
+            ok: true,
+            totalMatches: res.totalMatches,
+            items: res.items,
+            // Without this the model reads a truncated list as the complete
+            // answer and tells the customer a wrong count.
+            ...(res.truncated
+              ? {
+                  note: `Showing ${res.items.length} of ${res.totalMatches} matches. If the customer asked how many, answer ${res.totalMatches} — do NOT present this list as the full set. Ask them to narrow it down.`,
+                }
+              : {}),
+          },
+        };
       }
 
       case "check_order_status": {

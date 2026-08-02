@@ -10,8 +10,8 @@ import { logActivity } from "../services/activity.js";
 import { acquire, enqueue, drain } from "../services/conversation-lock.js";
 import { clearFinishedCart } from "../whatsapp/stage.js";
 import { logger } from '../services/logger.js';
-import { menuAsText } from "../services/menu.js";
-import { classifyIntent } from "./intent.js";
+import { menuAsCompactIndex } from "../services/menu.js";
+import { classifyIntent, fastClassifyIntent } from "./intent.js";
 import { missingSlots } from "../orchestrator/slots.js";
 import { nextAction } from "../orchestrator/transitions.js";
 
@@ -91,18 +91,27 @@ async function processIncoming(
   const history = await conversationWindow(customer.id, 6);
   const isFirstMessage = history.length === 1;
 
-  const [system, tools, menuText, draft] = await Promise.all([
+  // Resolve the unambiguous cases before doing any work for the classifier:
+  // a button tap needs neither the menu nor a model call.
+  const fastIntent = fastClassifyIntent(userText);
+
+  const [system, tools, menuIndex, draft] = await Promise.all([
     buildSystemPrompt(customer.name ?? undefined, restaurantId, isFirstMessage, customer.id),
     getEnabledTools(restaurantId),
-    menuAsText(restaurantId),
+    // The classifier only maps names to ids, so it gets the compact index rather
+    // than the full menu the responder already has via buildSystemPrompt. The
+    // menu was previously assembled and shipped twice on every turn.
+    fastIntent ? Promise.resolve("") : menuAsCompactIndex(restaurantId),
     prisma.pendingOrder.findUnique({ where: { customerId: customer.id } }),
   ]);
 
-  const intentResult = await classifyIntent(
-    history.map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
-    userText,
-    menuText
-  );
+  const intentResult =
+    fastIntent ??
+    (await classifyIntent(
+      history.map(m => ({ role: m.role as "user" | "assistant", content: m.content })),
+      userText,
+      menuIndex,
+    ));
 
   const missing = missingSlots(draft, customer);
   const action = nextAction(draft?.stage ?? "BUILDING_CART", intentResult, missing);
