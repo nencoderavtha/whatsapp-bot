@@ -2,6 +2,7 @@ import { prisma } from "../db.js";
 import { menuAsText } from "../services/menu.js";
 import { getCached } from "../services/cache.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { logger } from "../services/logger.js";
 
 function isLegacyTemplate(content: string): boolean {
   return /\{\{\s*(menu|restaurantName|restaurantCity|customerGreeting)\s*\}\}/.test(content);
@@ -70,12 +71,31 @@ export async function buildSystemPrompt(
       `FORMATTING — WHATSAPP TEXT ONLY, NOT MARKDOWN\n` +
       `1. *Bold* item names, prices, totals, order numbers only — single asterisk on each side.\n` +
       `2. Start list items with ". " — NEVER "*" or "-" as bullets.\n` +
-      `3. ₹ for prices.\n\n`;
+      `3. ₹ for prices.\n` +
+      // The menu below is written as "[31] Parotta" and "Annam[v5]₹350" because
+      // the tools need those ids. Nothing has leaked into a reply so far, but
+      // the customer has no idea what [31] means and it reads as a broken bot.
+      `4. NEVER show internal ids to the customer — not [31], not [v5], not "menuItemId". They are for tool calls only.\n` +
+      // Four replies in the logged history listed eight to eleven dishes in
+      // prose. The menu is sent as its own interactive message by the system;
+      // retyping it in a reply gives the customer the same list twice, in a
+      // worse format, and buries whatever they actually asked.
+      `5. Do NOT retype the menu. The system sends it as a tappable list. Name at most 2-3 dishes when helping someone choose, and only when it answers their question.\n\n`;
 
     let notesBlock = "";
     const notesContent = notesRow?.content?.trim();
     if (notesContent && !isLegacyTemplate(notesContent)) {
       notesBlock = `ADDITIONAL NOTES FROM THE RESTAURANT:\n${notesContent}\n\n`;
+    } else if (notesContent) {
+      // Skipping it is right — a legacy template carries {{placeholders}} this
+      // prompt no longer fills, and an order flow that contradicts the state
+      // machine. Doing it silently is not: 6KB of prompt sat in the database
+      // looking like live configuration while affecting nothing, and anyone
+      // editing it would have seen no effect and no explanation.
+      logger.warn(
+        `[prompt] PromptTemplate ${notesRow?.id} is a legacy template (${notesContent.length} chars) and is NOT in use. ` +
+          `It still contains {{placeholders}}. Replace it with plain restaurant notes, or leave restaurant facts to KnowledgeArticle.`,
+      );
     }
 
     return (
