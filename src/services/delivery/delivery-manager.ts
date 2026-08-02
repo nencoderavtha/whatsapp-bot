@@ -83,7 +83,7 @@ export class DeliveryManager {
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { customer: true, deliveryDispatch: true },
+      include: { customer: true, deliveryDispatch: true, items: true },
     });
 
     if (!order) throw new Error(`Order #${orderId} not found`);
@@ -91,7 +91,11 @@ export class DeliveryManager {
     logger.info(`👤 [Customer Details] Name: ${order.customer.name || "Customer"} | Phone: ${order.customer.phone}`);
     logger.info(`📍 [Drop Address] ${order.deliveryAddress || "Jubilee Hills, Hyderabad"}`);
 
-    if (order.deliveryDispatch && order.deliveryDispatch.externalDeliveryId) {
+    if (
+      order.deliveryDispatch &&
+      order.deliveryDispatch.externalDeliveryId &&
+      order.deliveryDispatch.externalDeliveryId !== "NOT_DISPATCHED_YET"
+    ) {
       logger.info(
         `↩️  [Already Dispatched] Order #${orderId} → ${order.deliveryDispatch.externalDeliveryId}. Not booking a second courier.`,
       );
@@ -102,7 +106,7 @@ export class DeliveryManager {
     // is never recomputed here — re-quoting at booking time (20-30 minutes later,
     // at a different price) and writing the new number back left the books
     // disagreeing with what was actually charged.
-    const selectedProviderCode = preferredProviderCode ?? "borzo";
+    const selectedProviderCode = preferredProviderCode ?? "shiprocket";
     const billedFee = order.deliveryFee || 45;
 
     logger.info(`🏆 [Delivery Partner]: ${selectedProviderCode.toUpperCase()} | Customer was billed ₹${billedFee}`);
@@ -129,6 +133,13 @@ export class DeliveryManager {
       pickupLat: restaurant?.restaurantLat ?? undefined,
       pickupLng: restaurant?.restaurantLng ?? undefined,
       pickupPhone: ownerPhone,
+      pickupName: restaurant?.restaurantName ?? "Restaurant",
+      items: order.items.map((i) => ({
+        name: i.nameSnap,
+        qty: i.qty,
+        price: i.priceSnap,
+      })),
+      subTotal: order.subtotal,
     });
 
     // A rejected booking is not a dispatch. Recording one wrote a row with a null

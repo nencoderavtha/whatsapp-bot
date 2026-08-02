@@ -39,6 +39,9 @@ import { DeliveryManager } from "../services/delivery/delivery-manager.js";
 import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import { orderStagedTemplate } from "../ai/templates.js";
 import { logger } from '../services/logger.js';
+import { BorzoDeliveryService } from "../services/delivery/borzo.js";
+import { ShiprocketDeliveryService } from "../services/delivery/shiprocket.js";
+import { ShadowfaxDeliveryService } from "../services/delivery/shadowfax.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -429,9 +432,50 @@ export function buildAdminApp() {
         "🛒 Order Summary",
         "Tap button to confirm or message to add items"
       );
+
+      await logMessage(customer.id, "assistant", stagedMsg);
     }
 
     res.json({ ok: true });
+  }));
+
+  app.get("/test-delivery", (_req, res) => {
+    const htmlPath = path.join(__dirname, "public", "test-delivery.html");
+    res.sendFile(htmlPath);
+  });
+
+  app.post("/public/api/test-delivery/quote", asyncRoute(async (req, res) => {
+    const { pickupPincode, pickupAddress, deliveryAddress, deliveryPincode, deliveryPhone, deliveryLat, deliveryLng, pickupLat, pickupLng, pickupPhone } = req.body;
+    const results: Record<string, any> = { ok: true };
+
+    const pickup = pickupPincode && !isNaN(Number(pickupPincode)) ? Number(pickupPincode) : 500081;
+    const drop = deliveryPincode && !isNaN(Number(deliveryPincode)) ? Number(deliveryPincode) : 500081;
+
+    const restaurant = await prisma.restaurantConfig.findFirst({ where: { id: 1 } });
+    const pLat = pickupLat ? Number(pickupLat) : (restaurant?.restaurantLat ? Number(restaurant.restaurantLat) : undefined);
+    const pLng = pickupLng ? Number(pickupLng) : (restaurant?.restaurantLng ? Number(restaurant.restaurantLng) : undefined);
+
+    const dLat = deliveryLat ? Number(deliveryLat) : undefined;
+    const dLng = deliveryLng ? Number(deliveryLng) : undefined;
+
+    // Shiprocket Quick Quote Query
+    const shiprocket = new ShiprocketDeliveryService();
+    try {
+      const quote = await shiprocket.getQuote({
+        pickupPincode: pickup,
+        deliveryPincode: drop,
+        weightKg: 0.5,
+        pickupLat: pLat,
+        pickupLng: pLng,
+        deliveryLat: dLat,
+        deliveryLng: dLng,
+      });
+      results.shiprocket = quote;
+    } catch (err: any) {
+      results.shiprocket = { available: false, error: err?.message ?? err };
+    }
+
+    res.json(results);
   }));
 
   app.get("/address", (_req, res) => {
@@ -650,7 +694,6 @@ export function buildAdminApp() {
 
           if (text.trim()) {
             const inbound: InboundMessage = {
-              id: msg.id as string | undefined,
               phone: msg.from as string,
               text: text.trim(),
               name: entry?.contacts?.[0]?.profile?.name as string | undefined,
@@ -664,10 +707,13 @@ export function buildAdminApp() {
     }
   });
 
-  app.post("/api/webhooks/delivery/shiprocket", asyncRoute(async (req, res) => {
+  app.post("/api/webhooks/delivery/quick", asyncRoute(async (req, res) => {
     const apiKey = req.headers["x-api-key"];
     const expectedToken = process.env.DELIVERY_WEBHOOK_TOKEN || "godavari_ruchulu_secret_token";
     
+    console.log(`[Shiprocket Webhook Auth] Received x-api-key: "${apiKey}", Expected: "${expectedToken}"`);
+    console.log(`[Shiprocket Webhook Headers] Headers:`, JSON.stringify(req.headers));
+
     if (apiKey !== expectedToken) {
       logger.warn("[Shiprocket Webhook] Unauthorized request. Header x-api-key did not match.");
       res.status(401).json({ error: "Unauthorized" });
@@ -678,15 +724,18 @@ export function buildAdminApp() {
     logger.info("[Shiprocket Webhook] Received status update:", JSON.stringify(payload, null, 2));
 
     const trackingData = payload.tracking_data || payload;
-    const { shipment_id, order_id, shipment_status } = trackingData;
+    const { shipment_id, awb, order_id, sr_order_id, shipment_status, current_status } = trackingData;
 
-    if (!shipment_id || !shipment_status) {
-      res.status(400).json({ error: "Missing shipment_id or shipment_status" });
+    const targetStatus = shipment_status || current_status;
+    const lookupId = shipment_id || awb || sr_order_id;
+
+    if (!lookupId || !targetStatus) {
+      res.status(400).json({ error: "Missing tracking identifier (shipment_id, awb, sr_order_id) or status" });
       return;
     }
 
     let internalStatus = "SEARCHING_RIDER";
-    const statusUpper = String(shipment_status).toUpperCase();
+    const statusUpper = String(targetStatus).toUpperCase();
 
     if (["DELIVERED"].includes(statusUpper)) {
       internalStatus = "DELIVERED";
@@ -700,20 +749,23 @@ export function buildAdminApp() {
       internalStatus = "CANCELLED";
     }
 
+    const orderIdNum = order_id && !isNaN(Number(order_id)) && Number(order_id) <= 2147483647 && Number(order_id) > 0 ? Number(order_id) : -1;
+
     const dispatch = await prisma.deliveryDispatch.findFirst({
       where: {
         OR: [
-          { externalDeliveryId: `SR-${shipment_id}` },
-          { externalDeliveryId: String(shipment_id) },
+          { externalDeliveryId: `SR-${lookupId}` },
+          { externalDeliveryId: String(lookupId) },
           { externalDeliveryId: `SR-${order_id}` },
-          { orderId: Number(order_id) }
+          { externalDeliveryId: String(order_id) },
+          { orderId: orderIdNum }
         ]
       },
       include: { order: { include: { customer: true } } }
     });
 
     if (!dispatch) {
-      logger.warn(`[Shiprocket Webhook] No matching dispatch found for shipment ${shipment_id} / order ${order_id}`);
+      logger.warn(`[Shiprocket Webhook] No matching dispatch found for lookup ID ${lookupId} / order ID ${order_id}`);
       res.status(200).json({ ok: false, message: "No matching order found" });
       return;
     }
@@ -754,6 +806,90 @@ export function buildAdminApp() {
 
       if (notifMsg) {
         await session.sendText(dispatch.order.customer.phone, notifMsg);
+        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
+      }
+    }
+
+    res.status(200).json({ ok: true });
+  }));
+
+  app.post("/webhook/uberdirect", express.json(), asyncRoute(async (req, res) => {
+    const payload = req.body;
+    logger.info("🚚 [Uber Direct Webhook Event Received]:", JSON.stringify(payload, null, 2));
+
+    const deliveryId = payload.delivery_id || payload.data?.id;
+    const uberStatus = (payload.status || payload.data?.status || "").toLowerCase();
+    const courier = payload.courier || payload.data?.courier || {};
+
+    if (!deliveryId) {
+      res.status(200).json({ ok: true, note: "No delivery ID in payload" });
+      return;
+    }
+
+    const dispatch = await prisma.deliveryDispatch.findFirst({
+      where: {
+        OR: [
+          { externalDeliveryId: deliveryId },
+          { externalDeliveryId: `UBR-${deliveryId}` },
+        ],
+      },
+      include: { order: { include: { customer: true } } },
+    });
+
+    if (!dispatch) {
+      logger.warn(`[Uber Direct Webhook] No dispatch found for delivery ID ${deliveryId}`);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    let internalStatus = dispatch.status;
+    if (uberStatus === "pickup" || uberStatus === "pickup_complete" || uberStatus === "in_transit") {
+      internalStatus = "OUT_FOR_DELIVERY";
+    } else if (uberStatus === "delivered" || uberStatus === "completed") {
+      internalStatus = "DELIVERED";
+    } else if (uberStatus === "canceled" || uberStatus === "cancelled") {
+      internalStatus = "CANCELLED";
+    } else if (uberStatus === "dispatching" || uberStatus === "processing") {
+      internalStatus = "SEARCHING_RIDER";
+    }
+
+    const riderName = courier.name || null;
+    const riderPhone = courier.phone_number || null;
+    const vehicleNumber = courier.vehicle_type || null;
+
+    await prisma.deliveryDispatch.update({
+      where: { id: dispatch.id },
+      data: {
+        status: internalStatus,
+        ...(riderName ? { riderName } : {}),
+        ...(riderPhone ? { riderPhone } : {}),
+        ...(vehicleNumber ? { riderVehicleNumber: vehicleNumber } : {}),
+      },
+    });
+
+    if (internalStatus === "DELIVERED") {
+      await prisma.order.update({
+        where: { id: dispatch.orderId },
+        data: { status: "delivered" },
+      });
+    }
+
+    const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
+    if (session && dispatch.order?.customer?.phone) {
+      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
+      const trackingUrl = payload.tracking_url || (dispatch.externalDeliveryId ? `https://delivery.uber.com` : null);
+      const notifMsg = deliveryStatusMsg(
+        dispatch.orderId,
+        internalStatus,
+        riderName,
+        riderPhone,
+        trackingUrl,
+        cfg?.restaurantName ?? "Restaurant"
+      );
+
+      if (notifMsg) {
+        await session.sendText(dispatch.order.customer.phone, notifMsg);
+        await logMessage(dispatch.order.customerId, "assistant", notifMsg);
       }
     }
 
@@ -1003,7 +1139,7 @@ export function buildAdminApp() {
     // better move; this is the safety net for when nobody did.
     if (status === "ready" && order.type === "delivery") {
       try {
-        const result: any = await DeliveryManager.dispatchOrder(orderId, "borzo");
+        const result: any = await DeliveryManager.dispatchOrder(orderId, "shadowfax");
         logger.info(
           result?.alreadyDispatched
             ? `[Auto-Dispatch] Order #${orderId} already had a courier booked.`
@@ -1030,7 +1166,7 @@ export function buildAdminApp() {
 
   api.post("/orders/:id/dispatch", async (req, res) => {
     const orderId = Number(req.params.id);
-    const providerCode = req.body.providerCode || "borzo";
+    const providerCode = req.body.providerCode || "shadowfax";
     try {
       const result = await DeliveryManager.dispatchOrder(orderId, providerCode);
       res.json(result);
@@ -1135,52 +1271,12 @@ export function buildAdminApp() {
     res.json(result);
   });
 
-  /**
-   * Contacts for the chat list, most recently active first.
-   *
-   * This used to order by Customer.createdAt — when the record was first
-   * created, not when they last said anything. A regular who ordered every week
-   * sat frozen at the bottom of the list while a one-time contact from
-   * yesterday stayed pinned to the top, and a new message never moved a thread.
-   *
-   * The ordering is derived from the messages table rather than the customer
-   * row, so the 200 cap keeps the 200 most recently active conversations. Taking
-   * the newest 200 customers and sorting those would still hide an old regular
-   * who just messaged, which is precisely the person staff need to see.
-   */
   api.get("/customers", async (_req, res) => {
-    const recent = await prisma.message.groupBy({
-      by: ["customerId"],
-      _max: { createdAt: true },
-      orderBy: { _max: { createdAt: "desc" } },
-      take: 200,
-    });
-
-    const lastAt = new Map(recent.map((r) => [r.customerId, r._max.createdAt]));
-
-    const customers = await prisma.customer.findMany({
-      where: { id: { in: recent.map((r) => r.customerId) } },
+    res.json(await prisma.customer.findMany({
+      orderBy: { createdAt: "desc" },
       include: { _count: { select: { orders: true } } },
-    });
-
-    // findMany does not preserve the order of an `in` list.
-    const ordered = customers
-      .map((c) => ({ ...c, lastMessageAt: lastAt.get(c.id) ?? c.createdAt }))
-      .sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
-
-    // Contacts who have never exchanged a message still belong in the list —
-    // staff create them by hand — but they sort below anyone who has.
-    if (ordered.length < 200) {
-      const silent = await prisma.customer.findMany({
-        where: { id: { notIn: recent.map((r) => r.customerId) } },
-        include: { _count: { select: { orders: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 200 - ordered.length,
-      });
-      ordered.push(...silent.map((c) => ({ ...c, lastMessageAt: c.createdAt })));
-    }
-
-    res.json(ordered);
+      take: 200,
+    }));
   });
 
   api.get("/customers/:id/messages", async (req, res) => {
@@ -1211,10 +1307,9 @@ export function buildAdminApp() {
     const session = botSessionManager.getSession(req.restaurantId);
     if (!session) { res.status(503).json({ error: "bot session not running" }); return; }
 
-    // sendText records the transcript itself and broadcasts message_created,
-    // which is what appends the bubble in the dashboard.
     await session.sendText(customer.phone, text);
-    res.json({ ok: true });
+    const msg = await logMessage(customer.id, "assistant", text);
+    res.json(msg);
   }));
 
   api.put("/customers/:id/resume-ai", asyncRoute(async (req, res) => {
