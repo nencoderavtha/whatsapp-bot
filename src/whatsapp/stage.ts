@@ -12,6 +12,7 @@ import { prisma } from "../db.js";
 import type { CloudAdapter } from "./cloud.js";
 import { renderPaymentLinkVoided, type Rendered } from "./renderers.js";
 import { logger } from '../services/logger.js';
+import { resetSuggestions } from "../services/recommendations.js";
 
 /** Send a rendered descriptor over whichever WhatsApp primitive it needs. */
 export async function send(adapter: CloudAdapter, phone: string, msg: Rendered): Promise<void> {
@@ -84,6 +85,10 @@ export async function clearFinishedCart(customerId: number): Promise<boolean> {
   if (!settled && !expired) return false;
 
   await prisma.pendingOrder.delete({ where: { customerId } });
+  // The cart this customer was offered sides for is gone. Without this, a
+  // returning customer starting a fresh order would never see a suggestion
+  // again, because the old cart's list of "already offered" outlives it.
+  void resetSuggestions(customerId);
   logger.info(
     `[Stage] Cleared ${settled ? "completed" : "expired"} cart for customer ${customerId} (was ${cart.stage}).`,
   );

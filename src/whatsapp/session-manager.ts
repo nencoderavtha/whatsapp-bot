@@ -25,8 +25,10 @@ import {
   renderDeliveryQuote,
   renderPaymentLink,
   renderCurrentAddress,
+  renderPairingSuggestion,
 } from "./renderers.js";
 import { getCached } from "../services/cache.js";
+import { suggestPairing } from "../services/recommendations.js";
 import { send, applyCartEdit, isLocked, clearFinishedCart } from "./stage.js";
 import { ownerHandoffMsg } from "../services/notifications.js";
 import { logMessage } from "../services/customer.js";
@@ -65,6 +67,28 @@ function humanizeInbound(raw: string): string {
   if (/^menu_item_\d+(?:_v_\d+)?$/.test(text)) return `[tapped] Add item (${text})`;
   if (/^(?:use_addr|saved_addr)_\d+$/.test(text)) return "[tapped] Selected a saved address";
   return text;
+}
+
+/**
+ * Send a pairing suggestion, if there is one worth sending.
+ *
+ * Never allowed to break the turn it follows: the customer has their cart
+ * summary already, and a failed upsell must not surface as an error or delay
+ * the reply they were waiting for.
+ */
+async function offerPairing(
+  adapter: CloudAdapter,
+  phone: string,
+  customerId: number,
+  cartItemIds: number[],
+): Promise<void> {
+  try {
+    const pairing = await suggestPairing(customerId, cartItemIds);
+    if (!pairing) return;
+    await send(adapter, phone, renderPairingSuggestion(pairing));
+  } catch (e) {
+    logger.warn("[pairing] suggestion failed, continuing without one:", (e as Error)?.message ?? e);
+  }
 }
 
 /** The schema default names a suburb the kitchen is not in. */
@@ -984,6 +1008,7 @@ export class BotSessionManager {
                 stage: cart?.stage ?? "BUILDING_CART",
               }),
             );
+            await offerPairing(adapter, msg.phone, cust.id, currentLines.map((l) => l.menuItemId));
             return;
           }
 
@@ -1369,7 +1394,7 @@ export class BotSessionManager {
             }
           }
 
-          const { reply, mediaReply, placedOrderId, humanHandoffRequested, renderAction } =
+          const { reply, mediaReply, placedOrderId, humanHandoffRequested, renderAction, addedItems } =
             await handleIncoming(msg.phone, msg.text, restaurantId);
 
           // The agent names the UI it needs; rendering it belongs here, where the
@@ -1421,6 +1446,21 @@ export class BotSessionManager {
           }
 
           await sendHumanly(adapter, msg.phone, splitBubbles(reply), restaurantId);
+
+          // Same offer the tap path makes, for items added by typing.
+          if (addedItems && customer) {
+            const cart = await prisma.pendingOrder.findUnique({ where: { customerId: customer.id } });
+            if (cart?.lines) {
+              try {
+                const ids = (JSON.parse(cart.lines) as Array<{ menuItemId: number }>).map((l) => l.menuItemId);
+                await offerPairing(adapter, msg.phone, customer.id, ids);
+              } catch {
+                // Unreadable cart lines are handled everywhere else; not a reason
+                // to fail the turn over an upsell.
+              }
+            }
+          }
+
           if (placedOrderId) {
             // Send formatted receipt to customer + notify owner in parallel
             await Promise.all([

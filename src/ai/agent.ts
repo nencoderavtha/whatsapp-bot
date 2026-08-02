@@ -35,6 +35,8 @@ export interface AgentResult {
   humanHandoffRequested?: boolean;
   mediaReply?: { imageUrl: string; caption?: string };
   renderAction?: RenderAction;
+  /** The turn added something to the cart, so a pairing is worth offering after it. */
+  addedItems?: boolean;
 }
 
 function looksLikeToolGarbage(s: string): boolean {
@@ -312,9 +314,14 @@ async function processIncoming(
     return { reply: "", placedOrderId, humanHandoffRequested, mediaReply, renderAction };
   }
 
+  // Reported so the caller can offer a pairing after the cart summary. Only a
+  // genuine add qualifies: suggesting a side to someone who just removed a dish
+  // reads as not listening, and the tap path already covers button adds.
+  const addedItems = action.kind === "mutate" && action.op === "add_items";
+
   // Not logged here — the adapter records the transcript as the message goes
   // out, so logging it again would double every reply in the dashboard.
-  return { reply: finalText, placedOrderId, humanHandoffRequested, mediaReply };
+  return { reply: finalText, placedOrderId, humanHandoffRequested, mediaReply, addedItems };
 }
 
 /**

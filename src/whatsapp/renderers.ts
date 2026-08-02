@@ -187,6 +187,30 @@ export function renderCurrentAddress(address: string): Rendered {
   };
 }
 
+/**
+ * Offer one dish alongside what the customer just added.
+ *
+ * Sent as its own message rather than appended to the cart summary: the summary
+ * is what they asked for and carries the confirm button, and burying an offer
+ * inside it makes the total harder to read. A separate bubble is also ignorable,
+ * which an upsell should be.
+ *
+ * The Add button is a normal menu_item_<id>, so it goes through the same handler
+ * as a tap from the menu — including asking which variant when the dish has them.
+ */
+export function renderPairingSuggestion(input: {
+  itemId: number;
+  name: string;
+  priceLabel: string;
+  pitch: string;
+}): Rendered {
+  return {
+    kind: "buttons",
+    body: `${input.pitch}\n\n*${input.name}* — ${input.priceLabel}`,
+    buttons: [{ id: `menu_item_${input.itemId}`, title: "➕ Add" }],
+  };
+}
+
 export function renderPaymentLink(url: string, total: number): Rendered {
   return {
     kind: "cta",
