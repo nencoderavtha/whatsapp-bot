@@ -1,6 +1,7 @@
 import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
 import { logger } from "./logger.js";
+import { getCachedCustomer, setCachedCustomer, indexCustomer } from "./customer-cache.js";
 
 export async function getOrCreateCustomer(
   phone: string,
@@ -10,7 +11,14 @@ export async function getOrCreateCustomer(
   const name = typeof nameOrRestaurantId === "string" ? nameOrRestaurantId : undefined;
   const validName = name && name.trim() && name.trim() !== "Unknown" ? name.trim() : undefined;
 
-  return prisma.customer.upsert({
+  // This runs before anything else on every inbound message. For a returning
+  // customer whose name hasn't changed the upsert wrote a row identical to the
+  // one already there, paying a cross-region round trip on the critical path of
+  // every turn to do it.
+  const cached = await getCachedCustomer(phone);
+  if (cached && (!validName || cached.name === validName)) return cached;
+
+  const customer = await prisma.customer.upsert({
     where: { phone },
     update: {
       ...(validName ? { name: validName } : {}),
@@ -20,6 +28,11 @@ export async function getOrCreateCustomer(
       ...(validName ? { name: validName } : {}),
     },
   });
+
+  // The upsert above invalidates through the Prisma extension in db.ts, so
+  // populate the cache afterwards rather than racing it.
+  void setCachedCustomer(customer).then(() => indexCustomer(customer));
+  return customer;
 }
 
 export async function updateCustomer(

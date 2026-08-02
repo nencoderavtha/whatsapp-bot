@@ -13,6 +13,7 @@ import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import { searchMenu } from "../services/menu.js";
 import { searchKnowledge } from "../services/knowledge.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import type { OrderStage } from "@prisma/client";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 import { logger } from '../services/logger.js';
 
@@ -65,8 +66,50 @@ async function getPendingCart(customerId: number): Promise<PendingCart | null> {
   };
 }
 
-async function setPendingCart(customerId: number, restaurantId: number, cart: PendingCart): Promise<void> {
-  const existing = await prisma.pendingOrder.findUnique({ where: { customerId } });
+/**
+ * Cheap restaurant-wide settings used on the cart path.
+ *
+ * propose_order read RestaurantConfig from Postgres on every cart edit. The
+ * database is in Seoul and the service runs in Mumbai, so each of these is
+ * ~110ms of pure network for a row that only changes when the owner edits the
+ * dashboard — which already invalidates this cache.
+ *
+ * A narrow projection on purpose: getCached round-trips through JSON in Redis,
+ * so caching the whole row would hand back Date columns that are really strings.
+ */
+async function getCartConfig(restaurantId: number) {
+  return getCached(restaurantId, "cartConfig", async () => {
+    const c = await prisma.restaurantConfig.findUnique({
+      where: { id: DEFAULT_RESTAURANT_ID },
+      select: {
+        restaurantName: true,
+        razorpayKeyId: true,
+        razorpayKeySecret: true,
+        upiId: true,
+        paymentMethods: true,
+      },
+    });
+    return c;
+  });
+}
+
+/**
+ * Persist the cart and report the stage it landed on.
+ *
+ * Takes the existing row when the caller has already loaded it. propose_order
+ * needs it anyway, and re-reading it here made the same query twice on every
+ * cart edit.
+ */
+async function setPendingCart(
+  customerId: number,
+  restaurantId: number,
+  cart: PendingCart,
+  preloaded?: { stage: OrderStage; razorpayLinkId: string | null } | null,
+): Promise<OrderStage> {
+  const existing =
+    preloaded !== undefined
+      ? preloaded
+      : await prisma.pendingOrder.findUnique({ where: { customerId } });
   if (existing?.razorpayLinkId && existing.razorpayLinkId !== cart.razorpayLinkId) {
     void cancelPaymentLink(existing.razorpayLinkId, restaurantId);
   }
@@ -97,6 +140,9 @@ async function setPendingCart(customerId: number, restaurantId: number, cart: Pe
     create: { customerId, ...data },
     update: data,
   });
+
+  // Returned so callers don't have to read back the row they just wrote.
+  return stage;
 }
 
 async function handleGeneratePaymentLink(customerId: number, restaurantId: number) {
@@ -233,10 +279,22 @@ export async function runTool(
             note: l.note as string | undefined,
           }));
 
-        const menuItems = await prisma.menuItem.findMany({
-          where: { id: { in: rawLines.map((l) => l.menuItemId) } },
-          include: { variants: { where: { available: true }, orderBy: { sortOrder: "asc" } } },
-        });
+        // Everything this tool needs that doesn't depend on anything else it
+        // does. These used to run one after another, and with the database in
+        // Seoul and the service in Mumbai each one cost a full round trip:
+        // a cart edit spent most of its ~5s waiting on sequential network.
+        const [menuItems, existingCart, restaurant, customer] = await Promise.all([
+          prisma.menuItem.findMany({
+            where: { id: { in: rawLines.map((l) => l.menuItemId) } },
+            include: { variants: { where: { available: true }, orderBy: { sortOrder: "asc" } } },
+          }),
+          prisma.pendingOrder.findUnique({
+            where: { customerId },
+            select: { stage: true, razorpayLinkId: true },
+          }),
+          getCartConfig(restaurantId),
+          prisma.customer.findUnique({ where: { id: customerId }, select: { address: true } }),
+        ]);
         const byId = new Map(menuItems.map((m) => [m.id, m]));
 
         const valid: PendingCart["lines"] = [];
@@ -303,13 +361,10 @@ export async function runTool(
           };
         }
 
-        const menuItemsForTotal = await prisma.menuItem.findMany({
-          where: { id: { in: valid.map((l) => l.menuItemId) } },
-          include: { variants: true },
-        });
-        const byIdForTotal = new Map(menuItemsForTotal.map((m) => [m.id, m]));
+        // `valid` is a subset of the lines already fetched above, so the prices
+        // are in hand. This re-queried the same rows a second time.
         const total = valid.reduce((sum, l: PendingCart["lines"][number]) => {
-          const mi = byIdForTotal.get(l.menuItemId)!;
+          const mi = byId.get(l.menuItemId)!;
           if (l.variantId) {
             const v = mi.variants.find((v) => v.id === l.variantId);
             return sum + (v?.price ?? mi.price) * l.qty;
@@ -317,21 +372,16 @@ export async function runTool(
           return sum + mi.price * l.qty;
         }, 0);
 
-        await setPendingCart(customerId, restaurantId, {
-          lines: valid,
-          type: args.type ?? "pickup",
-          note: args.note,
-        });
+        // setPendingCart reports the stage it rewound to, so the summary
+        // reflects where the customer actually is without reading back the row
+        // that was just written.
+        const stageNow = await setPendingCart(
+          customerId,
+          restaurantId,
+          { lines: valid, type: args.type ?? "pickup", note: args.note },
+          existingCart,
+        );
 
-        // Read back the stage setPendingCart rewound to, so the summary reflects
-        // where the customer actually is rather than assuming a fresh cart.
-        const stagedRow = await prisma.pendingOrder.findUnique({
-          where: { customerId },
-          select: { stage: true },
-        });
-        const stageNow = stagedRow?.stage ?? "BUILDING_CART";
-
-        const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
         const razorpayReady = !!(restaurant?.razorpayKeyId && restaurant.razorpayKeySecret);
         const requiresPayment = true;
 
@@ -363,7 +413,6 @@ export async function runTool(
             `Once they say YES — call confirm_order directly. Do NOT call it before they confirm.`;
         }
 
-        const customer = await prisma.customer.findUnique({ where: { id: customerId } });
         const isDelivery = (args.type ?? "pickup") === "delivery";
 
         let liveDeliveryFee = 45;

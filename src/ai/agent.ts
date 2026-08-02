@@ -234,7 +234,12 @@ async function processIncoming(
     }
   }
 
-  if (action.kind === "reply_freeform" || (!templateReply && !finalText)) {
+  // A render action is the entire reply and is returned below, so anything the
+  // model produced here was thrown away. Worse than the wasted round trip: the
+  // loop can execute tools, so a turn that only needed the address picker could
+  // stage a cart or generate a payment link as a side effect of a reply nobody
+  // ever read.
+  if (!renderAction && (action.kind === "reply_freeform" || (!templateReply && !finalText))) {
     const messages: ChatCompletionMessageParam[] = [
       { role: "system", content: system },
       ...history.map(

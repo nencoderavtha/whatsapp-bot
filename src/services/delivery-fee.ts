@@ -17,6 +17,7 @@ import { prisma } from "../db.js";
 import { DeliveryOrchestrator } from "./delivery/orchestrator.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 import { logger } from './logger.js';
+import { redis } from "./redis.js";
 
 export class UnserviceableLocationError extends Error {
   constructor(message: string) {
@@ -36,6 +37,36 @@ const PLACEHOLDER_ADDRESS = "Plot 12, Main Road, Gachibowli, Hyderabad";
 /** Quotes are stable minute to minute; propose_order otherwise re-quotes on every cart edit. */
 const CACHE_TTL_MS = 60_000;
 const feeCache = new Map<string, { fee: number; expires: number }>();
+
+/**
+ * Only successful quotes are shared. An unserviceable address must re-ask the
+ * provider — caching a failure would strand a customer whose address stops
+ * being out of range, and the throw carries a reason this cache cannot.
+ */
+function feeKey(address: string): string {
+  return `fee:${address.toLowerCase().replace(/\s+/g, " ").trim()}`;
+}
+
+async function getSharedFee(address: string): Promise<number | null> {
+  if (!redis) return null;
+  try {
+    const v = await redis.get(feeKey(address));
+    const n = v === null ? NaN : Number(v);
+    return Number.isFinite(n) ? n : null;
+  } catch (e) {
+    logger.warn("[DeliveryFee] shared cache read failed:", (e as Error)?.message ?? e);
+    return null;
+  }
+}
+
+async function setSharedFee(address: string, fee: number): Promise<void> {
+  if (!redis) return;
+  try {
+    await redis.set(feeKey(address), String(fee), "PX", CACHE_TTL_MS);
+  } catch (e) {
+    logger.warn("[DeliveryFee] shared cache write failed:", (e as Error)?.message ?? e);
+  }
+}
 
 /**
  * Above this, treat the address as out of range rather than quoting it.
@@ -62,6 +93,16 @@ export async function getExactServiceDeliveryFee(address?: string | null): Promi
 
   const cached = feeCache.get(drop);
   if (cached && cached.expires > Date.now()) return cached.fee;
+
+  // Shared cache second. The in-memory map above is per-instance, so on Cloud
+  // Run the same address re-quoted against Borzo on every autoscaled instance,
+  // and a customer editing their cart could see two different fees for one
+  // address depending on which container answered.
+  const shared = await getSharedFee(drop);
+  if (shared !== null) {
+    feeCache.set(drop, { fee: shared, expires: Date.now() + CACHE_TTL_MS });
+    return shared;
+  }
 
   const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
   const ownerPhone = (restaurant?.ownerNumbers ?? "")
@@ -114,5 +155,6 @@ export async function getExactServiceDeliveryFee(address?: string | null): Promi
   }
 
   feeCache.set(drop, { fee: rounded, expires: Date.now() + CACHE_TTL_MS });
+  void setSharedFee(drop, rounded);
   return rounded;
 }
