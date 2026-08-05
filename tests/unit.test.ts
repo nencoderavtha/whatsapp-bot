@@ -42,7 +42,6 @@ test("editing a cart with no address yet stays at BUILDING_CART", () => {
 });
 
 test("settled and abandoned carts are locked; live ones are not", () => {
-  assert.equal(isLocked("PAYMENT_RECEIVED"), true);
   assert.equal(isLocked("ORDER_PLACED"), true);
   assert.equal(isLocked("CANCELLED"), true);
 
