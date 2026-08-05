@@ -36,6 +36,8 @@ import { logMessage } from "../services/customer.js";
 import { getExactServiceDeliveryFee, UnserviceableLocationError } from "../services/delivery-fee.js";
 import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
 import { logger, runWithContext } from '../services/logger.js';
+import { checkUserRateLimit } from "../services/rate-limiter.js";
+import { inspectContentSafety } from "../services/content-safety.js";
 
 
 
@@ -770,6 +772,23 @@ export class BotSessionManager {
       }
       runWithContext({ restaurantId, phone: msg.phone }, async () => {
         logger.info(`[${restaurantName}] 💬 ${msg.phone}: ${msg.text}`);
+
+        // 1. User Message Rate Limit Check
+        const rateCheck = await checkUserRateLimit(msg.phone);
+        if (!rateCheck.allowed) {
+          await adapter.sendText(
+            msg.phone,
+            "Chala fast ga messages pampisthunaru andi 🙏 Konchem 1 minute aagi malli try cheyandi.\n(You are sending messages too quickly. Please wait a minute.)",
+          );
+          return;
+        }
+
+        // 2. Content Safety & Prompt Injection Inspection
+        const safety = inspectContentSafety(msg.text);
+        if (!safety.isSafe) {
+          await adapter.sendText(msg.phone, safety.sanitizedText);
+          return;
+        }
         try {
           // The database lives in ap-northeast-2 while this runs in asia-south1, so
           // every query costs a cross-region round trip. This row changes only when

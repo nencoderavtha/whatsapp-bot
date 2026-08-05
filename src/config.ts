@@ -8,7 +8,7 @@ function required(key: string, fallback?: string): string {
 
 // AI provider — all OpenAI-compatible, so only baseURL + key + model differ.
 // Pick with AI_PROVIDER. If not set, auto-pick the first provider that has a key.
-const keys: Record<ProviderName, string> = {
+export const providerKeys: Record<ProviderName, string> = {
   openrouter: process.env.OPENROUTER_API_KEY ?? "",
   groq: process.env.GROQ_API_KEY ?? "",
   cerebras: process.env.CEREBRAS_API_KEY ?? "",
@@ -16,7 +16,7 @@ const keys: Record<ProviderName, string> = {
 };
 
 // Provider registry
-const PROVIDERS = {
+export const providerRegistry = {
   openrouter: {
     baseURL: "https://openrouter.ai/api/v1",
     defaultModel: "google/gemini-2.0-flash-001",
@@ -35,7 +35,10 @@ const PROVIDERS = {
     defaultModel: "gemini-2.0-flash",
   },
 } as const;
-type ProviderName = keyof typeof PROVIDERS;
+export type ProviderName = keyof typeof providerRegistry;
+
+const keys = providerKeys;
+const PROVIDERS = providerRegistry;
 
 const order: ProviderName[] = ["openrouter", "groq", "cerebras", "gemini"];
 const aiProvider =

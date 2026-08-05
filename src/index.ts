@@ -40,6 +40,28 @@ async function main() {
       e,
     );
   }
+  // Graceful shutdown handling for Cloud Run / Railway / Docker
+  const shutdown = async (signal: string) => {
+    logger.info(`🛑 Received ${signal} — starting graceful shutdown...`);
+    server.close(async () => {
+      logger.info("   HTTP server closed.");
+      try {
+        const { prisma } = await import("./db.js");
+        await prisma.$disconnect();
+        logger.info("   Database connections disconnected.");
+      } catch {}
+      process.exit(0);
+    });
+
+    // Force exit after 10 seconds if graceful shutdown stalls
+    setTimeout(() => {
+      logger.warn("⚠️ Forced shutdown timeout reached. Exiting.");
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
 main().catch((e) => {

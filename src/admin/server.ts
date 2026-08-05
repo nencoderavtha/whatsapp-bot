@@ -41,6 +41,9 @@ import { getExactServiceDeliveryFee } from "../services/delivery-fee.js";
 import { orderStagedTemplate } from "../ai/templates.js";
 import { logger } from '../services/logger.js';
 import { ShiprocketDeliveryService } from "../services/delivery/shiprocket.js";
+import { createExpressRateLimiter } from "../services/rate-limiter.js";
+import { inspectContentSafety } from "../services/content-safety.js";
+import { redis } from "../services/redis.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -480,6 +483,39 @@ export function buildAdminApp() {
     res.json({ ok: true, address });
   }));
 
+  const webhookLimiter = createExpressRateLimiter({ windowMs: 60 * 1000, max: 120, message: "Too many webhook requests" });
+  const loginLimiter = createExpressRateLimiter({ windowMs: 60 * 1000, max: 10, message: "Too many login attempts. Please wait 1 minute." });
+  const apiLimiter = createExpressRateLimiter({ windowMs: 15 * 60 * 1000, max: 300, message: "API rate limit exceeded." });
+
+  app.get("/healthz", async (_req, res) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      let redisStatus = "disabled";
+      if (redis) {
+        try {
+          await redis.ping();
+          redisStatus = "healthy";
+        } catch {
+          redisStatus = "degraded";
+        }
+      }
+      res.status(200).json({
+        status: "ok",
+        uptimeSeconds: Math.floor(process.uptime()),
+        memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+        database: "healthy",
+        redis: redisStatus,
+      });
+    } catch (err: any) {
+      logger.error("[Health Check Failed]:", err);
+      res.status(503).json({
+        status: "error",
+        error: "Database connection failed",
+        details: err?.message ?? String(err),
+      });
+    }
+  });
+
   app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"] ?? req.query.mode;
     const token = req.query["hub.verify_token"] ?? req.query.verify_token;
@@ -492,7 +528,20 @@ export function buildAdminApp() {
     }
   });
 
-  app.post("/webhook", async (req, res) => {
+  app.post("/webhook", webhookLimiter, async (req, res) => {
+    // Meta HMAC SHA256 Signature Verification (if WHATSAPP_APP_SECRET is set)
+    const appSecret = process.env.WHATSAPP_APP_SECRET;
+    const signature = req.headers["x-hub-signature-256"] as string | undefined;
+    if (appSecret && signature) {
+      const hmac = createHmac("sha256", appSecret);
+      const expected = "sha256=" + hmac.update(JSON.stringify(req.body)).digest("hex");
+      if (signature !== expected) {
+        logger.warn("⚠️ [Meta Webhook] Signature mismatch — unauthorized request rejected.");
+        res.status(401).json({ error: "Invalid payload signature" });
+        return;
+      }
+    }
+
     res.sendStatus(200);
 
     try {
@@ -695,9 +744,9 @@ export function buildAdminApp() {
   }));
 
   app.get("/api/ping", (_req, res) => res.json({ ok: true }));
-  app.post("/api/auth/login", loginHandler);
+  app.post("/api/auth/login", loginLimiter, loginHandler);
   app.post("/api/auth/logout", logoutHandler);
-  app.post("/api/founder/auth/login", founderLoginHandler);
+  app.post("/api/founder/auth/login", loginLimiter, founderLoginHandler);
   app.post("/api/founder/auth/logout", founderLogoutHandler);
 
   const founder = express.Router();

@@ -16,7 +16,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "mcp:delivery": "tsx src/mcp/delivery-server.ts",
-    "test:unit": "tsx --test tests/unit.test.ts",
+    "test:unit": "tsx --test tests/unit.test.ts tests/production-features.test.ts",
     "build": "prisma generate && tsc -p tsconfig.json"
   },
   "dependencies": {
