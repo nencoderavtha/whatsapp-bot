@@ -6,7 +6,18 @@ const globalForRedis = globalThis as unknown as {
   redisClient: Redis | undefined;
 };
 
-const REDIS_URL = process.env.REDIS_URL;
+function getRedisUrl(): string | undefined {
+  if (process.env.REDIS_URL) return process.env.REDIS_URL;
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    try {
+      const host = new URL(process.env.UPSTASH_REDIS_REST_URL).hostname;
+      return `rediss://default:${process.env.UPSTASH_REDIS_REST_TOKEN}@${host}:6379`;
+    } catch {}
+  }
+  return undefined;
+}
+
+const REDIS_URL = getRedisUrl();
 
 let client: Redis | undefined;
 
