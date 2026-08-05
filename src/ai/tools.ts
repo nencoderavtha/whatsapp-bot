@@ -521,7 +521,7 @@ export async function runTool(
 
         // When Razorpay is configured, order confirmation is handled by the
         // session manager which collects the delivery address, fetches a live
-        // Borzo delivery quote, shows the final bill, and then generates the
+        // Shiprocket delivery quote, shows the final bill, and then generates the
         // payment link. The AI must NOT short-circuit this flow.
         if (razorpayConfigured) {
           return {

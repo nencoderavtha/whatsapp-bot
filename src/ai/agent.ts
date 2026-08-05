@@ -219,7 +219,7 @@ async function processIncoming(
     }
     else if (action.op === "change_address" || action.op === "select_address") {
       // Was: "Delivery address cheppandi... (e.g., 'Deliver to 123 Main St')".
-      // A typed address has no coordinates, so Borzo would quote from a geocoded
+      // A typed address has no coordinates, so the provider would quote from a geocoded
       // guess rather than the pin — the saved-address picker is the actual flow.
       renderAction = { type: "address_picker" };
     }

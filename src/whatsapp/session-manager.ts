@@ -516,7 +516,7 @@ async function sendPinLocationPrompt(adapter: CloudAdapter, phone: string): Prom
  * Show a WhatsApp interactive LIST popup with saved addresses so the full
  * address text is visible (description supports ~72 chars). Much better than
  * buttons which truncate at 20 characters and make the address unreadable
- * for both the customer and for Borzo quote lookups.
+ * for both the customer and for delivery quote lookups.
  */
 async function sendAddressPickerList(
   adapter: CloudAdapter,
@@ -624,7 +624,7 @@ async function proceedToBilling(
   }
 
   // Live quote rather than a flat rate, so the fee matches the actual distance.
-  // Send the pinned address and coordinates, not just a pincode — Borzo geocodes
+  // Send the pinned address and coordinates, not just a pincode — the provider geocodes
   // whatever it is given, and a bare pincode resolves to the area centroid, which
   // under-quotes the real route and leaves the restaurant covering the shortfall.
   const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });

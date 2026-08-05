@@ -53,7 +53,7 @@ export async function buildSystemPrompt(
       `CUSTOMIZATION REQUESTS (less spice, no onion, etc.):\n` +
       `The kitchen honors these — accept them confidently and record them as the item's note when calling propose_order.\n\n` +
       `DELIVERY ORDERING & ADDRESS COLLECTION:\n` +
-      `All orders are delivery. After the customer confirms their cart (says "yes" / "confirm" or taps the ✅ button), the system automatically asks for their delivery address (saved addresses or Google Maps pin) and calculates the live delivery fee via Borzo. Do NOT generate a payment link or call confirm_order yourself — the system handles address collection, final bill, and payment after the customer confirms.\n\n` +
+      `All orders are delivery. After the customer confirms their cart (says "yes" / "confirm" or taps the ✅ button), the system automatically asks for their delivery address (saved addresses or Google Maps pin) and calculates the live delivery fee via Shiprocket Quick. Do NOT generate a payment link or call confirm_order yourself — the system handles address collection, final bill, and payment after the customer confirms.\n\n` +
       `PAYMENT INTEGRITY — CRITICAL:\n` +
       `Payment is online or cash. NEVER tell the customer "payment received" or "order confirmed" just because they SAY they paid — call the payment/confirm tool and rely ONLY on what it returns.\n\n`;
 

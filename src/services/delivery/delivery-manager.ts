@@ -144,7 +144,7 @@ export class DeliveryManager {
 
     // A rejected booking is not a dispatch. Recording one wrote a row with a null
     // id and status SEARCHING_RIDER, and moved the order to out_for_delivery — so
-    // the dashboard showed a rider en route when Borzo had booked nobody.
+    // the dashboard showed a rider en route when nobody had been booked.
     if (!result.ok || !result.dispatchId) {
       logger.error(
         `❌ [Dispatch Failed] Order #${orderId}: ${result.message ?? "provider returned no booking"}`,
@@ -171,7 +171,7 @@ export class DeliveryManager {
       },
     });
 
-    // The order stays "ready" until the courier actually collects it. Borzo's
+    // The order stays "ready" until the courier actually collects it. The
     // PICKED_UP webhook moves it to out_for_delivery, so the status reflects
     // where the food is rather than when we sent an API call.
     logger.info(`✅ [Order #${orderId}] Rider booked on ${result.providerCode.toUpperCase()} — awaiting pickup\n`);

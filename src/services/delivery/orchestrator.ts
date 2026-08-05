@@ -9,7 +9,7 @@ import { prisma } from "../../db.js";
 import { ShiprocketDeliveryService } from "./shiprocket.js";
 import { logger } from "../logger.js";
 
-export type DeliveryProviderCode = "rapido" | "shiprocket" | "shadowfax" | "borzo" | "porter" | "uber";
+export type DeliveryProviderCode = "shiprocket";
 
 export interface UnifiedQuote {
   provider: string;
@@ -59,7 +59,7 @@ export class DeliveryOrchestrator {
   private shiprocket = new ShiprocketDeliveryService();
 
   /**
-   * Fetch quotes exclusively from Shiprocket Quick.
+   * Fetch quotes from Shiprocket Quick.
    */
   async getAllQuotes(params: QuoteParams): Promise<{
     ok: boolean;
@@ -75,20 +75,23 @@ export class DeliveryOrchestrator {
       `   🏁 Drop Address   : ${params.deliveryAddress ?? "Pincode " + params.deliveryPincode} (Lat: ${params.deliveryLat ?? "N/A"}, Lng: ${params.deliveryLng ?? "N/A"})\n`
     );
 
-    // Exclusively Shiprocket Quick
-    const shiprocketQuote = await this.shiprocket.getQuote({
-      pickupPincode: params.pickupPincode,
-      deliveryPincode: params.deliveryPincode,
-      weightKg: params.weightKg,
-      pickupLat: params.pickupLat ?? undefined,
-      pickupLng: params.pickupLng ?? undefined,
-      deliveryLat: params.deliveryLat ?? undefined,
-      deliveryLng: params.deliveryLng ?? undefined,
-    });
-
     const quotes: UnifiedQuote[] = [];
-    if (shiprocketQuote.available) {
-      quotes.push(shiprocketQuote as UnifiedQuote);
+
+    try {
+      const shiprocketQuote = await this.shiprocket.getQuote({
+        pickupPincode: params.pickupPincode,
+        deliveryPincode: params.deliveryPincode,
+        weightKg: params.weightKg,
+        pickupLat: params.pickupLat ?? undefined,
+        pickupLng: params.pickupLng ?? undefined,
+        deliveryLat: params.deliveryLat ?? undefined,
+        deliveryLng: params.deliveryLng ?? undefined,
+      });
+      if (shiprocketQuote.available) {
+        quotes.push(shiprocketQuote as UnifiedQuote);
+      }
+    } catch (err) {
+      logger.error("[Orchestrator Shiprocket Quote Error]", err);
     }
 
     if (quotes.length === 0) {
@@ -109,10 +112,10 @@ export class DeliveryOrchestrator {
   }
 
   /**
-   * Dispatch delivery order exclusively via Shiprocket Quick.
+   * Dispatch delivery order via Shiprocket Quick.
    */
   async dispatchOrder(request: DispatchRequest) {
-    logger.info(`🚚 [Orchestrator] Directing dispatch for Order #${request.orderId} exclusively to Shiprocket Quick`);
+    logger.info(`🚚 [Orchestrator] Directing dispatch for Order #${request.orderId} to Shiprocket Quick`);
     return this.shiprocket.dispatchOrder({
       orderId: request.orderId,
       customerName: request.customerName,

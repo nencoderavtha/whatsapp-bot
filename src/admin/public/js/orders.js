@@ -103,8 +103,8 @@ function renderDeliverySection(o) {
 
   const dispatch = o.deliveryDispatch;
   const status = dispatch ? dispatch.status : "NOT_SCHEDULED";
-  const providerCode = dispatch ? (dispatch.providerCode || "borzo") : "";
-  const providerName = providerCode ? (providerCode === "borzo" ? "Borzo Express" : providerCode === "shadowfax" ? "Shadowfax" : "Shiprocket / Rapido") : "None";
+  const providerCode = dispatch ? (dispatch.providerCode || "shiprocket") : "";
+  const providerName = providerCode ? "Shiprocket Quick" : "None";
   const fee = o.deliveryFee || (dispatch ? dispatch.deliveryFee : 45);
 
   const statusLabels = {
@@ -139,11 +139,8 @@ function renderDeliverySection(o) {
     : "";
 
   const trackId = dispatch?.externalDeliveryId && dispatch.externalDeliveryId !== "NOT_DISPATCHED_YET" ? dispatch.externalDeliveryId : null;
-  const isTestTrack = trackId && (trackId.startsWith("329") || trackId.startsWith("29"));
   const trackingUrl = trackId
-    ? (isTestTrack
-        ? `https://robotapitest-in.borzodelivery.com/in/track/${esc(trackId)}`
-        : `https://borzodelivery.com/in/track/${esc(trackId)}`)
+    ? `https://shiprocket.co/tracking/${esc(trackId.replace("SR-", ""))}`
     : "";
 
   const trackingLink = trackingUrl
@@ -178,7 +175,7 @@ function renderDeliverySection(o) {
         <span class="text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeCls}">🍳 Cooking in Kitchen</span>
       </div>
       <div class="flex gap-2 pt-1">
-        <button onclick="window.dispatchOrderDelivery(${o.id}, 'borzo')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
+        <button onclick="window.dispatchOrderDelivery(${o.id}, 'shiprocket')" class="flex-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md">
           🛵 Call Rider Now
         </button>
       </div>
@@ -401,7 +398,7 @@ export async function markPaid(orderId) {
   }
 }
 
-export async function dispatchOrderDelivery(orderId, providerCode = "borzo") {
+export async function dispatchOrderDelivery(orderId, providerCode = "shiprocket") {
   const card = document.getElementById(`order-card-${orderId}`);
   if (card) card.querySelectorAll("button").forEach(b => { b.disabled = true; });
   try {

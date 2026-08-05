@@ -71,11 +71,9 @@ async function setSharedFee(address: string, fee: number): Promise<void> {
 /**
  * Above this, treat the address as out of range rather than quoting it.
  *
- * Borzo geocodes whatever string it is handed and always returns a price — the
- * literal input "asdkjhasdkjh zzzz" came back at ₹175. Without a ceiling the
- * unserviceable path never fires, and a customer who mistypes their address is
- * quietly charged a large fee to deliver somewhere that isn't theirs. Local
- * runs are ₹50–100, so this leaves generous headroom.
+ * Without a ceiling the unserviceable path never fires, and a customer who
+ * mistypes their address is quietly charged a large fee to deliver somewhere
+ * that isn't theirs. Local runs are ₹50–100, so this leaves generous headroom.
  */
 const MAX_SERVICEABLE_FEE = Number(process.env.MAX_DELIVERY_FEE ?? 250);
 
@@ -95,7 +93,7 @@ export async function getExactServiceDeliveryFee(address?: string | null): Promi
   if (cached && cached.expires > Date.now()) return cached.fee;
 
   // Shared cache second. The in-memory map above is per-instance, so on Cloud
-  // Run the same address re-quoted against Borzo on every autoscaled instance,
+  // Run the same address re-quoted on every autoscaled instance,
   // and a customer editing their cart could see two different fees for one
   // address depending on which container answered.
   const shared = await getSharedFee(drop);
