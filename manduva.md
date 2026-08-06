@@ -1,53 +1,95 @@
-client specific requirements : 
+# Manduva - Client Specific Requirements
 
-1) saperate dashborad for restaurant owner and restaurant employee 
-2) add the menu shared here into the db
-[1/12/2025, 5:26 pm] Suraj Zomato Hyderabad: https://drive.google.com/drive/folders/1e0CcttefSR0zjjyw1U8t2nrv4fWsNyNE?usp=drive_link
-[4/12/2025, 11:14 am] Suraj Zomato Hyderabad: https://drive.google.com/drive/folders/1ij8NWQLsEnNSb9bnegIwSflSv17J6FcB
+---
 
-[text](../../../AppData/Local/Packages/5319275A.WhatsAppDesktop_cv1g1gvanyjgm/LocalState/sessions/87E20CDF199F7EAE31C12362EEFD5D5476DACBAB/transfers/2026-32/MANDUVA_MENU-1.xlsx)
+## 1. General & Core Requirements
 
-3) update the welcome message for the restaurant. 
+1. **Role-Based Dashboards**: Provide separate, customized dashboards for:
+   - **Restaurant Owner**
+   - **Restaurant Employee**
 
-4) every order token number should be on daily basis not continuation. every day starts with order 1.
+2. **Menu Database Integration**: Import latest menu items into the database from shared references:
+   - Google Drive Folder 1: [Suraj Zomato Hyderabad - Folder 1](https://drive.google.com/drive/folders/1e0CcttefSR0zjjyw1U8t2nrv4fWsNyNE?usp=drive_link)
+   - Google Drive Folder 2: [Suraj Zomato Hyderabad - Folder 2](https://drive.google.com/drive/folders/1ij8NWQLsEnNSb9bnegIwSflSv17J6FcB)
+   - Local Menu Sheet: `MANDUVA_MENU-1.xlsx`
 
-5) if order is received (payment don by customer) but item is finished in the kitchen, the employee should esaily go to hte chat and text him, propose him available items ask for replacement of item or refund of money, (automatic refund from razorpay)
-Restaurant employee dashboard requrirements : 
-orders, chats, menu, appliction settings tabs. 
+3. **Welcome Message**: Update custom WhatsApp welcome message for the restaurant.
 
-Tabs Wise details : 
+4. **Daily Token Resets**: Order token numbers must reset daily (starts at **Order #1** every day instead of continuous incrementing).
 
-1) orders tab : 
-1.1) implement search in orders based on customer name/order id/type(delivery, walkin)
-1.2) only 3 states for every orders (current orders, dispatched, delivered)
-    1.2.1) all fresh orders fall into current orders tab 
-    1.2.2) after fresh order is received then accept button appears, after clicking it dispatch button appears which starts the delivery service to fetch riders, after rider picksup ,automatically shifted to dispatched, then after delivered automatically shifted to delivered
-    1.2.3) put reject/refund option instead of cancel order
-1.3) keep the order  neat and in detail without cluttered UI, also keep the cancel order buttion in a menu option so that the employee does not click it by mistake, also aks for confirmation before cancelling. implement automated refund after cancelling the order. 
-1.4) add more options like jump to customer chat window from the order. split up the details nealty the delivery charge + order value in the order. ensure the tracking link shown is properly working  
+5. **Out-of-Stock Item Handling (Post-Payment)**:
+   - If an order is paid but an item is out of stock in the kitchen:
+     - Employee can easily navigate to the customer chat directly from the order.
+     - Propose alternative available items for replacement or initiate refund.
+     - Support **automated refunds via Razorpay**.
 
-2) chats tab : 
-2.1) show human handoff chats saperately. or some filter to easily resolve the issues for customer. 
-2.2) implement search here as well for easy navigation
+---
 
-3) Menu tab : 
-3.1) add the latest manu items available in the Manduva menu excel sheet
-3.2) remove the add items section from the menu tab, remove edit delete menu items., employee only toggle on/off each menu item, a toggle button would be better 
-3.3) no options for the employee to make any changes in the menu except toggle on/off item based on availaility
+## 2. Restaurant Employee Dashboard Requirements
 
-4) application settings tab :
-4.1) implement settings for dark theme and light theme
-4.2) order notification audio selection
+### Overview of Navigation Tabs
+* **Orders**
+* **Chats**
+* **Menu**
+* **Application Settings**
 
+---
 
-Restaurant Owner Dashboard requirements : 
+### Tab-Wise Details
 
-1) per day full statistics 
-2) issues from the customers
-3) campaigs (for now by default all the customers), messages like restaurant is open now, we are ready to take your orders, we will be closing soon etc. 
-4) cost split up. total delivery fees and order value saerately per day/selected week/ per month selected month
-5) chats section to see all the customer chats if any human handoff issue is yet to be resolved. if issue is resolved display resolved by the employee.
-6) customer manangement, filtering customers by orders/values/etc here we can add, edit, delete customers, and also add them to a campaign.
-7) campaigns section, to manage different campaigns, add media to the campaign message etc
-8) settings tab similar to current settings, with payment settings, restaurant metadata, emergency number (for sending alrets/issues raised by customer)
- 
+#### A. Orders Tab
+* **Search & Filtering**: Search orders by Customer Name, Order ID, or Order Type (*Delivery*, *Walk-in*).
+* **3-State Order Lifecycle**:
+  1. **Current Orders**: All fresh incoming orders land here.
+     - *Accept Button*: Moves order to processing.
+     - *Dispatch Button*: Triggers delivery service to fetch riders.
+  2. **Dispatched**: Automatically moves here once a delivery rider picks up the order.
+  3. **Delivered**: Automatically updates once delivery is completed.
+* **Order Rejection & Cancellation**:
+  - Replace generic cancel button with **Reject / Refund** option.
+  - Move cancellation option into a sub-menu with confirmation prompt to prevent accidental clicks.
+  - Integrate **automated refund processing**.
+* **Order UI & Detail Split**:
+  - Clean, clutter-free detailed view.
+  - Clear cost split: **Delivery Fee** + **Order Value**.
+  - One-click jump to customer chat window.
+  - Ensure order tracking link is functioning and accurate.
+
+#### B. Chats Tab
+* **Human Handoff Filter**: Dedicated section/filter for human handoff chats to quickly resolve customer support issues.
+* **Search Navigation**: Search functionality within customer chats.
+
+#### C. Menu Tab
+* **Latest Items**: Populated with menu items from the Manduva menu Excel sheet.
+* **Simplified Employee Controls**:
+  - Remove options to add, edit, or delete menu items.
+  - Employee controls restricted **only** to toggling item availability (**ON / OFF** switch).
+
+#### D. Application Settings Tab
+* **Theme Selection**: Toggle between Dark Mode and Light Mode.
+* **Audio Notifications**: Custom order alert sound selection.
+
+---
+
+## 3. Restaurant Owner Dashboard Requirements
+
+1. **Daily Analytics**: Full per-day statistics and order metrics.
+2. **Customer Issues Tracking**: Overview of customer complaints and escalations.
+3. **Campaign Management (Broadcasts)**:
+   - Send custom broadcast announcements (e.g., *"Restaurant is open now"*, *"Ready for orders"*, *"Closing soon"*).
+   - Target default or segmented customer lists.
+   - Attach media assets (images, videos, attachments) to campaign messages.
+4. **Financial Cost Split**:
+   - Detailed revenue breakdown separating **Total Delivery Fees** vs **Order Values**.
+   - Filterable by **Day**, **Selected Week**, or **Selected Month**.
+5. **Customer Support Monitoring**:
+   - View customer chat histories and open handoff issues.
+   - Display resolution status and employee attribution (e.g., *"Resolved by [Employee Name]"*).
+6. **Customer Relationship Management (CRM)**:
+   - Filter customer database by order count, total spend, etc.
+   - Add, edit, or delete customer records.
+   - Add targeted customers directly to broadcast campaigns.
+7. **Settings & Configuration**:
+   - Payment gateway configurations.
+   - Restaurant metadata management.
+   - Emergency contact numbers (for real-time alert notifications & customer issue escalations).
