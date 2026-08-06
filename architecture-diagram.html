@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp AI Bot — Architecture & Guardrails</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(18, 26, 43, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent-cyan: #38bdf8;
+      --accent-green: #34d399;
+      --accent-purple: #c084fc;
+      --accent-amber: #fbbf24;
+      --accent-rose: #fb7185;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(192, 132, 252, 0.08) 0px, transparent 50%);
+      color: var(--text-main);
+      font-family: 'Outfit', sans-serif;
+      min-height: 100vh;
+      padding: 2.5rem 1.5rem;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    header h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ffffff 0%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    /* Flow Layout */
+    .arch-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      position: relative;
+    }
+
+    .layer {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 1rem;
+      padding: 1.25rem 1.5rem;
+      position: relative;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .layer:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .layer-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .layer-header .icon {
+      font-size: 1.3rem;
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .layer-header h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0.85rem;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0.85rem;
+    }
+
+    .module-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 0.75rem;
+      padding: 0.9rem 1rem;
+    }
+
+    .module-card h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .module-card p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* Colors per layer */
+    .guardrails { border-top: 3px solid var(--accent-rose); }
+    .guardrails .icon { color: var(--accent-rose); background: rgba(251, 113, 133, 0.1); }
+    
+    .core-modules { border-top: 3px solid var(--accent-cyan); }
+    .core-modules .icon { color: var(--accent-cyan); background: rgba(56, 189, 248, 0.1); }
+
+    .ai-engine { border-top: 3px solid var(--accent-purple); }
+    .ai-engine .icon { color: var(--accent-purple); background: rgba(192, 132, 252, 0.1); }
+
+    .infra { border-top: 3px solid var(--accent-green); }
+    .infra .icon { color: var(--accent-green); background: rgba(52, 211, 153, 0.1); }
+
+    .arrow-divider {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 1.25rem;
+      margin: -0.5rem 0;
+      opacity: 0.4;
+    }
+
+    .chain-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(192, 132, 252, 0.1);
+      border: 1px solid rgba(192, 132, 252, 0.2);
+      padding: 0.35rem 0.75rem;
+      border-radius: 0.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: #e9d5ff;
+      margin-top: 0.4rem;
+    }
+
+    footer {
+      margin-top: 2.5rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <div class="badge">Deploy1 Architecture</div>
+      <h1>WhatsApp AI Bot — System Architecture & Guardrails</h1>
+      <p>Simplified Module Flow & Security Guardrail Overview</p>
+    </header>
+
+    <div class="arch-flow">
+
+      <!-- 1. INCOMING ENTRYPOINTS -->
+      <div class="layer">
+        <div class="layer-header">
+          <div class="icon">📱</div>
+          <div>
+            <h2>1. Entry Points & Inbound Traffic</h2>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="module-card">
+            <h3>💬 Meta WhatsApp Cloud API</h3>
+            <p>Receives customer text, voice notes, location pins, and interactive button clicks via Webhooks.</p>
+          </div>
+          <div class="module-card">
+            <h3>🛠️ Admin Management Portal</h3>
+            <p>Express.js dashboard for order monitoring, kitchen dispatch, and manual rider calls.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow-divider">↓</div>
+
+      <!-- 2. GUARDRAILS & SECURITY LAYER -->
+      <div class="layer guardrails">
+        <div class="layer-header">
+          <div class="icon">🛡️</div>
+          <div>
+            <h2>2. Guardrails & Security Layer (Shield)</h2>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="module-card">
+            <h3>🔐 HMAC-SHA256 Verification</h3>
+            <p>Validates <code>x-hub-signature-256</code> on Meta webhooks to reject spoofed requests.</p>
+          </div>
+          <div class="module-card">
+            <h3>🛑 Express & User Rate Limiter</h3>
+            <p>Enforces IP rate limits & sliding window 15 msgs/3min per phone to block spam.</p>
+          </div>
+          <div class="module-card">
+            <h3>🔍 Prompt Injection Guardrail</h3>
+            <p>Scans customer text for jailbreak patterns (<i>"ignore rules"</i>) & neutralizes override attempts.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow-divider">↓</div>
+
+      <!-- 3. CORE BOT MODULES -->
+      <div class="layer core-modules">
+        <div class="layer-header">
+          <div class="icon">⚙️</div>
+          <div>
+            <h2>3. Core Application Modules</h2>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="module-card">
+            <h3>🔄 Session Manager & Turn Locks</h3>
+            <p>Manages conversation states & serializes rapid user messages into a single turn.</p>
+          </div>
+          <div class="module-card">
+            <h3>⚡ Fast-Path Pre-Parsers</h3>
+            <p>Instant regex execution for commands (<i>"menu"</i>, <i>"cart"</i>) and explicit allergy warnings.</p>
+          </div>
+          <div class="module-card">
+            <h3>🚚 Shiprocket Delivery Orchestrator</h3>
+            <p>Fetches quotes & dispatches 2-wheeler hyperlocal riders via Shiprocket Quick API.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow-divider">↓</div>
+
+      <!-- 4. MULTI-PROVIDER AI FAILOVER ENGINE -->
+      <div class="layer ai-engine">
+        <div class="layer-header">
+          <div class="icon">🧠</div>
+          <div>
+            <h2>4. Resilient AI Engine (Multi-Provider Fallback Chain)</h2>
+          </div>
+        </div>
+        <p style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+          Guarantees 99.99% LLM uptime. If the primary provider experiences an outage, it automatically fails over:
+        </p>
+        <div class="chain-pill">
+          OpenRouter ➔ Groq ➔ Cerebras ➔ Gemini
+        </div>
+      </div>
+
+      <div class="arrow-divider">↓</div>
+
+      <!-- 5. DATA & INFRASTRUCTURE -->
+      <div class="layer infra">
+        <div class="layer-header">
+          <div class="icon">🗄️</div>
+          <div>
+            <h2>5. Data & Infrastructure Layer</h2>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="module-card">
+            <h3>🐘 Supabase PostgreSQL</h3>
+            <p>Primary database storing orders, menus, customer profiles, and dispatch history.</p>
+          </div>
+          <div class="module-card">
+            <h3>⚡ Upstash Redis</h3>
+            <p>Sub-millisecond turn locking, message queues, and delivery fee rate caching.</p>
+          </div>
+          <div class="module-card">
+            <h3>🔌 MCP Delivery Server</h3>
+            <p>Model Context Protocol server exposing delivery tools for AI logistics.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <footer>
+      <p>Deploy1 Production Branch — Exter AI Architecture</p>
+    </footer>
+  </div>
+
+</body>
+</html>

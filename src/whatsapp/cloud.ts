@@ -124,7 +124,7 @@ export class CloudAdapter implements WhatsAppAdapter {
     label: string,
     throwOnError = false,
   ): Promise<void> {
-    const url = `https://graph.facebook.com/v21.0/${this.phoneNumberId}/messages`;
+    const url = `https://graph.facebook.com/v24.0/${this.phoneNumberId}/messages`;
     const resp = await fetch(url, {
       method: "POST",
       headers: {
@@ -176,17 +176,12 @@ export class CloudAdapter implements WhatsAppAdapter {
     buttonText: string,
     url: string,
   ): Promise<void> {
-    const formattedUrl =
-      url.includes("ngrok") && !url.includes("ngrok-skip-browser-warning")
-        ? `${url}${url.includes("?") ? "&" : "?"}ngrok-skip-browser-warning=true`
-        : url;
-
     await this.sendInteractive(phone, {
       type: "cta_url",
       body: { text: bodyText || "Tap below to open link in WhatsApp 👇" },
       action: {
         name: "cta_url",
-        parameters: { display_text: buttonText.slice(0, 20), url: formattedUrl },
+        parameters: { display_text: buttonText.slice(0, 20), url },
       },
     });
   }
