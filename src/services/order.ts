@@ -2,13 +2,54 @@ import { prisma } from "../db.js";
 import { notifyAdminOfEvent } from "./events.js";
 import { getExactServiceDeliveryFee } from "./delivery-fee.js";
 import { DeliveryManager } from "./delivery/delivery-manager.js";
+import { refundPayment } from "./razorpay.js";
 import { logger } from './logger.js';
+import { DEFAULT_RESTAURANT_ID } from "../tenancy.js";
+import { notify } from "./notification-center.js";
 
 export interface OrderLineInput {
   menuItemId: number;
   variantId?: number;
   qty: number;
   note?: string;
+}
+
+/**
+ * "YYYY-MM-DD" in Asia/Kolkata. This restaurant is India-only (Telugu, INR,
+ * Razorpay, Shiprocket), so the business-day boundary is IST midnight, not
+ * server-local or UTC midnight. `en-CA` is used purely because that locale's
+ * formatting convention happens to be YYYY-MM-DD; there's no other tie to Canada.
+ */
+export function getBusinessDate(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(d);
+}
+
+/**
+ * Atomically issue the next token for a restaurant's current business day.
+ *
+ * `businessDate` rolls over on its own at IST midnight (it's just today's date
+ * computed fresh each call), so a new day's counter row simply doesn't exist
+ * yet and starts at 1 — there is no cron job "resetting" anything.
+ *
+ * The INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING round-trip is the
+ * same raw-SQL idiom used by the Postgres fallback lock in
+ * conversation-lock.ts: Postgres serializes concurrent upserts on the same
+ * primary key, so this is race-free without an explicit transaction or
+ * advisory lock — two simultaneous callers for the same (restaurantId,
+ * businessDate) can never receive the same token.
+ */
+export async function getNextToken(
+  restaurantId: number,
+): Promise<{ token: number; businessDate: string }> {
+  const businessDate = getBusinessDate();
+  const rows = await prisma.$queryRaw<Array<{ lastToken: number }>>`
+    INSERT INTO "DailyTokenCounter" ("restaurantId", "businessDate", "lastToken", "updatedAt")
+    VALUES (${restaurantId}, ${businessDate}, 1, NOW())
+    ON CONFLICT ("restaurantId", "businessDate") DO UPDATE
+      SET "lastToken" = "DailyTokenCounter"."lastToken" + 1, "updatedAt" = NOW()
+    RETURNING "lastToken"
+  `;
+  return { token: rows[0].lastToken, businessDate };
 }
 
 export async function createOrder(params: {
@@ -75,6 +116,16 @@ export async function createOrder(params: {
   }
   const grandTotal = subtotal + deliveryFee;
 
+  // Issue the daily display token before creating the order. If order.create
+  // below fails for an unrelated reason (e.g. bad menu item id), this token is
+  // simply never displayed on any order — a gap, not a duplicate. That's an
+  // acceptable tradeoff: the spec requires uniqueness, not contiguity, and
+  // trying to "return" an unused token on failure would reopen the same race
+  // this is meant to close.
+  const { token: tokenNumber, businessDate } = await getNextToken(
+    params._restaurantId ?? DEFAULT_RESTAURANT_ID,
+  );
+
   const order = await prisma.order.create({
     data: {
       customerId: params.customerId,
@@ -86,6 +137,8 @@ export async function createOrder(params: {
       deliveryLat: params.deliveryLat ?? null,
       deliveryLng: params.deliveryLng ?? null,
       note: params.note,
+      tokenNumber,
+      businessDate,
       items: { create: orderItems },
       ...(params.payment
         ? {
@@ -123,6 +176,14 @@ export async function createOrder(params: {
   });
 
   await notifyAdminOfEvent("order_created", order);
+  void notify({
+    type: "order_created",
+    severity: "info",
+    title: `New order ${order.tokenNumber != null ? `#${order.tokenNumber}` : `#${order.id}`}`,
+    message: `${order.type === "delivery" ? "Delivery" : "Pickup"} order for ₹${order.total} placed.`,
+    orderId: order.id,
+    customerId: order.customerId,
+  }).catch((e) => logger.error("[notify] order_created failed:", e));
   return order;
 }
 
@@ -133,7 +194,7 @@ export async function findRecentDuplicate(
 ) {
   const since = new Date(Date.now() - withinMinutes * 60_000);
   const recent = await prisma.order.findMany({
-    where: { customerId, createdAt: { gte: since }, status: { not: "cancelled" } },
+    where: { customerId, createdAt: { gte: since }, status: { notIn: ["cancelled", "rejected"] } },
     include: { items: true },
     orderBy: { createdAt: "desc" },
   });
@@ -158,10 +219,39 @@ export async function findRecentDuplicate(
   return null;
 }
 
-export async function listOrders(_restaurantId?: number, status?: string) {
+export async function listOrders(
+  _restaurantId?: number,
+  opts?: { status?: string; search?: string; dateFilter?: "today"; sort?: "newest" | "oldest" | "highest" | "lowest" },
+) {
+  const { status, search, dateFilter, sort } = opts ?? {};
+
+  const where: Record<string, unknown> = {};
+  if (status) where.status = status;
+
+  if (search) {
+    const asId = /^\d+$/.test(search) ? parseInt(search, 10) : null;
+    where.OR = [
+      { customer: { name: { contains: search, mode: "insensitive" } } },
+      { type: { contains: search, mode: "insensitive" } },
+      ...(asId !== null ? [{ id: asId }, { tokenNumber: asId }] : []),
+    ];
+  }
+
+  if (dateFilter === "today") {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    where.createdAt = { gte: startOfToday };
+  }
+
+  const orderBy =
+    sort === "oldest" ? { createdAt: "asc" as const } :
+    sort === "highest" ? { total: "desc" as const } :
+    sort === "lowest" ? { total: "asc" as const } :
+    { createdAt: "desc" as const };
+
   return prisma.order.findMany({
-    where: status ? { status } : {},
-    orderBy: { createdAt: "desc" },
+    where,
+    orderBy,
     include: {
       items: true,
       customer: true,
@@ -222,6 +312,70 @@ export async function getOrder(id: number) {
       deliveryQuotes: true,
     },
   });
+}
+
+export async function rejectOrder(id: number, reason: string) {
+  const existing = await prisma.order.findUnique({
+    where: { id },
+    include: { payment: true },
+  });
+  if (!existing) throw new Error(`Order #${id} not found`);
+
+  await prisma.order.update({
+    where: { id },
+    data: { status: "rejected", rejectionReason: reason },
+  });
+
+  if (existing.payment?.status === "paid") {
+    const refund = await refundPayment(
+      existing.payment.reference ?? "",
+      existing.payment.amount,
+    );
+    if (refund.ok) {
+      await prisma.order.update({
+        where: { id },
+        data: {
+          refundStatus: "success",
+          refundReference: refund.refundId,
+          refundedAt: new Date(),
+        },
+      });
+      await prisma.payment.update({
+        where: { orderId: id },
+        data: { status: "refunded" },
+      });
+    } else {
+      logger.error(`[Reject Order #${id}] Refund failed:`, refund.error);
+      await prisma.order.update({
+        where: { id },
+        data: { refundStatus: "failed" },
+      });
+      // Refund failures leave money stuck between the customer and the
+      // restaurant — this must reach a human, not just sit in a log line.
+      void notify({
+        type: "refund_failed",
+        severity: "critical",
+        title: `Refund failed for order #${id}`,
+        message: `Refund of ₹${existing.payment.amount} for order #${id} failed: ${refund.error ?? "unknown error"}. Please refund manually.`,
+        orderId: id,
+        customerId: existing.customerId,
+      }).catch((e) => logger.error("[notify] refund_failed failed:", e));
+    }
+  }
+
+  const updated = await prisma.order.findUnique({
+    where: { id },
+    include: {
+      items: true,
+      customer: true,
+      payment: true,
+      deliveryDispatch: true,
+      deliveryQuotes: true,
+    },
+  });
+
+  await notifyAdminOfEvent("order_updated", updated);
+  return updated!;
 }
 
 export async function setPaymentStatus(

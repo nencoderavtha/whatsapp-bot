@@ -11,12 +11,25 @@
  * The end-to-end flows live in uat-scenarios.ts, which does need all three.
  */
 
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
 import { stageAfterCartEdit, isLocked } from "../src/whatsapp/stage.js";
 import { sliceAtIdleGap } from "../src/services/customer.js";
 import { resolveRestaurantId, DEFAULT_RESTAURANT_ID } from "../src/tenancy.js";
+import { prisma } from "../src/db.js";
+import { redis } from "../src/services/redis.js";
+
+// stage.js pulls in the shared Prisma client and (transitively) the Redis
+// client used for the customer cache, even though every test below is pure
+// (no DB, no network). Neither connection is closed by node:test on its own,
+// so without this the process never exits after the last test — it just sits
+// on an open Redis socket — which hangs `npm run test:unit` when this file
+// runs alongside others. Same fix as tests/token-counter.test.ts.
+after(async () => {
+  await prisma.$disconnect();
+  redis?.disconnect();
+});
 
 // ── Cart edits must not restart the journey ─────────────────────────────────
 

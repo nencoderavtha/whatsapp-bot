@@ -30,10 +30,11 @@
 <body class="bg-slate-950 text-slate-100 min-h-full flex flex-col font-sans selection:bg-rose-500 selection:text-white pb-24">
 
   <!-- Header -->
-  <header class="gradient-header relative overflow-hidden px-6 py-10 shadow-lg text-center flex flex-col items-center">
+  <header id="menu-header" class="gradient-header relative overflow-hidden px-6 py-10 shadow-lg text-center flex flex-col items-center">
     <div class="absolute w-[200px] h-[200px] rounded-full bg-white/5 blur-3xl -top-12 -left-12 pointer-events-none"></div>
     <div class="absolute w-[200px] h-[200px] rounded-full bg-slate-950/10 blur-3xl -bottom-12 -right-12 pointer-events-none"></div>
-    
+
+    <img id="restaurant-logo" class="hidden w-12 h-12 rounded-full object-cover border-2 border-white/20 shadow-md mb-2" alt="" />
     <h1 id="restaurant-name" class="text-3xl md:text-4xl font-extrabold tracking-tight mb-1 text-white">Loading Menu...</h1>
     <p id="restaurant-city" class="text-rose-200/90 text-sm font-medium uppercase tracking-widest flex items-center gap-1.5"></p>
   </header>
@@ -235,6 +236,24 @@
       const returnBtn = document.getElementById('return-wa-btn');
       if (returnBtn) {
         returnBtn.href = phone ? `https://wa.me/${phone}` : '#';
+      }
+
+      // Optional branding — defensive, no-op when fields are absent so
+      // restaurants without this configured see the page exactly as before.
+      const brandColor = menuData.restaurant && menuData.restaurant.brandColor;
+      if (brandColor) {
+        const headerEl = document.getElementById('menu-header');
+        if (headerEl) {
+          headerEl.style.background = `linear-gradient(135deg, ${brandColor} 0%, ${brandColor} 100%)`;
+        }
+      }
+
+      const logoUrl = menuData.restaurant && menuData.restaurant.welcomeLogoUrl;
+      const logoEl = document.getElementById('restaurant-logo');
+      if (logoUrl && logoEl) {
+        logoEl.src = logoUrl;
+        logoEl.alt = menuData.restaurant.restaurantName || '';
+        logoEl.classList.remove('hidden');
       }
     }
 

@@ -26,9 +26,22 @@ model RestaurantConfig {
   isActive                   Boolean   @default(true)
   dashboardPassword          String    @default("changeme")
   loginUsername              String?   @unique
+  employeePassword           String?
   botPaused                  Boolean   @default(false)
   pauseMessage               String?
   whatsappPhone              String?   // e.g. "919876543210"
+
+  // Notifications & Emergency Alerts
+  emergencyContacts          String?   // Comma-separated WhatsApp numbers, alerted on critical events (payment/refund/delivery failure, human handoff, escalation)
+  notificationsEnabled       Boolean   @default(true)
+  notificationChannels       String    @default("whatsapp") // Comma-separated: "whatsapp" is the only live channel today; sms/email/push are pluggable stubs
+  criticalOnlyMode           Boolean   @default(false)       // When true, only "critical" severity alerts are sent to emergency contacts
+
+  // Welcome Card (WhatsApp greeting) & Web Menu Branding
+  welcomeLogoUrl             String?   // Sent as its own image message before the welcome list
+  welcomeTagline             String?   // One-line tagline shown under the greeting
+  openingHoursText           String?   // Free-text display string, e.g. "Mon-Sun 11am-11pm"
+  brandColor                 String?   // Web menu page accent color only — WhatsApp cannot render it
   cloudPhoneNumberId         String?
   cloudToken                 String?
   
@@ -177,7 +190,9 @@ model Order {
   customer             Customer          @relation(fields: [customerId], references: [id])
   status               String            @default("pending") // pending | confirmed | preparing | ready | out_for_delivery | delivered | cancelled
   type                 String            @default("pickup")  // pickup | delivery | dine-in
-  
+  tokenNumber          Int?              // Daily-resetting display number, e.g. "Order #15" — unique only within businessDate, not globally. Null on rows created before this feature.
+  businessDate         String?           // "YYYY-MM-DD" in Asia/Kolkata — the day this order's token was issued for. Null on rows created before this feature.
+
   subtotal             Float             @default(0)
   discountTotal        Float             @default(0)
   deliveryFee          Float             @default(0)
@@ -190,6 +205,10 @@ model Order {
   deliveryLat          Float?
   deliveryLng          Float?
   note                 String?
+  rejectionReason      String?
+  refundStatus         String            @default("none") // none | pending | success | failed
+  refundReference      String?
+  refundedAt           DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   
@@ -201,6 +220,20 @@ model Order {
 
   @@index([status, createdAt])
   @@index([customerId])
+  @@index([businessDate, tokenNumber])
+}
+
+// Atomic per-day token counter — one row per (restaurantId, businessDate).
+// Incremented via a single INSERT ... ON CONFLICT ... RETURNING round-trip so
+// two simultaneous orders can never receive the same token, without needing
+// an explicit transaction or advisory lock (see src/services/order.ts).
+model DailyTokenCounter {
+  restaurantId Int
+  businessDate String   // "YYYY-MM-DD" in Asia/Kolkata
+  lastToken    Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@id([restaurantId, businessDate])
 }
 
 model OrderItem {
@@ -473,6 +506,31 @@ model ActivityLog {
   createdAt  DateTime  @default(now())
 
   @@index([createdAt])
+}
+
+/// Owner/staff-facing alert — distinct from ActivityLog, which is a bot-ops
+/// diagnostic feed (response times, tool errors) read only on the Activity tab.
+/// This is the Notification Center's backing store: read/unread state via
+/// acknowledgedAt, severity for the bell/badge/toast treatment, and enough
+/// delivery bookkeeping (status/retryCount) to log outbound emergency-contact
+/// alerts without a separate audit table.
+model Notification {
+  id             Int       @id @default(autoincrement())
+  restaurantId   Int       @default(1)
+  type           String    // "order_created" | "payment_failed" | "refund_failed" | "delivery_failed" | "human_handoff" | "order_escalation"
+  severity       String    @default("info") // "info" | "warning" | "critical"
+  title          String
+  message        String
+  orderId        Int?
+  customerId     Int?
+  channel        String?   // "whatsapp" | "sms" | "email" | "push" — channel used for the emergency-contact send attempt, if any
+  deliveryStatus String    @default("pending") // pending | sent | failed | skipped (skipped = notifications disabled / no contacts configured)
+  retryCount     Int       @default(0)
+  acknowledgedAt DateTime? // null = unread
+  createdAt      DateTime  @default(now())
+
+  @@index([restaurantId, createdAt])
+  @@index([acknowledgedAt])
 }
 
 model PromptTemplate {

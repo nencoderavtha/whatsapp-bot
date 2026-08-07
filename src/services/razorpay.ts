@@ -91,6 +91,25 @@ export async function createPaymentLink(params: {
   }
 }
 
+export async function refundPayment(
+  paymentReference: string,
+  amount: number,
+  restaurantId?: number,
+): Promise<{ ok: boolean; refundId?: string; error?: string }> {
+  const client = await getClient(restaurantId);
+  if (!client) return { ok: false, error: "Razorpay not configured" };
+
+  try {
+    const result = await client.payments.refund(paymentReference, {
+      amount: Math.round(amount * 100),
+    });
+    return { ok: true, refundId: (result as any).id };
+  } catch (e: any) {
+    logger.error("[Razorpay] refundPayment failed —", rzpError(e));
+    return { ok: false, error: rzpError(e) };
+  }
+}
+
 export async function verifyWebhookSignature(
   rawBody: string,
   signature: string,

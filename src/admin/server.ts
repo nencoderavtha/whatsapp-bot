@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,12 +9,14 @@ import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { botSessionManager } from "../whatsapp/session-manager.js";
 import { getMenu } from "../services/menu.js";
-import { createOrder, getOrder, listOrders, setOrderStatus, setPaymentStatus } from "../services/order.js";
+import { createOrder, getOrder, listOrders, rejectOrder, setOrderStatus, setPaymentStatus } from "../services/order.js";
+import { getOrdersAnalytics, InvalidRangeError } from "../services/analytics.js";
 import {
   orderConfirmationMsg,
   orderStatusMsg,
   ownerNewOrderMsg,
   deliveryStatusMsg,
+  refundStatusMsg,
 } from "../services/notifications.js";
 import {
   authMiddleware,
@@ -24,6 +26,7 @@ import {
   founderLoginHandler,
   founderLogoutHandler,
   meHandler,
+  requireOwner,
 } from "./auth.js";
 import { getOrCreateCustomer, logMessage } from "../services/customer.js";
 import { cartSummaryText, renderPaymentFailed } from "../whatsapp/renderers.js";
@@ -44,6 +47,7 @@ import { ShiprocketDeliveryService } from "../services/delivery/shiprocket.js";
 import { createExpressRateLimiter } from "../services/rate-limiter.js";
 import { inspectContentSafety } from "../services/content-safety.js";
 import { redis } from "../services/redis.js";
+import { notify } from "../services/notification-center.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -137,6 +141,18 @@ export function buildAdminApp() {
               logger.error("[Razorpay] Could not tell the customer payment failed:", e);
             }
           }
+
+          // The customer is told; the owner/emergency contacts were not — a
+          // stuck cart with a dead payment link is exactly the kind of thing
+          // staff need to know about right away.
+          void notify({
+            type: "payment_failed",
+            severity: "critical",
+            title: "Payment link failed",
+            message: `Payment link ${event.event === "payment_link.expired" ? "expired" : "was cancelled"} for ${failedCustomer?.phone ?? `customer #${customerId}`}. Their cart is stuck awaiting payment.`,
+            customerId,
+            restaurantId,
+          }).catch((e) => logger.error("[notify] payment_failed failed:", e));
         }
 
         res.json({ ok: true });
@@ -204,7 +220,10 @@ export function buildAdminApp() {
     },
   );
 
-  app.use(express.json());
+  // Default 100kb is fine for everything except POST /api/upload/image, whose
+  // base64-encoded data: URI body can run to ~6.7MB for a 5MB image — bump
+  // the global limit rather than special-casing one route's body parser.
+  app.use(express.json({ limit: "10mb" }));
   app.use(express.static(path.join(__dirname, "public")));
 
   app.get("/menu", (_req, res) => {
@@ -214,7 +233,7 @@ export function buildAdminApp() {
   app.get("/public/api/menu/:restaurantId", asyncRoute(async (_req, res) => {
     const restaurant = await prisma.restaurantConfig.findUnique({
       where: { id: DEFAULT_RESTAURANT_ID },
-      select: { id: true, restaurantName: true, restaurantCity: true, whatsappPhone: true },
+      select: { id: true, restaurantName: true, restaurantCity: true, whatsappPhone: true, brandColor: true, welcomeLogoUrl: true },
     });
     if (!restaurant) {
       res.status(404).json({ error: "Restaurant not found" });
@@ -716,10 +735,21 @@ export function buildAdminApp() {
     });
 
     if (internalStatus === "DELIVERED") {
-      await prisma.order.update({
-        where: { id: dispatch.orderId },
-        data: { status: "delivered" }
-      });
+      await setOrderStatus(dispatch.orderId, "delivered");
+    }
+
+    if (internalStatus === "CANCELLED") {
+      // deliveryStatusMsg has no template for CANCELLED, so the customer gets
+      // no message here today — but staff still need to know a delivery died
+      // in flight so they can follow up (redeliver, refund, call the customer).
+      void notify({
+        type: "delivery_failed",
+        severity: "critical",
+        title: `Delivery cancelled for order #${dispatch.orderId}`,
+        message: `Shiprocket reported the delivery for order #${dispatch.orderId} as ${statusUpper}. Customer: ${dispatch.order?.customer?.phone ?? "unknown"}.`,
+        orderId: dispatch.orderId,
+        customerId: dispatch.order?.customer?.id,
+      }).catch((e) => logger.error("[notify] delivery_failed failed:", e));
     }
 
     const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
@@ -829,7 +859,7 @@ export function buildAdminApp() {
     }));
   });
 
-  api.post("/categories", async (req, res) => {
+  api.post("/categories", requireOwner, async (req, res) => {
     const { name, sortOrder } = req.body;
     const category = await prisma.category.create({
       data: { name, sortOrder: sortOrder ?? 0 },
@@ -838,7 +868,7 @@ export function buildAdminApp() {
     res.json(category);
   });
 
-  api.delete("/categories/:id", async (req, res) => {
+  api.delete("/categories/:id", requireOwner, async (req, res) => {
     const id = Number(req.params.id);
     try {
       await prisma.category.delete({ where: { id } });
@@ -857,7 +887,7 @@ export function buildAdminApp() {
     res.json(await getMenu(1, { includeUnavailable: true }));
   });
 
-  api.post("/items", async (req, res) => {
+  api.post("/items", requireOwner, async (req, res) => {
     const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder, imageUrl } = req.body;
     const item = await prisma.menuItem.create({
       data: {
@@ -878,7 +908,7 @@ export function buildAdminApp() {
     res.json(item);
   });
 
-  api.put("/items/:id", async (req, res) => {
+  api.put("/items/:id", requireOwner, async (req, res) => {
     const { name, description, price, categoryId, isVeg, spiceLevel, available, stockCount, pieceInfo, sortOrder, imageUrl } = req.body;
     const id = Number(req.params.id);
     const data: Record<string, unknown> = {};
@@ -898,7 +928,16 @@ export function buildAdminApp() {
     res.json(item);
   });
 
-  api.delete("/items/:id", async (req, res) => {
+  // Open to both roles — lets an employee toggle availability without full item-edit rights.
+  api.put("/items/:id/availability", async (req, res) => {
+    const id = Number(req.params.id);
+    const { available } = req.body;
+    const item = await prisma.menuItem.update({ where: { id }, data: { available: !!available } });
+    await notifyAdminOfEvent("menu_updated", { type: "item_updated", item });
+    res.json(item);
+  });
+
+  api.delete("/items/:id", requireOwner, async (req, res) => {
     const id = Number(req.params.id);
     try {
       await prisma.menuItem.delete({ where: { id } });
@@ -920,7 +959,7 @@ export function buildAdminApp() {
     }));
   });
 
-  api.post("/items/:id/variants", async (req, res) => {
+  api.post("/items/:id/variants", requireOwner, async (req, res) => {
     const { name, price, available, sortOrder } = req.body;
     const variant = await prisma.menuItemVariant.create({
       data: {
@@ -935,7 +974,7 @@ export function buildAdminApp() {
     res.json(variant);
   });
 
-  api.put("/variants/:id", async (req, res) => {
+  api.put("/variants/:id", requireOwner, async (req, res) => {
     const { name, price, available, sortOrder } = req.body;
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
@@ -950,16 +989,101 @@ export function buildAdminApp() {
     res.json(variant);
   });
 
-  api.delete("/variants/:id", async (req, res) => {
+  api.delete("/variants/:id", requireOwner, async (req, res) => {
     const id = Number(req.params.id);
     await prisma.menuItemVariant.delete({ where: { id } });
     await notifyAdminOfEvent("menu_updated", { type: "variant_deleted", id });
     res.json({ ok: true });
   });
 
-  api.get("/orders", async (req, res) => {
-    res.json(await listOrders(req.restaurantId, req.query.status as string | undefined));
+  // ── Image upload (dish photos) ───────────────────────────────────────────
+  // Owner-only. Body: { dataUrl: "data:image/<jpeg|png|webp>;base64,<...>" }.
+  // Writes the decoded bytes under public/dish-images/ (already served
+  // statically via express.static above) and returns its public URL.
+  api.post("/upload/image", requireOwner, async (req, res) => {
+    try {
+      const { dataUrl } = req.body as { dataUrl?: string };
+      const match = typeof dataUrl === "string"
+        ? dataUrl.match(/^data:image\/(jpeg|png|webp);base64,(.+)$/)
+        : null;
+      if (!match) {
+        res.status(400).json({ error: "dataUrl must be a base64 image/jpeg, image/png, or image/webp data URI" });
+        return;
+      }
+      const [, mimeSubtype, base64Data] = match;
+      const buffer = Buffer.from(base64Data, "base64");
+      const MAX_BYTES = 5 * 1024 * 1024;
+      if (buffer.length > MAX_BYTES) {
+        res.status(413).json({ error: "Image exceeds 5MB limit" });
+        return;
+      }
+      const ext = mimeSubtype === "jpeg" ? "jpg" : mimeSubtype;
+      const filename = `${randomUUID()}.${ext}`;
+      const destDir = path.join(__dirname, "public", "dish-images");
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.writeFileSync(path.join(destDir, filename), buffer);
+      res.json({ url: `/dish-images/${filename}` });
+    } catch (e: any) {
+      logger.error("[Upload Image] Failed:", e);
+      res.status(400).json({ error: e?.message ?? "Invalid image payload" });
+    }
   });
+
+  api.get("/orders", async (req, res) => {
+    res.json(await listOrders(req.restaurantId, {
+      status: req.query.status as string | undefined,
+      search: req.query.search as string | undefined,
+      dateFilter: req.query.dateFilter as "today" | undefined,
+      sort: req.query.sort as "newest" | "oldest" | "highest" | "lowest" | undefined,
+    }));
+  });
+
+  api.get("/analytics/orders", requireOwner, asyncRoute(async (req, res) => {
+    try {
+      res.json(await getOrdersAnalytics({
+        range: req.query.range as string | undefined,
+        from: req.query.from as string | undefined,
+        to: req.query.to as string | undefined,
+      }));
+    } catch (e) {
+      if (e instanceof InvalidRangeError) { res.status(400).json({ error: e.message }); return; }
+      throw e;
+    }
+  }));
+
+  api.get("/orders/:id", asyncRoute(async (req, res) => {
+    const order = await getOrder(Number(req.params.id));
+    if (!order) { res.status(404).json({ error: "order not found" }); return; }
+    res.json(order);
+  }));
+
+  api.post("/orders/:id/reject", asyncRoute(async (req, res) => {
+    const orderId = Number(req.params.id);
+    const reason = req.body?.reason;
+    if (!reason || typeof reason !== "string" || !reason.trim()) {
+      res.status(400).json({ error: "reason is required" });
+      return;
+    }
+
+    const order = await rejectOrder(orderId, reason.trim());
+    res.json(order);
+
+    try {
+      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
+      const restaurantName = cfg?.restaurantName ?? "";
+      const session = botSessionManager.getSession(DEFAULT_RESTAURANT_ID);
+      if (session) {
+        const msg = orderStatusMsg(order, "rejected", restaurantName);
+        if (msg) await session.sendText(order.customer.phone, msg);
+        if (order.refundStatus === "success" || order.refundStatus === "failed") {
+          const refundMsg = refundStatusMsg(order);
+          if (refundMsg) await session.sendText(order.customer.phone, refundMsg);
+        }
+      }
+    } catch (e) {
+      logger.error("[Reject Notify] Failed:", e);
+    }
+  }));
 
   api.put("/orders/:id/status", async (req, res) => {
     const orderId = Number(req.params.id);
@@ -1037,7 +1161,7 @@ export function buildAdminApp() {
     res.json(payments);
   }));
 
-  api.put("/bot/pause", async (req, res) => {
+  api.put("/bot/pause", requireOwner, async (req, res) => {
     const { paused, message } = req.body;
     const cfg = await prisma.restaurantConfig.update({
       where: { id: DEFAULT_RESTAURANT_ID },
@@ -1053,13 +1177,15 @@ export function buildAdminApp() {
     res.json(await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } }) ?? {});
   });
 
-  api.put("/config", async (req, res) => {
+  api.put("/config", requireOwner, async (req, res) => {
     const {
       restaurantName, restaurantCity, personaName, ownerNumbers,
-      dashboardPassword, requiresPaymentBeforeOrder, upiId, paymentMethods,
+      dashboardPassword, employeePassword, requiresPaymentBeforeOrder, upiId, paymentMethods,
       razorpayEnabled, razorpayKeyId, razorpayKeySecret, razorpayWebhookSecret,
       botPaused, pauseMessage, whatsappPhone,
       cloudPhoneNumberId, cloudToken,
+      welcomeLogoUrl, welcomeTagline, openingHoursText, brandColor,
+      emergencyContacts, notificationsEnabled, notificationChannels, criticalOnlyMode,
     } = req.body;
 
     const data: Record<string, unknown> = {};
@@ -1068,6 +1194,9 @@ export function buildAdminApp() {
     if (personaName !== undefined) data.personaName = personaName || null;
     if (ownerNumbers !== undefined) data.ownerNumbers = ownerNumbers;
     if (dashboardPassword !== undefined) data.dashboardPassword = dashboardPassword;
+    // Employee dashboard login — a second shared credential per restaurant,
+    // parallel to dashboardPassword. Empty string clears it (disables employee login).
+    if (employeePassword !== undefined) data.employeePassword = employeePassword || null;
     if (requiresPaymentBeforeOrder !== undefined) data.requiresPaymentBeforeOrder = !!requiresPaymentBeforeOrder;
     if (upiId !== undefined) data.upiId = upiId;
     if (paymentMethods !== undefined) data.paymentMethods = paymentMethods;
@@ -1080,6 +1209,15 @@ export function buildAdminApp() {
     if (whatsappPhone !== undefined) data.whatsappPhone = whatsappPhone || null;
     if (cloudPhoneNumberId !== undefined) data.cloudPhoneNumberId = cloudPhoneNumberId || null;
     if (cloudToken !== undefined && cloudToken) data.cloudToken = cloudToken;
+    if (welcomeLogoUrl !== undefined) data.welcomeLogoUrl = welcomeLogoUrl || null;
+    if (welcomeTagline !== undefined) data.welcomeTagline = welcomeTagline || null;
+    if (openingHoursText !== undefined) data.openingHoursText = openingHoursText || null;
+    if (brandColor !== undefined) data.brandColor = brandColor || null;
+    // Notification center settings — owner-only, mirrors ownerNumbers exactly.
+    if (emergencyContacts !== undefined) data.emergencyContacts = emergencyContacts || null;
+    if (notificationsEnabled !== undefined) data.notificationsEnabled = !!notificationsEnabled;
+    if (notificationChannels !== undefined) data.notificationChannels = notificationChannels || "whatsapp";
+    if (criticalOnlyMode !== undefined) data.criticalOnlyMode = !!criticalOnlyMode;
 
     const updated = await prisma.restaurantConfig.update({ where: { id: DEFAULT_RESTAURANT_ID }, data });
     await notifyAdminOfEvent("config_updated", { restaurantId: DEFAULT_RESTAURANT_ID });
@@ -1090,7 +1228,7 @@ export function buildAdminApp() {
     res.json(await prisma.promptTemplate.findFirst({ where: { id: 1 } }) ?? {});
   });
 
-  api.put("/prompt", async (req, res) => {
+  api.put("/prompt", requireOwner, async (req, res) => {
     const { content } = req.body;
     const existing = await prisma.promptTemplate.findFirst({ where: { id: 1 } });
     const result = existing
@@ -1106,7 +1244,7 @@ export function buildAdminApp() {
     }));
   });
 
-  api.put("/tools/:id", async (req, res) => {
+  api.put("/tools/:id", requireOwner, async (req, res) => {
     const id = Number(req.params.id);
     const { isEnabled, description, parametersSchema } = req.body;
     const data: Record<string, unknown> = {};
@@ -1239,7 +1377,7 @@ export function buildAdminApp() {
     }));
   });
 
-  api.put("/customers/:id", async (req, res) => {
+  api.put("/customers/:id", requireOwner, async (req, res) => {
     const { name, address, notes } = req.body;
     const customer = await prisma.customer.update({
       where: { id: Number(req.params.id) },
@@ -1299,6 +1437,61 @@ export function buildAdminApp() {
       provider: "cloud",
     });
   });
+
+  // Owner-only. Tears down and re-establishes this restaurant's WhatsApp bot
+  // session. TODO: the running provider is Meta Cloud API (see
+  // BotSessionManager), which is stateless — there's no local auth_session/
+  // folder to wipe like a Baileys-based provider would have. If a Baileys
+  // adapter is ever added, clear its auth_session/<restaurantId> directory
+  // here too before restarting so a fresh QR is actually forced.
+  api.post("/session/reset", requireOwner, async (req, res) => {
+    try {
+      const restaurantId = req.restaurantId;
+      const cfg = await prisma.restaurantConfig.findUnique({ where: { id: restaurantId } });
+      if (!cfg) {
+        res.status(404).json({ error: "restaurant not found" });
+        return;
+      }
+      botSessionManager.stopSession(restaurantId);
+      await botSessionManager.startSession(restaurantId, cfg.restaurantName);
+      res.json({ ok: true });
+    } catch (e: any) {
+      logger.error("[Session Reset] Failed:", e);
+      res.status(500).json({ error: e?.message ?? "Failed to reset session" });
+    }
+  });
+
+  // ── Notification center ──────────────────────────────────────────────
+  // Open to both owner and employee roles (authMiddleware, already applied
+  // router-wide) — both need visibility into failures/handoffs for Orders
+  // and Chats work.
+  api.get("/notifications", asyncRoute(async (req, res) => {
+    const unreadOnly = req.query.unread === "true" || req.query.unread === "1";
+    const rows = await prisma.notification.findMany({
+      where: unreadOnly ? { acknowledgedAt: null } : undefined,
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    res.json(rows);
+  }));
+
+  api.get("/notifications/unread-count", asyncRoute(async (_req, res) => {
+    const count = await prisma.notification.count({ where: { acknowledgedAt: null } });
+    res.json({ count });
+  }));
+
+  api.post("/notifications/:id/ack", asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "invalid id" });
+      return;
+    }
+    const row = await prisma.notification.update({
+      where: { id },
+      data: { acknowledgedAt: new Date() },
+    });
+    res.json(row);
+  }));
 
   app.use("/api", api);
 

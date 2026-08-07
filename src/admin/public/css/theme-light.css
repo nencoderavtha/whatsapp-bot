@@ -1,0 +1,225 @@
+/*
+ * White / Light theme overrides.
+ *
+ * Every JS render template in this app (menu.js, orders.js, livechat.js,
+ * customers.js, payments.js, activity.js, notifications.js, index.html …)
+ * emits the exact same hardcoded Tailwind utility class names (bg-slate-900,
+ * text-slate-100, border-slate-800, etc). Rather than touching every render
+ * function, this stylesheet re-points those *exact* class names to light
+ * colors, but only when the ancestor <html> carries a `.light` class.
+ *
+ * A selector like `html.light .bg-slate-900` has two classes worth of
+ * specificity vs Tailwind's single-class `.bg-slate-900` rule, so it wins
+ * without needing `!important`, and applies retroactively to any markup
+ * injected by any JS file, automatically, forever — no JS file edits needed.
+ *
+ * This file must be <link>ed AFTER the inline <style> block in index.html's
+ * <head> so it also wins over the hand-written .glass / scrollbar rules.
+ */
+
+/* ───────────────────────── Page base ───────────────────────── */
+
+html.light body { background-color: #ffffff; color: #0f172a; }
+
+/* ─────────────────── Backgrounds — neutral (slate) ─────────────────── */
+/* Layering model: page = white, card = slate-50-ish, nested panel = slate-100/200 */
+
+html.light .bg-slate-950 { background-color: #ffffff; }
+html.light .bg-slate-950\/20 { background-color: #f1f5f9; }
+html.light .bg-slate-950\/40 { background-color: #f1f5f9; }
+html.light .bg-slate-950\/60 { background-color: #e2e8f0; }
+/* bg-slate-950/80 is used exclusively as the fixed full-screen modal scrim
+   (bg-slate-950/80 backdrop-blur-sm) — intentionally left dark/translucent
+   in both themes, standard modal-dimming UX. */
+
+html.light .bg-slate-900,
+html.light .bg-slate-900\/20,
+html.light .bg-slate-900\/30,
+html.light .bg-slate-900\/40,
+html.light .bg-slate-900\/50,
+html.light .bg-slate-900\/60,
+html.light .bg-slate-900\/70,
+html.light .bg-slate-900\/80,
+html.light .bg-slate-900\/90 { background-color: #f8fafc; }
+
+html.light .bg-slate-800,
+html.light .bg-slate-800\/30,
+html.light .bg-slate-800\/40,
+html.light .bg-slate-800\/60 { background-color: #e2e8f0; }
+
+html.light .bg-slate-700 { background-color: #cbd5e1; }
+html.light .bg-slate-500 { background-color: #94a3b8; }
+html.light .bg-slate-500\/10 { background-color: rgba(100,116,139,.12); }
+
+/* bg-slate-50 / bg-white are already light in the dark theme (genuinely-white
+   chips like the QR box) — no override needed, they already fit. */
+
+/* ─────────────────────── Text — neutral (slate) ─────────────────────── */
+
+html.light .text-slate-100 { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #475569; }
+html.light .text-slate-500 { color: #64748b; }
+html.light .text-slate-600 { color: #94a3b8; }
+html.light .text-slate-700 { color: #cbd5e1; }
+/* text-slate-900 is already dark-on-purpose (used inside genuinely-white
+   chips) — no override needed. */
+
+html.light .placeholder\:text-slate-600::placeholder { color: #94a3b8; }
+
+/* ────────────────────────── Borders — neutral ────────────────────────── */
+
+html.light .border-slate-950 { border-color: #ffffff; }
+html.light .border-slate-900,
+html.light .border-slate-900\/60,
+html.light .border-slate-900\/80 { border-color: #e2e8f0; }
+html.light .border-slate-800,
+html.light .border-slate-800\/80 { border-color: #e2e8f0; }
+html.light .border-slate-700 { border-color: #cbd5e1; }
+html.light .border-slate-500\/20 { border-color: rgba(100,116,139,.25); }
+/* border-slate-200 already used only on a genuinely-white chip — untouched. */
+
+html.light .divide-slate-900\/60 > :not([hidden]) ~ :not([hidden]) { border-color: #e2e8f0; }
+
+/* ──────────────────────── Glass / decorative chrome ──────────────────────── */
+
+html.light .glass {
+  background: rgba(255,255,255,.85);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(15,23,42,.06);
+}
+
+html.light::-webkit-scrollbar-track { background: rgba(15,23,42,.04); }
+html.light::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); }
+html.light::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,.4); }
+
+/* Soft shadows for card-like containers instead of the dark theme's
+   near-invisible borders-on-dark look. */
+html.light .rounded-2xl,
+html.light .rounded-3xl,
+html.light .rounded-xl,
+html.light .glass {
+  box-shadow: 0 1px 3px rgba(15,23,42,.07), 0 1px 2px rgba(15,23,42,.04);
+}
+/* Don't shadow small inline chips/badges/avatars — keep it to actual card
+   containers, not every rounded pill. */
+html.light span.rounded-2xl,
+html.light span.rounded-xl,
+html.light span.rounded-3xl,
+html.light button.rounded-2xl,
+html.light button.rounded-xl,
+html.light button.rounded-3xl {
+  box-shadow: none;
+}
+
+/* ──────────────────── Status badges / chips — colored ──────────────────── */
+/* Pattern used throughout (utils.js, orders.js, activity.js, menu.js, …):
+   bg-COLOR-950(/alpha) + text-COLOR-400/300 + border-COLOR-500/alpha  — a
+   dark, saturated chip. In light mode we flatten the bg to a solid pastel
+   and darken the text so it stays readable on white/pastel backgrounds. */
+
+html.light .bg-amber-950,
+html.light .bg-amber-950\/10,
+html.light .bg-amber-950\/20,
+html.light .bg-amber-950\/40,
+html.light .bg-amber-950\/50,
+html.light .bg-amber-950\/70 { background-color: #fef3c7; }
+html.light .border-amber-900\/10,
+html.light .border-amber-900\/30,
+html.light .border-amber-900\/40 { border-color: #fde68a; }
+
+html.light .bg-rose-950,
+html.light .bg-rose-950\/20,
+html.light .bg-rose-950\/30,
+html.light .bg-rose-950\/40,
+html.light .bg-rose-950\/60,
+html.light .bg-rose-950\/70 { background-color: #ffe4e6; }
+html.light .border-rose-900\/30,
+html.light .border-rose-900\/40,
+html.light .border-rose-800\/40 { border-color: #fecdd3; }
+
+html.light .bg-red-950 { background-color: #fee2e2; }
+html.light .border-red-900\/40 { border-color: #fecaca; }
+
+html.light .bg-green-950 { background-color: #dcfce7; }
+html.light .border-green-900\/40 { border-color: #bbf7d0; }
+
+html.light .bg-emerald-950,
+html.light .bg-emerald-950\/40,
+html.light .bg-emerald-950\/60,
+html.light .bg-emerald-950\/70 { background-color: #d1fae5; }
+
+html.light .bg-blue-950\/40,
+html.light .bg-blue-950\/70 { background-color: #dbeafe; }
+html.light .bg-indigo-950\/40,
+html.light .bg-indigo-950\/70 { background-color: #e0e7ff; }
+html.light .bg-purple-950\/40,
+html.light .bg-purple-950\/70 { background-color: #f3e8ff; }
+html.light .bg-violet-950 { background-color: #ede9fe; }
+
+/* Darken the light/mid-toned text colors that were designed to sit on dark
+   chips, so they stay legible on the light pastel chips above. */
+html.light .text-amber-300,
+html.light .text-amber-400,
+html.light .text-amber-500 { color: #b45309; }
+html.light .text-amber-400\/80 { color: rgba(180,83,9,.85); }
+html.light .text-blue-400 { color: #1d4ed8; }
+html.light .text-emerald-400 { color: #047857; }
+html.light .text-green-400 { color: #15803d; }
+html.light .text-indigo-400 { color: #4338ca; }
+html.light .text-purple-400 { color: #7e22ce; }
+html.light .text-red-300,
+html.light .text-red-400 { color: #b91c1c; }
+html.light .text-rose-300,
+html.light .text-rose-400,
+html.light .text-rose-500 { color: #be123c; }
+html.light .text-sky-400 { color: #0369a1; }
+html.light .text-violet-300,
+html.light .text-violet-400 { color: #6d28d9; }
+
+/* Translucent bg-COLOR-500/NN "soft wash" chips (utils.js status pills,
+   notifications.js, etc.) already read fine as a pale tint on white — left
+   as-is. Solid bg-COLOR-500/600 buttons with text-white also left as-is;
+   they're already legible regardless of theme. */
+
+/* ─────────────── SVG fill text (analytics.js chart labels) ─────────────── */
+/* analytics.js draws chart axis ticks / legend / donut-center numbers as raw
+   SVG <text> using Tailwind's fill-* utilities (SVG text is painted via the
+   `fill` property, not `color`, so the text-slate-* overrides above don't
+   reach it). These are the same three steps already used for on-chart text
+   elsewhere in the app (text-slate-100/400/500), just mirrored onto `fill`
+   so chart text flips correctly in light mode too. Genuinely new coverage —
+   this file has no existing fill-* rules — not a remap of anything above. */
+html.light .fill-slate-100 { fill: #0f172a; }
+html.light .fill-slate-400 { fill: #475569; }
+html.light .fill-slate-500 { fill: #64748b; }
+
+/* ──────────────── Orders analytics (analytics.js) — chart chrome ──────────────── */
+/* Not a Tailwind utility class — genuinely new, so it lives here rather than
+   being remapped from an existing rule. */
+
+/* SVG marker "surface ring" (see marks-and-anatomy: dots/end-markers carry a
+   ring in the surface color so they stay legible where they cross a line).
+   The revenue-trend hover dot uses this — stroke matches the card surface. */
+.analytics-dot-ring { stroke: #0f172a; }
+html.light .analytics-dot-ring { stroke: #ffffff; }
+
+/* Analytics cards render crisp white against the page in light mode — one
+   step lighter than the app-wide card tone (`bg-slate-900` → `#f8fafc`
+   elsewhere) — to match the reference dashboard's "white card on tinted
+   page" look for this section specifically, without touching the shared
+   `bg-slate-900` rule every other tab in the app also relies on. Dark mode
+   is unchanged (same hex as `bg-slate-900`/`border-slate-800`). */
+.analytics-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; }
+html.light .analytics-card {
+  background: #ffffff;
+  border-color: #e7eaf3;
+  box-shadow: 0 1px 3px rgba(15,23,42,.08), 0 1px 2px rgba(15,23,42,.04);
+}
+
+/* Native <input type="date"> renders a dark calendar-picker icon by default,
+   which is invisible on this app's dark surfaces — flip it per theme. */
+.analytics-date-input { color-scheme: dark; }
+html.light .analytics-date-input { color-scheme: light; }

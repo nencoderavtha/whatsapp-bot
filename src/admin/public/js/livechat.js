@@ -48,10 +48,18 @@ export async function loadChatThreads() {
   }).join("");
 }
 
-export async function selectConversation(id) {
+// `customerHint` is an optional full/partial customer object (e.g. the
+// `customer` sub-object already fetched with an order) used when jumping in
+// from elsewhere (Orders → Open Chat, notifications, activity). Without it,
+// jumping straight to a customer's thread before the thread list has ever
+// loaded this session would silently no-op — `activeConversations` starts
+// empty and `loadChatThreads()` below hasn't resolved yet, so the normal
+// cache lookup fails. The hint carries enough (id/name/phone/address/notes/
+// humanRequestedAt) to render the header + profile immediately regardless.
+export async function selectConversation(id, customerHint = null) {
   selectedCustomerId = id;
   loadChatThreads();
-  const c = activeConversations.find(x => x.id === id);
+  const c = activeConversations.find(x => x.id === id) || customerHint;
   if (!c) return;
   loadCustomerProfile(c);
   // Mobile: switch from threads list to chat panel

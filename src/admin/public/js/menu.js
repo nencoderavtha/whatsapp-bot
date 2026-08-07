@@ -1,33 +1,212 @@
 import { api } from "./api.js";
 import { showToast, esc } from "./utils.js";
+import { getRole } from "./app.js";
+
+// ── Exports (for app.js to import + re-expose on window for inline onclick/
+// onchange/oninput handlers in the dynamically-generated HTML below) ────────
+//   loadMenu, onMenuSearchInput, addCategory, delCategory,
+//   openAddItemModal, closeAddItemModal, saveAddItem,
+//   openEditModal, closeEditModal, saveEditItem,
+//   toggleItemAvailability,
+//   promptDeleteItem, closeDeleteConfirmModal, confirmDeleteItem,
+//   onImageFileSelected, removeImage,
+//   loadVariants, addVariant, updateVariant, delVariant,
+//   togglePublish
+// ─────────────────────────────────────────────────────────────────────────
 
 let editingItemId = null;
+let pendingDeleteId = null;
+let categoriesCache = [];
+
+const GRID_CLS = "grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4";
+const PLACEHOLDER_HTML = '<span class="text-3xl">🍽️</span>';
+
+// ── Load + render ────────────────────────────────────────────────────────
 
 export async function loadMenu() {
-  const [cats, menu, cfg] = await Promise.all([api("/categories"), api("/menu"), api("/config")]);
-  const catSel = document.getElementById("itCat");
-  catSel.innerHTML = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const isEmployee = getRole() === "employee";
+  // Add/Edit/Delete controls are owner-only — hide the whole panel/button for
+  // employees rather than merely disabling it.
+  document.getElementById("menu-owner-controls")?.classList.toggle("hidden", isEmployee);
+  document.getElementById("menu-add-btn")?.classList.toggle("hidden", isEmployee);
 
-  renderPublishBar(cfg);
+  showSkeleton();
 
+  try {
+    if (isEmployee) {
+      const menu = await api("/menu");
+      renderMenuGrid(menu, true);
+    } else {
+      const [cats, menu, cfg] = await Promise.all([api("/categories"), api("/menu"), api("/config")]);
+      categoriesCache = cats;
+      populateCategorySelect("add-cat", cats);
+      populateCategorySelect("edit-cat", cats);
+      renderPublishBar(cfg);
+      renderMenuGrid(menu, false);
+    }
+  } catch (e) {
+    hideSkeleton();
+    document.getElementById("menu").innerHTML = '<div class="p-8 text-center text-slate-500 text-xs">Failed to load menu.</div>';
+  }
+}
+
+function showSkeleton() {
+  document.getElementById("menu-skeleton")?.classList.remove("hidden");
+  document.getElementById("menu-empty")?.classList.add("hidden");
   const el = document.getElementById("menu");
-  if (!menu.length) {
-    el.innerHTML = '<div class="p-8 text-center text-slate-500 text-xs">No menu items.</div>';
+  if (el) el.innerHTML = "";
+}
+
+function hideSkeleton() {
+  document.getElementById("menu-skeleton")?.classList.add("hidden");
+}
+
+function renderMenuGrid(menu, isEmployee) {
+  hideSkeleton();
+  const el = document.getElementById("menu");
+  const emptyEl = document.getElementById("menu-empty");
+  const totalItems = menu.reduce((sum, cat) => sum + cat.items.length, 0);
+
+  if (!totalItems) {
+    el.innerHTML = "";
+    emptyEl?.classList.remove("hidden");
     return;
   }
+  emptyEl?.classList.add("hidden");
 
-  el.innerHTML = menu.map(cat => `
-    <div class="glass rounded-2xl p-5 border border-slate-900">
-      <div class="flex items-center justify-between mb-4 border-b border-slate-900 pb-2.5">
-        <h3 class="font-bold text-sm text-slate-200">${esc(cat.name)}</h3>
-        <button onclick="window.delCategory(${cat.id})" class="text-[10px] text-rose-500 font-bold uppercase hover:underline">Delete Category</button>
-      </div>
-      <ul class="divide-y divide-slate-900/60">
-        ${cat.items.map(item => renderItem(item)).join("")}
-      </ul>
-    </div>
-  `).join("");
+  el.innerHTML = menu.map(cat => categorySection(cat, isEmployee)).join("");
+
+  // Re-apply an active search filter after a re-render (e.g. after save/delete).
+  const searchVal = document.getElementById("menu-search")?.value || "";
+  if (searchVal) onMenuSearchInput(searchVal);
 }
+
+function categorySection(cat, isEmployee) {
+  const cards = cat.items.map(i => itemCard(i, isEmployee)).join("");
+  const deleteBtn = isEmployee ? "" : `<button onclick="window.delCategory(${cat.id})" class="text-[10px] text-slate-600 hover:text-rose-500 font-bold uppercase tracking-wide transition-colors">Delete Category</button>`;
+  return `
+    <div class="menu-cat-section" data-cat-name="${esc(cat.name.toLowerCase())}">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-sm text-slate-300">${esc(cat.name)}</h3>
+        ${deleteBtn}
+      </div>
+      <div class="${GRID_CLS}">
+        ${cards || '<p class="text-xs text-slate-600 italic col-span-full">No items in this category yet.</p>'}
+      </div>
+    </div>`;
+}
+
+function cardImageHtml(item) {
+  return item.imageUrl
+    ? `<img src="${esc(item.imageUrl)}" alt="${esc(item.name)}" class="w-full h-full object-cover" loading="lazy" />`
+    : `<div class="w-full h-full flex items-center justify-center text-4xl bg-slate-900 text-slate-700">🍽️</div>`;
+}
+
+function itemCard(item, isEmployee) {
+  const itemJson = esc(JSON.stringify(item));
+  const overlay = item.available ? "" : unavailableOverlayHtml();
+  const editBtn = isEmployee
+    ? ""
+    : `<button onclick="window.openEditModal(${itemJson})" class="text-[11px] font-bold text-blue-400 hover:text-blue-300 uppercase tracking-wide">Edit</button>`;
+
+  return `
+    <div class="menu-item-card group glass rounded-2xl border border-slate-900 overflow-hidden shadow-lg hover:shadow-xl hover:-translate-y-0.5 hover:scale-[1.02] transition-all duration-200" data-item-id="${item.id}" data-item-name="${esc(item.name.toLowerCase())}">
+      <div class="card-image-wrap aspect-square w-full overflow-hidden bg-slate-900 relative">
+        ${cardImageHtml(item)}
+        ${overlay}
+      </div>
+      <div class="p-3 flex flex-col gap-2">
+        <p class="item-card-name text-xs font-semibold text-slate-200 truncate" title="${esc(item.name)}">${esc(item.name)}</p>
+        <div class="flex items-center justify-between gap-2 min-h-[22px]">
+          ${editBtn}
+          <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-auto" title="Toggle availability">
+            <input type="checkbox" class="sr-only peer" ${item.available ? "checked" : ""}
+              onchange="window.toggleItemAvailability(${item.id}, this.checked, this)" />
+            <div class="w-9 h-5 bg-slate-800 peer-checked:bg-green-600 rounded-full transition-colors"></div>
+            <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+          </label>
+        </div>
+      </div>
+    </div>`;
+}
+
+function unavailableOverlayHtml() {
+  return '<div class="unavailable-overlay absolute inset-0 bg-slate-950/60 flex items-center justify-center"><span class="text-[10px] font-bold uppercase tracking-wide text-slate-300 bg-slate-950/80 px-2 py-1 rounded">Unavailable</span></div>';
+}
+
+// Sync one already-rendered card's visible fields (image, name, availability)
+// from a fresh item payload — used by the SSE "menu_updated" handler so that
+// another admin session's edit (or this session's own availability-toggle
+// echo) updates in place instead of forcing a full loadMenu() reload, which
+// is what caused the whole grid to blank-and-rebuild ("blink") on every
+// toggle click. Returns false if the card isn't currently rendered (e.g.
+// hidden behind an active search filter, or a stale/empty grid) so the
+// caller can fall back to a full reload only when it actually needs to.
+export function patchMenuItemCard(item) {
+  const card = document.querySelector(`.menu-item-card[data-item-id="${item.id}"]`);
+  if (!card) return false;
+
+  card.dataset.itemName = item.name.toLowerCase();
+  const nameEl = card.querySelector(".item-card-name");
+  if (nameEl) { nameEl.textContent = item.name; nameEl.title = item.name; }
+
+  const imgWrap = card.querySelector(".card-image-wrap");
+  const currentSrc = imgWrap?.querySelector("img")?.getAttribute("src") || null;
+  if (imgWrap && (item.imageUrl || null) !== currentSrc) {
+    const overlay = imgWrap.querySelector(".unavailable-overlay");
+    imgWrap.innerHTML = cardImageHtml(item) + (overlay ? overlay.outerHTML : "");
+  }
+
+  const checkbox = card.querySelector('input[type="checkbox"]');
+  if (checkbox) checkbox.checked = !!item.available;
+  updateCardAvailabilityUI(card, !!item.available);
+  return true;
+}
+
+// ── Search ───────────────────────────────────────────────────────────────
+
+export function onMenuSearchInput(value) {
+  const q = String(value || "").trim().toLowerCase();
+  document.querySelectorAll(".menu-cat-section").forEach(section => {
+    const catName = section.dataset.catName || "";
+    const catMatches = !q || catName.includes(q);
+    let anyVisible = false;
+    section.querySelectorAll(".menu-item-card").forEach(card => {
+      const itemName = card.dataset.itemName || "";
+      const visible = !q || catMatches || itemName.includes(q);
+      card.classList.toggle("hidden", !visible);
+      if (visible) anyVisible = true;
+    });
+    section.classList.toggle("hidden", !anyVisible);
+  });
+}
+
+// ── Availability toggle (both roles) ────────────────────────────────────
+
+export async function toggleItemAvailability(id, available, checkboxEl) {
+  const card = checkboxEl?.closest(".menu-item-card");
+  updateCardAvailabilityUI(card, available);
+  try {
+    await api(`/items/${id}/availability`, { method: "PUT", body: JSON.stringify({ available }) });
+    showToast(available ? "Available" : "Unavailable", `Item marked ${available ? "available" : "unavailable"}.`);
+  } catch (e) {
+    if (checkboxEl) checkboxEl.checked = !available;
+    updateCardAvailabilityUI(card, !available);
+    showToast("Error", "Could not update availability.");
+  }
+}
+
+function updateCardAvailabilityUI(card, available) {
+  if (!card) return;
+  const existing = card.querySelector(".unavailable-overlay");
+  if (available) {
+    existing?.remove();
+  } else if (!existing) {
+    card.querySelector(".card-image-wrap")?.insertAdjacentHTML("beforeend", unavailableOverlayHtml());
+  }
+}
+
+// ── Publish bar (unchanged behavior) ────────────────────────────────────
 
 function renderPublishBar(cfg) {
   const el = document.getElementById("daily-publish-bar");
@@ -44,43 +223,7 @@ export async function togglePublish(published) {
   }
 }
 
-function stockBadge(stockCount) {
-  if (stockCount === null || stockCount === undefined) return "";
-  const cls = stockCount === 0
-    ? "bg-red-950 text-red-400 border-red-900/40"
-    : "bg-amber-950 text-amber-400 border-amber-900/40";
-  const label = stockCount === 0 ? "Sold Out" : `Stock: ${stockCount}`;
-  return `<span class="text-[9px] px-1.5 py-0.5 rounded font-bold border ${cls}">${label}</span>`;
-}
-
-function renderItem(i) {
-  const itemJson = esc(JSON.stringify(i));
-  return `
-    <li class="py-3.5 flex items-start gap-3 flex-wrap">
-      ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" class="w-12 h-12 rounded-lg object-cover border border-slate-800 flex-shrink-0" />` : ""}
-      <div class="flex-grow min-w-0">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-xs font-semibold ${i.available ? "text-slate-100" : "line-through text-slate-500"}">${esc(i.name)}</span>
-          ${i.isVeg ? '<span class="text-[9px] bg-green-950 text-green-400 font-bold border border-green-900/40 px-1 rounded">Veg</span>' : ""}
-          ${i.spiceLevel ? `<span class="text-[9px] bg-rose-950 text-rose-400 font-bold border border-rose-900/40 px-1 rounded">${esc(i.spiceLevel)}</span>` : ""}
-          ${stockBadge(i.stockCount)}
-        </div>
-        ${i.description ? `<p class="text-[10px] text-slate-400 mt-0.5">${esc(i.description)}</p>` : ""}
-      </div>
-      <div class="font-mono text-xs text-slate-400 flex-shrink-0">₹${i.price}</div>
-      <div class="flex items-center gap-3 flex-shrink-0">
-        <label class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" ${i.available ? "checked" : ""}
-            onchange="window.toggleAvail(${i.id}, this.checked)"
-            class="rounded border-slate-800 bg-slate-900" /> Avail
-        </label>
-        <button onclick="window.openEditModal(${itemJson})"
-          class="text-[10px] text-blue-400 font-bold uppercase hover:underline">Edit</button>
-        <button onclick="window.delItem(${i.id})"
-          class="text-[10px] text-slate-500 hover:text-rose-500 font-bold uppercase">Delete</button>
-      </div>
-    </li>`;
-}
+// ── Categories ───────────────────────────────────────────────────────────
 
 export async function addCategory() {
   const name = document.getElementById("catName").value.trim();
@@ -102,46 +245,76 @@ export async function delCategory(id) {
   }
 }
 
-export async function addItem() {
-  const stockVal = document.getElementById("itStock").value;
-  const body = {
-    name: document.getElementById("itName").value.trim(),
-    price: document.getElementById("itPrice").value,
-    categoryId: document.getElementById("itCat").value,
-    description: document.getElementById("itDesc").value.trim() || null,
-    spiceLevel: document.getElementById("itSpice").value.trim() || null,
-    pieceInfo: document.getElementById("itPieceInfo").value.trim() || null,
-    imageUrl: document.getElementById("itImageUrl").value.trim() || null,
-    isVeg: document.getElementById("itVeg").checked,
-    stockCount: stockVal === "" ? null : Number(stockVal),
-  };
-  if (!body.name || !body.price || !body.categoryId) {
+function populateCategorySelect(selectId, cats) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  if (current && cats.some(c => String(c.id) === current)) sel.value = current;
+}
+
+// ── Add Item Modal ───────────────────────────────────────────────────────
+
+export function openAddItemModal() {
+  resetAddForm();
+  document.getElementById("add-item-modal")?.classList.remove("hidden");
+}
+
+export function closeAddItemModal() {
+  document.getElementById("add-item-modal")?.classList.add("hidden");
+}
+
+function resetAddForm() {
+  ["add-name", "add-price", "add-desc", "add-spice", "add-pieceinfo", "add-stock"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const veg = document.getElementById("add-veg");
+  if (veg) veg.checked = false;
+  const avail = document.getElementById("add-available");
+  if (avail) avail.checked = true;
+  const urlEl = document.getElementById("add-img-url");
+  if (urlEl) urlEl.value = "";
+  setPreview("add", null);
+  document.getElementById("add-img-remove-btn")?.classList.add("hidden");
+  if (categoriesCache.length) {
+    const catSel = document.getElementById("add-cat");
+    if (catSel) catSel.value = categoriesCache[0].id;
+  }
+}
+
+export async function saveAddItem() {
+  const name = document.getElementById("add-name").value.trim();
+  const price = document.getElementById("add-price").value;
+  const categoryId = document.getElementById("add-cat").value;
+  if (!name || !price || !categoryId) {
     showToast("Validation", "Name, price, and category are required.");
     return;
   }
-  await api("/items", { method: "POST", body: JSON.stringify(body) });
-  ["itName", "itPrice", "itDesc", "itSpice", "itPieceInfo", "itImageUrl", "itStock"].forEach(id => (document.getElementById(id).value = ""));
-  document.getElementById("itVeg").checked = false;
-  loadMenu();
-}
-
-export async function toggleAvail(id, available) {
-  await api("/items/" + id, { method: "PUT", body: JSON.stringify({ available }) });
-}
-
-export async function delItem(id) {
-  if (!confirm("Delete this dish?")) return;
+  const stockVal = document.getElementById("add-stock").value;
+  const body = {
+    name,
+    price,
+    categoryId,
+    description: document.getElementById("add-desc").value.trim() || null,
+    spiceLevel: document.getElementById("add-spice").value.trim() || null,
+    pieceInfo: document.getElementById("add-pieceinfo").value.trim() || null,
+    imageUrl: document.getElementById("add-img-url").value.trim() || null,
+    isVeg: document.getElementById("add-veg").checked,
+    available: document.getElementById("add-available").checked,
+    stockCount: stockVal === "" ? null : Number(stockVal),
+  };
   try {
-    await api("/items/" + id, { method: "DELETE" });
+    await api("/items", { method: "POST", body: JSON.stringify(body) });
+    showToast("Added", "Dish added to the menu.");
+    closeAddItemModal();
     loadMenu();
   } catch (e) {
-    let msg = e?.message ?? "Delete failed";
-    try { msg = JSON.parse(msg).error ?? msg; } catch {}
-    showToast("Cannot Delete", msg);
+    showToast("Error", "Could not add dish.");
   }
 }
 
-// ── Edit Item Modal ────────────────────────────────────────────────────────
+// ── Edit Item Modal ──────────────────────────────────────────────────────
 
 export function openEditModal(item) {
   editingItemId = item.id;
@@ -152,8 +325,14 @@ export function openEditModal(item) {
   document.getElementById("edit-desc").value = item.description || "";
   document.getElementById("edit-spice").value = item.spiceLevel || "";
   document.getElementById("edit-pieceinfo").value = item.pieceInfo || "";
-  document.getElementById("edit-imageurl").value = item.imageUrl || "";
-  document.getElementById("edit-veg").checked = item.isVeg;
+  document.getElementById("edit-veg").checked = !!item.isVeg;
+  document.getElementById("edit-available").checked = !!item.available;
+  const catSel = document.getElementById("edit-cat");
+  if (catSel && item.categoryId != null) catSel.value = item.categoryId;
+  const urlEl = document.getElementById("edit-img-url");
+  if (urlEl) urlEl.value = item.imageUrl || "";
+  setPreview("edit", item.imageUrl || null);
+  document.getElementById("edit-img-remove-btn")?.classList.toggle("hidden", !item.imageUrl);
   document.getElementById("edit-modal").classList.remove("hidden");
   loadVariants(item.id);
 }
@@ -165,15 +344,24 @@ export function closeEditModal() {
 
 export async function saveEditItem() {
   const id = document.getElementById("edit-id").value;
+  const name = document.getElementById("edit-name").value.trim();
+  const price = document.getElementById("edit-price").value;
+  const categoryId = document.getElementById("edit-cat").value;
+  if (!name || !price || !categoryId) {
+    showToast("Validation", "Name, price, and category are required.");
+    return;
+  }
   const stockVal = document.getElementById("edit-stock").value;
   const body = {
-    name: document.getElementById("edit-name").value.trim(),
-    price: document.getElementById("edit-price").value,
+    name,
+    price,
+    categoryId,
     description: document.getElementById("edit-desc").value.trim() || null,
     spiceLevel: document.getElementById("edit-spice").value.trim() || null,
     pieceInfo: document.getElementById("edit-pieceinfo").value.trim() || null,
-    imageUrl: document.getElementById("edit-imageurl").value.trim() || null,
+    imageUrl: document.getElementById("edit-img-url").value.trim() || null,
     isVeg: document.getElementById("edit-veg").checked,
+    available: document.getElementById("edit-available").checked,
     stockCount: stockVal === "" ? null : Number(stockVal),
   };
   try {
@@ -184,6 +372,112 @@ export async function saveEditItem() {
   } catch (e) {
     showToast("Error", "Could not save dish.");
   }
+}
+
+// ── Delete Item (confirm modal) ─────────────────────────────────────────
+
+export function promptDeleteItem(id, name) {
+  pendingDeleteId = id;
+  const textEl = document.getElementById("delete-confirm-text");
+  if (textEl) textEl.textContent = `Delete "${name}"? This action cannot be undone.`;
+  document.getElementById("delete-confirm-modal")?.classList.remove("hidden");
+}
+
+export function closeDeleteConfirmModal() {
+  document.getElementById("delete-confirm-modal")?.classList.add("hidden");
+  pendingDeleteId = null;
+}
+
+export async function confirmDeleteItem() {
+  if (pendingDeleteId == null) return;
+  const id = pendingDeleteId;
+  try {
+    await api("/items/" + id, { method: "DELETE" });
+    showToast("Deleted", "Dish removed from the menu.");
+    closeDeleteConfirmModal();
+    closeEditModal();
+    loadMenu();
+  } catch (e) {
+    let msg = e?.message ?? "Delete failed";
+    try { msg = JSON.parse(msg).error ?? msg; } catch {}
+    closeDeleteConfirmModal();
+    showToast("Cannot Delete", msg);
+  }
+}
+
+// ── Image upload widget (shared by Add + Edit modals via an id prefix) ─────
+// prefix "add" -> #add-img-preview / #add-img-input / #add-img-url / #add-img-remove-btn
+// prefix "edit" -> #edit-img-preview / #edit-img-input / #edit-img-url / #edit-img-remove-btn
+
+function setPreview(prefix, url) {
+  const el = document.getElementById(`${prefix}-img-preview`);
+  if (!el) return;
+  el.innerHTML = url ? `<img src="${esc(url)}" class="w-full h-full object-cover" />` : PLACEHOLDER_HTML;
+}
+
+function compressImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 800;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) {
+            height = Math.round(height * (maxDim / width));
+            width = maxDim;
+          } else {
+            width = Math.round(width * (maxDim / height));
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.onerror = () => reject(new Error("Could not read image"));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error("Could not read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function onImageFileSelected(prefix, inputEl) {
+  const file = inputEl.files?.[0];
+  if (!file) return;
+
+  // Instant local preview while we compress + upload in the background.
+  const localUrl = URL.createObjectURL(file);
+  setPreview(prefix, localUrl);
+
+  try {
+    const dataUrl = await compressImageFile(file);
+    const res = await api("/upload/image", { method: "POST", body: JSON.stringify({ dataUrl }) });
+    const urlEl = document.getElementById(`${prefix}-img-url`);
+    if (urlEl) urlEl.value = res.url;
+    setPreview(prefix, res.url);
+    document.getElementById(`${prefix}-img-remove-btn`)?.classList.remove("hidden");
+    showToast("Image Uploaded", "Photo attached to this item.");
+  } catch (e) {
+    const urlEl = document.getElementById(`${prefix}-img-url`);
+    setPreview(prefix, urlEl?.value || null);
+    showToast("Upload Failed", "Could not upload image. Try a smaller photo.");
+  } finally {
+    URL.revokeObjectURL(localUrl);
+    inputEl.value = "";
+  }
+}
+
+export function removeImage(prefix) {
+  const urlEl = document.getElementById(`${prefix}-img-url`);
+  if (urlEl) urlEl.value = "";
+  setPreview(prefix, null);
+  document.getElementById(`${prefix}-img-remove-btn`)?.classList.add("hidden");
 }
 
 // ── Variants ───────────────────────────────────────────────────────────────

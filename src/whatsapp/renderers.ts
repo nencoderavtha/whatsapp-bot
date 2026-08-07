@@ -13,7 +13,6 @@
 import type { OrderStage } from "@prisma/client";
 
 export enum MessageType {
-  WELCOME = "WELCOME",
   CART_SUMMARY = "CART_SUMMARY",
   ADDRESS_PICKER = "ADDRESS_PICKER",
   ADDRESS_PIN_PROMPT = "ADDRESS_PIN_PROMPT",
@@ -38,18 +37,80 @@ export type Rendered =
 
 // ── Welcome ─────────────────────────────────────────────────────────────────
 
+/** What `buildWelcomeCard` hands back — the caller decides how to send each part. */
+export interface WelcomeCard {
+  /** If set, the caller sends this via `sendImage()` first — list messages can't carry an image header. */
+  logoUrl?: string;
+  body: string;
+  buttonText: string;
+  sections: { title: string; rows: { id: string; title: string; description?: string }[] }[];
+}
+
 /**
- * Sent on a greeting, before any database work. Everything it needs is either
- * on the inbound message (the WhatsApp profile name) or cached, so it can go
- * out immediately rather than after a cross-region query.
+ * The welcome "card" sent on a greeting, before any database work touches the
+ * customer row. Everything it needs is either on the inbound message (the
+ * WhatsApp profile name), cached restaurant config, or the two lightweight
+ * queries the caller runs alongside the cache read (menu categories, active
+ * coupon) — so it still goes out without waiting on a customer lookup.
+ *
+ * WhatsApp reply-buttons cap at three; this needs four CTAs, so it renders as
+ * a list message (`sections`) instead. List messages can't show an image
+ * header, which is why the logo (if any) travels as a separate `sendImage`
+ * call the caller fires immediately before this.
  */
-export function renderWelcome(greetName: string, restaurantName: string): Rendered {
+export function buildWelcomeCard(params: {
+  greetName: string;
+  restaurantName: string;
+  tagline?: string | null;
+  isOpen: boolean;
+  pauseMessage?: string | null;
+  openingHoursText?: string | null;
+  activeCoupon?: { code: string; description?: string | null } | null;
+  categoryNames: string[];
+  logoUrl?: string | null;
+}): WelcomeCard {
+  const lines: string[] = [
+    `Namaskaram ${params.greetName} 🙏`,
+    ``,
+    `*${params.restaurantName}* ki welcome! 🎉`,
+  ];
+
+  if (params.tagline?.trim()) lines.push(`_${params.tagline.trim()}_`);
+
+  lines.push(``);
+  if (params.isOpen) {
+    lines.push(`🟢 *We're open right now!*`);
+    if (params.openingHoursText?.trim()) lines.push(`🕒 ${params.openingHoursText.trim()}`);
+  } else {
+    lines.push(`🔴 *We're closed right now.*`);
+    lines.push(params.pauseMessage?.trim() || "We'll be back shortly — thanks for your patience 🙏");
+  }
+
+  if (params.activeCoupon) {
+    const desc = params.activeCoupon.description?.trim();
+    lines.push(``, `🎁 *Offer:* Code *${params.activeCoupon.code}*${desc ? ` — ${desc}` : ""}`);
+  }
+
+  lines.push(``, `👇 Menu chuudandi, leda em kavalo cheppandi — order start chestham.`);
+
+  if (params.categoryNames.length > 0) {
+    lines.push(``, `🍴 *Popular:* ${params.categoryNames.slice(0, 5).join(", ")}`);
+  }
+
   return {
-    kind: "buttons",
-    body: `Namaskaram ${greetName} 🙏\n\n${restaurantName} ki welcome. Ee roju menu ready undi.`,
-    buttons: [
-      { id: "view_menu", title: "📋 Menu" },
-      { id: "location_info", title: "📍 Location & Hours" },
+    ...(params.logoUrl ? { logoUrl: params.logoUrl } : {}),
+    body: lines.join("\n"),
+    buttonText: "View Options",
+    sections: [
+      {
+        title: "Quick Actions",
+        rows: [
+          { id: "view_menu", title: "🍽 Browse Menu", description: "See today's full menu" },
+          { id: "start_ordering_btn", title: "🛒 Start Ordering", description: "Jump straight into ordering" },
+          { id: "track_order_btn", title: "📍 Track Order", description: "Check your latest order status" },
+          { id: "talk_to_human_btn", title: "💬 Talk to Human", description: "Chat with our staff" },
+        ],
+      },
     ],
   };
 }

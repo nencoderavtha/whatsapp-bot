@@ -1,11 +1,18 @@
 <!doctype html>
-<html lang="en" class="dark h-full">
+<html lang="en" class="h-full">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Admin Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Analytics dashboard only (src/admin/public/js/analytics.js) — matches a
+       provided reference design's exact type system (Hanken Grotesk headings,
+       Inter body, JetBrains Mono micro-labels) and Material Symbols icon set.
+       Scoped to #orders-analytics via the .analytics-root/.material-symbols-outlined
+       classes — does not touch the rest of the app's Outfit typography. -->
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,300..600,0..1,-25..0&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       darkMode: "class",
@@ -34,7 +41,32 @@
     .nav-safe { padding-bottom: env(safe-area-inset-bottom, 0); }
     /* Content safe area below bottom nav */
     .content-safe { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 4px)); }
+
+    /* ── Orders analytics dashboard (analytics.js) — reference-design type
+       system, scoped so it never leaks into the rest of the app's Outfit
+       typography. ────────────────────────────────────────────────────── */
+    .material-symbols-outlined {
+      font-family: 'Material Symbols Outlined';
+      font-weight: normal;
+      font-style: normal;
+      font-size: 20px;
+      line-height: 1;
+      letter-spacing: normal;
+      text-transform: none;
+      display: inline-block;
+      white-space: nowrap;
+      word-wrap: normal;
+      direction: ltr;
+      -webkit-font-feature-settings: 'liga';
+      font-feature-settings: 'liga';
+      -webkit-font-smoothing: antialiased;
+      vertical-align: middle;
+    }
+    .analytics-root { font-family: 'Inter', sans-serif; }
+    .analytics-root .font-headline { font-family: 'Hanken Grotesk', sans-serif; }
+    .analytics-root .font-label-caps { font-family: 'JetBrains Mono', 'Hanken Grotesk', monospace; letter-spacing: .05em; }
   </style>
+  <link rel="stylesheet" href="css/theme-light.css">
 </head>
 <body class="bg-slate-950 text-slate-100 h-full flex flex-col antialiased">
 
@@ -104,6 +136,11 @@
 
         <!-- Action buttons -->
         <div class="flex items-center gap-1.5 ml-auto flex-shrink-0">
+          <button id="notif-bell-btn" onclick="window.toggleNotifPanel()"
+            class="relative w-8 h-8 md:w-9 md:h-9 flex items-center justify-center text-slate-400 hover:text-rose-400 rounded-xl hover:bg-slate-800/60 transition-all" title="Notifications">
+            <span class="text-base md:text-lg">🔔</span>
+            <span id="notif-bell-badge" class="hidden absolute top-0.5 right-0.5 bg-rose-500 text-white text-[9px] font-black min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center leading-none border border-slate-950">0</span>
+          </button>
           <button id="btn-pause" onclick="window.togglePause()" class="hidden text-xs px-2.5 md:px-3 py-1.5 rounded-xl font-bold border transition-all"></button>
           <button id="btn-link-wa" onclick="window.openQRModal()" class="hidden text-xs bg-rose-950 text-rose-400 border border-rose-500/30 px-2.5 py-1.5 rounded-xl font-bold hover:bg-rose-900/40 transition-all animate-pulse">
             📱 <span class="hidden md:inline">Link WhatsApp</span>
@@ -124,25 +161,45 @@
     <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 md:pt-5 content-safe pb-24 flex flex-col min-h-0 overflow-y-auto">
 
       <!-- ── ORDERS ─────────────────────────────────────────────────────────── -->
-      <section id="tab-orders" class="tab-panel flex flex-col hidden animate-fade-in min-h-0 h-full overflow-y-auto">
-        <div class="flex items-start justify-between mb-3 flex-shrink-0 gap-3 flex-wrap">
-          <div>
-            <h2 class="text-lg md:text-xl font-bold">Live Orders</h2>
-            <p class="text-xs text-slate-500 mt-0.5">Tap action buttons to advance order status</p>
-          </div>
-          <div class="flex items-center gap-2 flex-wrap">
-            <div class="flex bg-slate-900/80 border border-slate-800 rounded-xl p-1 gap-0.5 text-[11px] font-semibold overflow-x-auto">
-              <button onclick="window.setOrderFilter('')"        class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-300 whitespace-nowrap"  data-val="">All</button>
-              <button onclick="window.setOrderFilter('pending')"  class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-amber-400 whitespace-nowrap"   data-val="pending">Pending</button>
-              <button onclick="window.setOrderFilter('preparing')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-indigo-400 whitespace-nowrap" data-val="preparing">Cooking</button>
-              <button onclick="window.setOrderFilter('ready')"    class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-emerald-400 whitespace-nowrap" data-val="ready">Ready</button>
-              <button onclick="window.setOrderFilter('delivered')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-400 whitespace-nowrap"  data-val="delivered">Delivered</button>
+      <section id="tab-orders" class="tab-panel hidden animate-fade-in flex-1 overflow-y-auto pb-4">
+        <div id="orders-analytics" class="analytics-root hidden"></div>
+        <div class="flex flex-col gap-3 mb-3 flex-shrink-0">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <h2 class="text-lg md:text-xl font-bold">Live Orders</h2>
+              <p class="text-xs text-slate-500 mt-0.5">Tap action buttons to advance order status</p>
             </div>
-            <input id="order-filter" type="hidden" value="">
-            <button onclick="window.loadOrders?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm hover:bg-slate-800 transition-colors flex items-center justify-center" title="Refresh">↻</button>
+            <div class="flex items-center gap-2 flex-wrap">
+              <select id="order-sort" onchange="window.setOrderSort(this.value)"
+                class="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-[11px] font-semibold text-slate-300 focus:outline-none focus:ring-1 focus:ring-rose-500">
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="highest">Highest Value</option>
+                <option value="lowest">Lowest Value</option>
+              </select>
+              <button onclick="window.loadOrders?.()" class="bg-slate-900 border border-slate-800 w-9 h-9 rounded-xl text-sm hover:bg-slate-800 transition-colors flex items-center justify-center" title="Refresh">↻</button>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="relative flex-1 min-w-[220px]">
+              <input id="order-search" type="text" placeholder="Search customer, order ID, or order type…"
+                oninput="window.onOrderSearchInput(this.value)"
+                class="w-full bg-slate-900/80 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 placeholder:text-slate-600" />
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 text-xs">🔍</span>
+            </div>
+            <div class="flex bg-slate-900/80 border border-slate-800 rounded-xl p-1 gap-0.5 text-[11px] font-semibold overflow-x-auto">
+              <button onclick="window.setOrderFilter('all')"       class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-300 whitespace-nowrap"  data-val="all">All</button>
+              <button onclick="window.setOrderFilter('today')"     class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-sky-400 whitespace-nowrap"     data-val="today">Today</button>
+              <button onclick="window.setOrderFilter('preparing')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-indigo-400 whitespace-nowrap"  data-val="preparing">Preparing</button>
+              <button onclick="window.setOrderFilter('ready')"     class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-blue-400 whitespace-nowrap"    data-val="ready">Dispatched</button>
+              <button onclick="window.setOrderFilter('delivered')" class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-slate-400 whitespace-nowrap"   data-val="delivered">Delivered</button>
+              <button onclick="window.setOrderFilter('rejected')"  class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-rose-400 whitespace-nowrap"    data-val="rejected">Rejected</button>
+              <button onclick="window.setOrderFilter('refunded')"  class="order-filter-btn px-2.5 py-1.5 rounded-lg transition-all hover:bg-slate-800 text-amber-400 whitespace-nowrap"   data-val="refunded">Refunded</button>
+            </div>
           </div>
         </div>
-        <div class="flex-1 overflow-y-auto -mx-1 px-1">
+        <div class="-mx-1 px-1">
           <div id="orders" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3 pb-2"></div>
         </div>
       </section>
@@ -222,51 +279,57 @@
 
       <!-- ── MENU ───────────────────────────────────────────────────────────── -->
       <section id="tab-menu" class="tab-panel hidden animate-fade-in flex-1 overflow-y-auto pb-12">
-        <!-- On mobile: stack (menu list first, then add forms). On desktop: 3-col grid -->
-        <div class="flex flex-col md:grid md:grid-cols-3 md:gap-6 gap-4 min-h-0">
+        <div id="daily-publish-bar" class="glass rounded-2xl p-4 mb-4 flex-shrink-0 flex items-center justify-between gap-3 border border-slate-900"></div>
 
-          <!-- Add forms (order-2 on mobile = below menu list) -->
-          <div class="order-2 md:order-1 md:col-span-1 space-y-4 overflow-y-auto">
-            <div class="glass rounded-2xl p-4 md:p-5 border border-slate-900">
-              <h3 class="font-bold text-sm mb-3 text-slate-300">📂 Add Category</h3>
-              <input id="catName" placeholder="e.g. Mutton Specials"
-                class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 mb-3 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-              <button onclick="window.addCategory()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-semibold transition-all">Add Category</button>
-            </div>
-            <div class="glass rounded-2xl p-4 md:p-5 border border-slate-900">
-              <h3 class="font-bold text-sm mb-3 text-slate-300">🍳 Add Dish</h3>
-              <div class="space-y-2.5">
-                <input id="itName" placeholder="Dish name" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                <div class="grid grid-cols-2 gap-2">
-                  <input id="itPrice" type="number" placeholder="Price (₹)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                  <select id="itCat" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-3 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-rose-500"></select>
-                </div>
-                <input id="itDesc" placeholder="Description (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                <input id="itSpice" placeholder="Spice level (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                <input id="itPieceInfo" placeholder="Piece/serving count (optional, e.g. '2 pieces')" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                <input id="itImageUrl" placeholder="Photo URL (optional)" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                <div>
-                  <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1.5">Today's quantity — blank = unlimited</label>
-                  <input id="itStock" type="number" min="0" placeholder="∞ Unlimited" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-                </div>
-                <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer py-1">
-                  <input type="checkbox" id="itVeg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian
-                </label>
-                <button onclick="window.addItem()" class="w-full py-3 gradient-btn text-white rounded-xl text-sm font-bold">Add Dish</button>
-              </div>
-            </div>
+        <!-- Header: title, search, add button -->
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-4 flex-shrink-0">
+          <div class="flex items-center justify-between gap-3 sm:flex-shrink-0">
+            <h2 class="text-lg md:text-xl font-bold">Menu</h2>
+            <button onclick="window.loadMenu?.()" class="sm:hidden text-xs text-rose-400 font-semibold hover:text-rose-300 transition-colors">↻ Reload</button>
           </div>
-
-          <!-- Menu list (order-1 = first on mobile) -->
-          <div class="order-1 md:order-2 md:col-span-2 flex flex-col space-y-4 overflow-y-auto">
-            <div id="daily-publish-bar" class="glass rounded-2xl p-4 mb-3 flex-shrink-0 flex items-center justify-between gap-3 border border-slate-900"></div>
-            <div class="flex justify-between items-center mb-3 flex-shrink-0">
-              <h2 class="text-lg md:text-xl font-bold">Today's Menu</h2>
-              <button onclick="window.loadMenu?.()" class="text-xs text-rose-400 font-semibold hover:text-rose-300 transition-colors">↻ Reload</button>
-            </div>
-            <div id="menu" class="md:flex-grow md:overflow-y-auto space-y-4 md:pr-1"></div>
+          <div class="flex-grow relative">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-sm pointer-events-none">🔍</span>
+            <input id="menu-search" type="text" placeholder="Search dishes or categories…"
+              oninput="window.onMenuSearchInput(this.value)"
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <button onclick="window.loadMenu?.()" class="hidden sm:flex text-xs text-rose-400 font-semibold hover:text-rose-300 transition-colors px-1">↻ Reload</button>
+            <button id="menu-add-btn" onclick="window.openAddItemModal()"
+              class="hidden py-2.5 px-4 gradient-btn text-white rounded-xl text-sm font-bold whitespace-nowrap flex items-center gap-1.5">
+              <span class="text-base leading-none">+</span> Add New Item
+            </button>
           </div>
         </div>
+
+        <!-- Owner-only: Add Category -->
+        <div id="menu-owner-controls" class="hidden mb-5 flex-shrink-0">
+          <div class="glass rounded-2xl p-4 border border-slate-900 flex flex-col sm:flex-row sm:items-center gap-3">
+            <h3 class="font-bold text-xs text-slate-400 uppercase tracking-wider flex-shrink-0">📂 New Category</h3>
+            <input id="catName" placeholder="e.g. Mutton Specials"
+              class="flex-grow bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+            <button onclick="window.addCategory()" class="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-semibold transition-all flex-shrink-0">Add Category</button>
+          </div>
+        </div>
+
+        <!-- Loading skeleton -->
+        <div id="menu-skeleton" class="hidden grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div class="rounded-2xl border border-slate-900 overflow-hidden animate-pulse"><div class="aspect-square bg-slate-900"></div><div class="p-3 space-y-2"><div class="h-3 bg-slate-900 rounded w-3/4"></div><div class="h-6 bg-slate-900 rounded"></div></div></div>
+          <div class="rounded-2xl border border-slate-900 overflow-hidden animate-pulse"><div class="aspect-square bg-slate-900"></div><div class="p-3 space-y-2"><div class="h-3 bg-slate-900 rounded w-3/4"></div><div class="h-6 bg-slate-900 rounded"></div></div></div>
+          <div class="rounded-2xl border border-slate-900 overflow-hidden animate-pulse"><div class="aspect-square bg-slate-900"></div><div class="p-3 space-y-2"><div class="h-3 bg-slate-900 rounded w-3/4"></div><div class="h-6 bg-slate-900 rounded"></div></div></div>
+          <div class="rounded-2xl border border-slate-900 overflow-hidden animate-pulse hidden md:block"><div class="aspect-square bg-slate-900"></div><div class="p-3 space-y-2"><div class="h-3 bg-slate-900 rounded w-3/4"></div><div class="h-6 bg-slate-900 rounded"></div></div></div>
+          <div class="rounded-2xl border border-slate-900 overflow-hidden animate-pulse hidden lg:block"><div class="aspect-square bg-slate-900"></div><div class="p-3 space-y-2"><div class="h-3 bg-slate-900 rounded w-3/4"></div><div class="h-6 bg-slate-900 rounded"></div></div></div>
+        </div>
+
+        <!-- Empty state -->
+        <div id="menu-empty" class="hidden flex flex-col items-center justify-center text-center py-20 text-slate-500">
+          <div class="text-4xl mb-3">🍽️</div>
+          <p class="text-sm font-semibold text-slate-400">No dishes yet</p>
+          <p class="text-xs text-slate-600 mt-1">Add your first item to get started.</p>
+        </div>
+
+        <!-- Menu categories + card grid, rendered by menu.js -->
+        <div id="menu" class="space-y-8"></div>
       </section>
 
       <!-- ── PAYMENTS ───────────────────────────────────────────────────────── -->
@@ -328,7 +391,61 @@
             Logout
           </button>
         </div>
+
+        <!-- ── Appearance: visible to BOTH owner and employee, always shown ── -->
+        <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900 flex-shrink-0 mb-4">
+          <h3 class="font-bold text-sm mb-4">🎨 Appearance</h3>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Theme</label>
+            <div class="flex gap-2">
+              <label class="flex-1">
+                <input type="radio" name="theme" id="theme-dark" value="dark" class="peer sr-only" onchange="window.saveEmployeeTheme(this.value)" />
+                <div class="text-center py-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-300 text-sm font-semibold cursor-pointer transition-all peer-checked:bg-rose-500 peer-checked:text-white peer-checked:border-rose-500">
+                  🌙 Dark
+                </div>
+              </label>
+              <label class="flex-1">
+                <input type="radio" name="theme" id="theme-light" value="light" class="peer sr-only" onchange="window.saveEmployeeTheme(this.value)" />
+                <div class="text-center py-2.5 rounded-xl border border-slate-800 bg-slate-900 text-slate-300 text-sm font-semibold cursor-pointer transition-all peer-checked:bg-rose-500 peer-checked:text-white peer-checked:border-rose-500">
+                  ☀️ White
+                </div>
+              </label>
+            </div>
+            <p class="text-[11px] text-slate-600 mt-1.5">Saved on this device only.</p>
+          </div>
+        </div>
+
         <div class="flex-1 overflow-y-auto -mx-1 px-1 space-y-4">
+
+        <!-- ── Employee settings: notification sound only, no config access ── -->
+        <div id="settings-employee" class="hidden space-y-4">
+          <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
+            <h3 class="font-bold text-sm mb-4">🔔 Audio Notification</h3>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sound</label>
+                <select id="emp-sound" onchange="window.saveEmployeeSound(this.value)"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500">
+                  <option value="classic">Classic</option>
+                  <option value="bell">Kitchen Bell</option>
+                  <option value="chime">Digital Chime</option>
+                  <option value="silent">Silent</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Volume</label>
+                <input id="emp-volume" type="range" min="0" max="1" step="0.05"
+                  onchange="window.saveEmployeeVolume(this.value)"
+                  oninput="window.saveEmployeeVolume(this.value)"
+                  class="w-full accent-rose-500" />
+              </div>
+              <button onclick="window.testNotifSound()" class="py-2.5 px-5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-slate-700 transition-colors">🔊 Test Sound</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Owner settings: full config, unchanged ── -->
+        <div id="settings-owner" class="space-y-4">
 
           <!-- Bot Control -->
           <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
@@ -374,8 +491,13 @@
                   class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Dashboard Password</label>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Dashboard Password (Owner)</label>
                 <input id="cfg-password" type="password" placeholder="Leave blank to keep current"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Employee Password <span class="text-slate-600 normal-case font-normal">(restricted dashboard login — same username, this password)</span></label>
+                <input id="cfg-employee-password" type="password" placeholder="Leave blank to keep current"
                   class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
               </div>
               <div id="baileys-phone-section" class="md:col-span-2">
@@ -394,6 +516,93 @@
                 <input id="cfg-cloud-token" type="password" placeholder="EAABxxxxxx…"
                   class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono" />
               </div>
+            </div>
+            <button onclick="window.saveRestaurantInfo()" class="mt-4 py-2.5 px-5 gradient-btn text-white rounded-xl text-sm font-bold">Save</button>
+          </div>
+
+          <!-- WhatsApp Welcome Message -->
+          <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
+            <h3 class="font-bold text-sm mb-1">👋 WhatsApp Welcome Message</h3>
+            <p class="text-xs text-slate-500 mb-4">Shown to customers when they first message your bot, and used to brand the public menu page.</p>
+            <div class="grid md:grid-cols-2 gap-3 md:gap-4">
+              <div class="md:col-span-2">
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Welcome Logo URL</label>
+                <input id="cfg-welcomeLogoUrl" type="text" placeholder="https://.../logo.png — leave blank for no logo image"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Welcome Tagline</label>
+                <input id="cfg-welcomeTagline" type="text" placeholder="Fresh South Indian Breakfast & Meals"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Opening Hours <span class="text-slate-600 normal-case font-normal">(display text only — shown to customers, not a live schedule)</span></label>
+                <input id="cfg-openingHoursText" type="text" placeholder="6:30 AM – 10:30 PM"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Brand Color <span class="text-slate-600 normal-case font-normal">(drives the public menu page header)</span></label>
+                <div class="flex items-center gap-3">
+                  <input id="cfg-brandColor" type="color" value="#e11d48"
+                    class="h-11 w-16 bg-slate-900 border border-slate-800 rounded-xl cursor-pointer p-1"
+                    oninput="window.previewBrandColor(this.value)" />
+                  <span id="cfg-brandColor-swatch" class="h-11 w-11 rounded-xl border border-slate-800 shrink-0" style="background:#e11d48"></span>
+                </div>
+              </div>
+            </div>
+            <button onclick="window.saveRestaurantInfo()" class="mt-4 py-2.5 px-5 gradient-btn text-white rounded-xl text-sm font-bold">Save</button>
+          </div>
+
+          <!-- Notifications -->
+          <div class="glass rounded-2xl p-5 md:p-6 border border-slate-900">
+            <h3 class="font-bold text-sm mb-1">🔔 Notifications</h3>
+            <p class="text-xs text-slate-500 mb-4">Alerts for failed payments, refunds, delivery issues and human handoffs.</p>
+            <div class="space-y-4">
+              <label class="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" id="cfg-notifications-enabled" class="rounded border-slate-800 bg-slate-900 h-4 w-4 accent-rose-500 shrink-0" />
+                <div>
+                  <p class="text-sm font-semibold text-slate-200">Enable Notifications</p>
+                  <p class="text-xs text-slate-500 mt-0.5">Turn off to stop all alerts to emergency contacts.</p>
+                </div>
+              </label>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Emergency Contact Numbers (comma-separated, with country code)</label>
+                <input id="cfg-emergency-contacts" type="text" placeholder="919876543210, 917654321098"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2">Notification Channels</label>
+                <div class="space-y-2">
+                  <label class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-800 bg-slate-900/40 cursor-pointer">
+                    <input type="checkbox" id="cfg-notif-channel-whatsapp" class="rounded border-slate-700 bg-slate-800 h-4 w-4 accent-rose-500 shrink-0" />
+                    <span class="text-sm font-semibold text-slate-200">WhatsApp</span>
+                    <span class="ml-auto text-[10px] font-bold text-green-400 uppercase tracking-wide">Live</span>
+                  </label>
+                  <label class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-800 bg-slate-900/20 cursor-not-allowed opacity-60" title="Not connected yet — coming soon">
+                    <input type="checkbox" id="cfg-notif-channel-sms" disabled class="rounded border-slate-700 bg-slate-800 h-4 w-4 shrink-0" />
+                    <span class="text-sm font-semibold text-slate-400">SMS</span>
+                    <span class="ml-auto text-[10px] font-bold text-slate-500 uppercase tracking-wide">Coming soon</span>
+                  </label>
+                  <label class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-800 bg-slate-900/20 cursor-not-allowed opacity-60" title="Not connected yet — coming soon">
+                    <input type="checkbox" id="cfg-notif-channel-email" disabled class="rounded border-slate-700 bg-slate-800 h-4 w-4 shrink-0" />
+                    <span class="text-sm font-semibold text-slate-400">Email</span>
+                    <span class="ml-auto text-[10px] font-bold text-slate-500 uppercase tracking-wide">Coming soon</span>
+                  </label>
+                  <label class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-800 bg-slate-900/20 cursor-not-allowed opacity-60" title="Not connected yet — coming soon">
+                    <input type="checkbox" id="cfg-notif-channel-push" disabled class="rounded border-slate-700 bg-slate-800 h-4 w-4 shrink-0" />
+                    <span class="text-sm font-semibold text-slate-400">Push</span>
+                    <span class="ml-auto text-[10px] font-bold text-slate-500 uppercase tracking-wide">Coming soon</span>
+                  </label>
+                </div>
+                <p class="text-[11px] text-slate-600 mt-1.5">Only WhatsApp actually delivers alerts today — the others are placeholders for a future integration.</p>
+              </div>
+              <label class="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" id="cfg-critical-only-mode" class="rounded border-slate-800 bg-slate-900 h-4 w-4 accent-rose-500 shrink-0" />
+                <div>
+                  <p class="text-sm font-semibold text-slate-200">Critical-only mode</p>
+                  <p class="text-xs text-slate-500 mt-0.5">Only send critical alerts (payment/refund/delivery failures, handoffs) — skip info/warning ones.</p>
+                </div>
+              </label>
             </div>
             <button onclick="window.saveRestaurantInfo()" class="mt-4 py-2.5 px-5 gradient-btn text-white rounded-xl text-sm font-bold">Save</button>
           </div>
@@ -492,6 +701,9 @@
           </div>
 
         </div>
+        <!-- /#settings-owner -->
+
+        </div>
       </section>
 
     </main>
@@ -547,32 +759,59 @@
       <h3 class="text-base font-bold mb-4">Edit Dish</h3>
       <input type="hidden" id="edit-id" />
       <div class="space-y-3">
-        <input id="edit-name" type="text" placeholder="Dish name"
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Photo</label>
+          <div class="flex items-center gap-3">
+            <div id="edit-img-preview" class="w-20 h-20 rounded-xl overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center flex-shrink-0 text-slate-600">
+              <span class="text-3xl">🍽️</span>
+            </div>
+            <div class="flex flex-col gap-2">
+              <input type="file" id="edit-img-input" accept="image/*" class="hidden" onchange="window.onImageFileSelected('edit', this)" />
+              <button type="button" onclick="document.getElementById('edit-img-input').click()" class="text-xs font-semibold px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">Replace Image</button>
+              <button type="button" id="edit-img-remove-btn" onclick="window.removeImage('edit')" class="hidden text-xs font-semibold px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-rose-400 transition-colors">Remove</button>
+            </div>
+          </div>
+          <input type="hidden" id="edit-img-url" />
+        </div>
+        <input id="edit-name" type="text" placeholder="Dish name *"
           class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Price (₹)</label>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Price (₹) *</label>
             <input id="edit-price" type="number"
               class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
           </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Category *</label>
+            <select id="edit-cat" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-3 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-rose-500"></select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Stock (blank = ∞)</label>
             <input id="edit-stock" type="number" min="0" placeholder="∞"
               class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
           </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Spice level</label>
+            <input id="edit-spice" type="text" placeholder="e.g. Medium"
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          </div>
         </div>
         <input id="edit-desc" type="text" placeholder="Description"
           class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-        <input id="edit-spice" type="text" placeholder="Spice level"
-          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
         <input id="edit-pieceinfo" type="text" placeholder="Piece/serving count (optional)"
           class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-        <input id="edit-imageurl" type="text" placeholder="Photo URL (optional)"
-          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
-        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
-          <input type="checkbox" id="edit-veg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian
-        </label>
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+            <input type="checkbox" id="edit-veg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian
+          </label>
+          <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+            <input type="checkbox" id="edit-available" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> Available
+          </label>
+        </div>
         <button onclick="window.saveEditItem()" class="w-full py-3 gradient-btn text-white rounded-xl text-sm font-bold">Save Changes</button>
+        <button onclick="window.closeEditModal()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold border border-slate-700 transition-colors">Cancel</button>
       </div>
       <div class="mt-5 border-t border-slate-800 pt-4">
         <h4 class="font-bold text-xs text-slate-400 mb-3 uppercase tracking-wider">Size Variants</h4>
@@ -585,6 +824,142 @@
           <button onclick="window.addVariant()" class="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-semibold transition-colors">Add</button>
         </div>
       </div>
+      <div class="mt-5 border-t border-slate-800 pt-4">
+        <button onclick="window.promptDeleteItem(document.getElementById('edit-id').value, document.getElementById('edit-name').value)"
+          class="w-full py-2.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 rounded-xl text-xs font-bold uppercase tracking-wide border border-rose-900/30 transition-colors">
+          🗑️ Delete Item
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Add Item Modal ─────────────────────────────────────────────────────── -->
+  <div id="add-item-modal" class="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-slate-950/80 backdrop-blur-sm px-0 md:px-4 hidden">
+    <div class="glass rounded-t-3xl md:rounded-3xl p-6 w-full md:max-w-lg shadow-2xl relative border border-slate-800 animate-fade-in max-h-[90vh] overflow-y-auto">
+      <button onclick="window.closeAddItemModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800">✕</button>
+      <h3 class="text-base font-bold mb-4">Add New Item</h3>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Photo</label>
+          <div class="flex items-center gap-3">
+            <div id="add-img-preview" class="w-20 h-20 rounded-xl overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center flex-shrink-0 text-slate-600">
+              <span class="text-3xl">🍽️</span>
+            </div>
+            <div class="flex flex-col gap-2">
+              <input type="file" id="add-img-input" accept="image/*" class="hidden" onchange="window.onImageFileSelected('add', this)" />
+              <button type="button" onclick="document.getElementById('add-img-input').click()" class="text-xs font-semibold px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">Upload Photo</button>
+              <button type="button" id="add-img-remove-btn" onclick="window.removeImage('add')" class="hidden text-xs font-semibold px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-rose-400 transition-colors">Remove</button>
+            </div>
+          </div>
+          <input type="hidden" id="add-img-url" />
+        </div>
+        <input id="add-name" type="text" placeholder="Dish name *"
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Price (₹) *</label>
+            <input id="add-price" type="number" placeholder="0"
+              class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Category *</label>
+            <select id="add-cat" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-3 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-rose-500"></select>
+          </div>
+        </div>
+        <input id="add-desc" type="text" placeholder="Description (optional)"
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+        <div class="grid grid-cols-2 gap-3">
+          <input id="add-spice" type="text" placeholder="Spice level (optional)"
+            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+          <input id="add-pieceinfo" type="text" placeholder="Piece/serving info (optional)"
+            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Today's quantity — blank = unlimited</label>
+          <input id="add-stock" type="number" min="0" placeholder="∞ Unlimited"
+            class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+        </div>
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+            <input type="checkbox" id="add-veg" class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> 🌿 Vegetarian
+          </label>
+          <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+            <input type="checkbox" id="add-available" checked class="rounded border-slate-800 bg-slate-900 w-4 h-4" /> Available
+          </label>
+        </div>
+      </div>
+      <div class="flex gap-3 mt-5">
+        <button onclick="window.closeAddItemModal()" class="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold border border-slate-700 transition-colors">Cancel</button>
+        <button onclick="window.saveAddItem()" class="flex-1 py-3 gradient-btn text-white rounded-xl text-sm font-bold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Delete Item Confirm Modal ──────────────────────────────────────────── -->
+  <div id="delete-confirm-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm px-4 hidden">
+    <div class="glass rounded-3xl p-6 w-full max-w-sm shadow-2xl relative border border-slate-800 animate-fade-in text-center">
+      <div class="w-12 h-12 rounded-2xl bg-rose-950/50 border border-rose-900/40 flex items-center justify-center text-2xl mx-auto mb-3">🗑️</div>
+      <h3 class="text-base font-bold mb-1">Delete Item?</h3>
+      <p id="delete-confirm-text" class="text-xs text-slate-400 mb-5">This action cannot be undone.</p>
+      <div class="flex gap-3">
+        <button onclick="window.closeDeleteConfirmModal()" class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold border border-slate-700 transition-colors">Cancel</button>
+        <button onclick="window.confirmDeleteItem()" class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-sm font-bold transition-colors">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Reject Order Modal ──────────────────────────────────────────────────── -->
+  <div id="reject-modal" class="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-slate-950/80 backdrop-blur-sm px-0 md:px-4 hidden">
+    <div class="glass rounded-t-3xl md:rounded-3xl p-6 w-full md:max-w-md shadow-2xl relative border border-slate-800 animate-fade-in">
+      <button onclick="window.closeRejectModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800">✕</button>
+      <h3 class="text-base font-bold mb-1">Reject Order</h3>
+      <p class="text-xs text-slate-500 mb-4">Select a reason. The customer is notified, and a paid order is refunded automatically.</p>
+      <div class="space-y-2 mb-3">
+        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+          <input type="radio" name="reject-reason" value="Out of Stock" onchange="window.onRejectReasonChange(this.value)" class="accent-rose-500" /> Out of Stock
+        </label>
+        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+          <input type="radio" name="reject-reason" value="Kitchen Busy" onchange="window.onRejectReasonChange(this.value)" class="accent-rose-500" /> Kitchen Busy
+        </label>
+        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+          <input type="radio" name="reject-reason" value="Customer Request" onchange="window.onRejectReasonChange(this.value)" class="accent-rose-500" /> Customer Request
+        </label>
+        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+          <input type="radio" name="reject-reason" value="Duplicate Order" onchange="window.onRejectReasonChange(this.value)" class="accent-rose-500" /> Duplicate Order
+        </label>
+        <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer py-1">
+          <input type="radio" name="reject-reason" value="Other" onchange="window.onRejectReasonChange(this.value)" class="accent-rose-500" /> Other
+        </label>
+      </div>
+      <div id="reject-other-wrap" class="hidden mb-4">
+        <input id="reject-other-text" type="text" placeholder="Enter reason…"
+          class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+      </div>
+      <div class="flex gap-2">
+        <button onclick="window.closeRejectModal()" class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-slate-700 transition-colors">Cancel</button>
+        <button id="reject-confirm-btn" onclick="window.confirmReject()" class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-colors">Confirm Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Order Detail Modal (fed by GET /api/orders/:id, fetched lazily on open) ── -->
+  <div id="order-detail-modal" class="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-slate-950/80 backdrop-blur-sm px-0 md:px-4 hidden">
+    <div class="glass rounded-t-3xl md:rounded-3xl w-full md:max-w-2xl shadow-2xl relative border border-slate-800 animate-fade-in max-h-[90vh] flex flex-col">
+      <button onclick="window.closeOrderDetailModal()" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800 z-10">✕</button>
+      <div id="order-detail-body" class="p-6 overflow-y-auto">
+        <div class="text-center text-slate-500 text-sm py-12">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Notification Panel (fed by GET /api/notifications, opened via the bell) ── -->
+  <div id="notif-panel-overlay" class="fixed inset-0 z-50 hidden" onclick="window.closeNotifPanel()">
+    <div id="notif-panel" class="absolute top-14 right-3 md:top-16 md:right-6 w-[calc(100%-1.5rem)] max-w-sm glass rounded-2xl border border-slate-800 shadow-2xl max-h-[75vh] flex flex-col animate-fade-in" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-900 flex-shrink-0">
+        <h3 class="font-bold text-sm">Notifications</h3>
+        <button onclick="window.closeNotifPanel()" class="text-slate-500 hover:text-slate-200 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-800 transition-colors">✕</button>
+      </div>
+      <div id="notif-list" class="flex-1 overflow-y-auto divide-y divide-slate-900/60"></div>
     </div>
   </div>
 

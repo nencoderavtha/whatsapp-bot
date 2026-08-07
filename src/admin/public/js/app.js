@@ -5,7 +5,12 @@
 
 import { api, login as apiLogin, logout as apiLogout, checkSession } from "./api.js";
 import { showToast, playChime, isTabActive } from "./utils.js";
-import { loadOrders, setOrderStatus, markPaid as orderMarkPaid, setOrderFilter } from "./orders.js";
+import {
+  loadOrders, setOrderStatus, markPaid as orderMarkPaid, setOrderFilter, setOrderSort,
+  onOrderSearchInput, openRejectModal, closeRejectModal, onRejectReasonChange, confirmReject,
+  openOrderDetail, closeOrderDetailModal, openChatFromOrder,
+} from "./orders.js";
+import { loadOrdersAnalytics } from "./analytics.js";
 import {
   loadChatThreads, selectConversation, appendChatMessage,
   loadCustomerProfile, saveCustProfile, getSelectedCustomerId, showChatThreads,
@@ -13,43 +18,73 @@ import {
 } from "./livechat.js";
 import { loadActivity, prependActivity } from "./activity.js";
 import {
-  loadMenu, addCategory, delCategory, addItem, toggleAvail, delItem,
-  openEditModal, closeEditModal, saveEditItem,
-  addVariant, updateVariant, delVariant, togglePublish,
+  loadMenu, onMenuSearchInput, addCategory, delCategory,
+  openAddItemModal, closeAddItemModal, saveAddItem,
+  openEditModal, closeEditModal, saveEditItem, toggleItemAvailability,
+  promptDeleteItem, closeDeleteConfirmModal, confirmDeleteItem,
+  onImageFileSelected, removeImage,
+  loadVariants, addVariant, updateVariant, delVariant, togglePublish,
+  patchMenuItemCard,
 } from "./menu.js";
 import { loadPayments } from "./payments.js";
 import { loadCustomers } from "./customers.js";
 import {
   loadSettings, saveRestaurantInfo, savePaymentConfig,
   saveRazorpay, savePause, getCachedConfig, setCachedConfig,
-  togglePaymentExpand,
+  togglePaymentExpand, applySavedTheme, previewBrandColor,
+  saveEmployeeTheme, saveEmployeeSound, saveEmployeeVolume, testNotifSound,
 } from "./settings.js";
+import {
+  initNotifications, toggleNotifPanel, closeNotifPanel,
+  ackNotificationRow, notifJumpToOrder, notifJumpToChat, handleNotificationCreated,
+} from "./notifications.js";
 
 // ── Expose functions needed by inline HTML event handlers ──────────────────
 // (inline onclick in dynamically-generated HTML can't use ES module scope)
 Object.assign(window, {
   // orders — markPaid works for both orders and payments tabs (same API call)
-  setOrderStatus, markPaid: orderMarkPaid, loadOrders, loadPayments, setOrderFilter,
+  setOrderStatus, markPaid: orderMarkPaid, loadOrders, loadPayments, setOrderFilter, setOrderSort,
+  onOrderSearchInput, openRejectModal, closeRejectModal, onRejectReasonChange, confirmReject,
+  openOrderDetail, closeOrderDetailModal, openChatFromOrder,
   // livechat
   selectConversation, saveCustProfile, showChatThreads, sendStaffReply, resumeAI,
   // menu
-  addCategory, delCategory, addItem, toggleAvail, delItem,
-  loadMenu, openEditModal, closeEditModal, saveEditItem,
-  addVariant, updateVariant, delVariant, togglePublish,
+  loadMenu, onMenuSearchInput, addCategory, delCategory,
+  openAddItemModal, closeAddItemModal, saveAddItem,
+  openEditModal, closeEditModal, saveEditItem, toggleItemAvailability,
+  promptDeleteItem, closeDeleteConfirmModal, confirmDeleteItem,
+  onImageFileSelected, removeImage,
+  loadVariants, addVariant, updateVariant, delVariant, togglePublish,
   // payments (reuses same markPaid — both call same API)
   // settings
   saveRestaurantInfo, savePaymentConfig, saveRazorpay,
   savePause, togglePause, togglePauseFromSettings, togglePaymentExpand,
+  previewBrandColor,
+  saveEmployeeTheme, saveEmployeeSound, saveEmployeeVolume, testNotifSound,
   // activity
   loadActivity, jumpToChat,
   // header
   openQRModal, closeQRModal, login, logout, resetWASession,
+  // notification center — switchTab exposed so notifications.js can jump tabs
+  // without importing app.js (which would create a circular import)
+  switchTab, toggleNotifPanel, closeNotifPanel,
+  ackNotificationRow, notifJumpToOrder, notifJumpToChat,
 });
 
 // ── State ──────────────────────────────────────────────────────────────────
 let sseSource = null;
 let currentQRString = null;
 let currentPairingCode = null;
+
+// Role from the JWT (via GET /api/auth/me → meHandler), "owner" until known.
+// Used only to shape the UI (which tabs/controls render); it is NOT the
+// access-control boundary — see applyRoleVisibility() below.
+let currentRole = "owner";
+export function getRole() { return currentRole; }
+
+// Apply any saved theme preference immediately — pure client preference,
+// no backend/auth involved, so this can run before login resolves.
+applySavedTheme();
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 async function login() {
@@ -64,6 +99,10 @@ async function login() {
 
   try {
     await apiLogin(username, password);
+    // loginHandler's response has no `role` field — re-hit /api/auth/me (the
+    // same endpoint checkSession() calls) to learn the role for this session.
+    const me = await checkSession();
+    currentRole = me.role === "employee" ? "employee" : "owner";
     document.getElementById("loginErr")?.classList.add("hidden");
     showApp();
   } catch (err) {
@@ -79,6 +118,7 @@ async function login() {
 
 async function logout() {
   await apiLogout();
+  currentRole = "owner";
   document.getElementById("app").classList.add("hidden");
   document.getElementById("login").classList.remove("hidden");
   document.getElementById("pw").value = "";
@@ -120,7 +160,10 @@ function updateWAStatusUI({ connected, qr, pairingCode, provider, connectedPhone
     const phoneLabel = connectedPhone ? ` <span class="font-mono normal-case tracking-normal opacity-80">+${connectedPhone}</span>` : "";
     el.innerHTML = `<span class="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>WhatsApp Live${phoneLabel}`;
     btn.classList.add("hidden");
-    btnReset?.classList.remove("hidden");
+    // Reset is owner-only regardless of connection state — never let a
+    // connected-status push re-reveal it for an employee session (defense
+    // in depth; the real boundary is requireOwner on POST /session/reset).
+    btnReset?.classList.toggle("hidden", currentRole === "employee");
     closeQRModal();
   } else if (provider === "cloud") {
     // Cloud is configured but session hasn't started yet
@@ -138,6 +181,14 @@ function updateWAStatusUI({ connected, qr, pairingCode, provider, connectedPhone
 }
 
 async function resetWASession() {
+  // Defense in depth — the real boundary is requireOwner on POST /session/reset.
+  // The button itself is hidden for employees (see applyRoleVisibility and
+  // updateWAStatusUI), but guard the handler too in case it's ever invoked
+  // directly (e.g. stale DOM, dev tools).
+  if (currentRole === "employee") {
+    showToast("Not allowed", "Only the owner can reset the WhatsApp session.");
+    return;
+  }
   if (!confirm("This will clear the WhatsApp session and show a new QR code to re-link. Continue?")) return;
   try {
     await api("/session/reset", { method: "POST" });
@@ -249,10 +300,10 @@ function handleSSE(type, data) {
     case "order_created":
       playChime();
       showToast(`New Order #${data.id}`, `${data.customer?.name || data.customer?.phone} • ₹${data.total}`);
-      if (isTabActive("orders")) loadOrders();
+      if (isTabActive("orders")) { loadOrders(); loadOrdersAnalytics(); }
       break;
     case "order_updated":
-      if (isTabActive("orders")) loadOrders();
+      if (isTabActive("orders")) { loadOrders(); loadOrdersAnalytics(); }
       break;
     case "message_created":
       // Only refresh the list while it's on screen — switching to the tab
@@ -270,10 +321,21 @@ function handleSSE(type, data) {
       }
       break;
     case "menu_updated":
-      if (isTabActive("menu")) loadMenu();
+      if (!isTabActive("menu")) break;
+      // "item_updated" (full edit, or the availability-toggle route) patches
+      // just that one card in place — this is what previously triggered a
+      // full loadMenu() reload (skeleton + re-render of the whole grid) on
+      // every single availability toggle, including the echo of the very
+      // toggle this tab just made. Structural changes (add/delete/category/
+      // variant) still need a full reload since the grid layout itself changes.
+      if (data.type === "item_updated" && data.item && patchMenuItemCard(data.item)) break;
+      loadMenu();
       break;
     case "activity_logged":
       if (isTabActive("activity")) prependActivity(data);
+      break;
+    case "notification_created":
+      handleNotificationCreated(data);
       break;
   }
 }
@@ -344,9 +406,18 @@ function updateSettingsPauseBtn(paused) {
   }
 }
 
+// ── Orders tab: list + analytics are fetched independently (owner-only
+// analytics dashboard must never block or trigger a reload of the Orders
+// list, and vice versa — see loadOrdersAnalytics()'s own role gate for why
+// this is a safe no-op call on an employee session).
+function loadOrdersTab() {
+  loadOrders();
+  loadOrdersAnalytics();
+}
+
 // ── Tab Navigation ─────────────────────────────────────────────────────────
 const TAB_LOADERS = {
-  orders:    loadOrders,
+  orders:    loadOrdersTab,
   livechat:  loadChatThreads,
   menu:      loadMenu,
   payments:  loadPayments,
@@ -355,10 +426,13 @@ const TAB_LOADERS = {
   settings:  loadSettings,
 };
 
-// Jump from an Activity row to the customer's chat thread.
-function jumpToChat(customerId) {
+// Jump to a customer's chat thread from elsewhere in the app (Activity row,
+// notification, Orders → Open Chat). `customerHint` is an optional customer
+// object used to render the thread immediately even if the Chats tab's own
+// thread-list cache hasn't loaded yet this session — see selectConversation().
+function jumpToChat(customerId, customerHint) {
   switchTab("livechat");
-  selectConversation(customerId);
+  selectConversation(customerId, customerHint);
 }
 
 function switchTab(name) {
@@ -387,16 +461,44 @@ document.querySelectorAll(".tab, .mob-tab").forEach(b =>
   b.addEventListener("click", () => switchTab(b.dataset.tab))
 );
 
+// ── Role-based UI visibility ───────────────────────────────────────────────
+// Cosmetic only: this just hides nav entries so employees don't hit dead
+// ends. The real access boundary is server-side — every owner-only route is
+// already guarded by requireOwner (src/admin/auth.ts); an employee session
+// hitting those endpoints directly still gets a 403 regardless of what the
+// UI shows.
+const OWNER_ONLY_TABS = ["payments", "customers", "activity"];
+
+function applyRoleVisibility() {
+  const isEmployee = currentRole === "employee";
+  document.querySelectorAll(".tab, .mob-tab").forEach(b => {
+    if (OWNER_ONLY_TABS.includes(b.dataset.tab)) b.classList.toggle("hidden", isEmployee);
+  });
+  // Reset Bot/Session is owner-only — must never appear for an employee,
+  // independent of WhatsApp connection state. updateWAStatusUI() also
+  // guards this so a later status push can't un-hide it.
+  if (isEmployee) {
+    document.getElementById("btn-reset-session")?.classList.add("hidden");
+  }
+  // Defensive: if an employee session somehow has an owner-only tab active
+  // (e.g. stale state from a role change mid-session), bounce back to Orders.
+  if (isEmployee && OWNER_ONLY_TABS.some(t => isTabActive(t))) {
+    switchTab("orders");
+  }
+}
+
 // ── Show App ───────────────────────────────────────────────────────────────
 function showApp() {
   document.getElementById("login").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
   const whUrl = document.getElementById("webhook-url-display");
   if (whUrl) whUrl.textContent = window.location.origin + "/webhook/razorpay";
+  applyRoleVisibility();
   switchTab("orders");
   connectSSE();
   checkWAStatus();
   loadBotPauseHeader();
+  initNotifications();
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -404,5 +506,8 @@ document.getElementById("un")?.addEventListener("keydown", e => { if (e.key === 
 document.getElementById("pw")?.addEventListener("keydown", e => { if (e.key === "Enter") login(); });
 
 checkSession()
-  .then(() => showApp())
+  .then((data) => {
+    currentRole = data.role === "employee" ? "employee" : "owner";
+    showApp();
+  })
   .catch(() => { /* stay on login screen */ });

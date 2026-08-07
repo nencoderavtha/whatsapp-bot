@@ -10,6 +10,7 @@ declare global {
     interface Request {
       restaurantId: number;
       isFounder?: boolean;
+      role?: "owner" | "employee";
     }
   }
 }
@@ -21,6 +22,7 @@ const TTL_S = 24 * 60 * 60; // 24 hours
 interface TokenPayload {
   restaurantId: number;
   isMaster?: boolean;
+  role?: "owner" | "employee";
 }
 
 interface FounderPayload {
@@ -102,6 +104,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
 
   let restaurantId = DEFAULT_RESTAURANT_ID;
   let isMaster = false;
+  let role: "owner" | "employee" = "owner";
 
   try {
     if (config.adminPassword && password === config.adminPassword) {
@@ -115,14 +118,28 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
       const r = await prisma.restaurantConfig.findFirst({
         where: { loginUsername: username, dashboardPassword: password, isActive: true },
       });
-      if (!r) {
-        res.status(401).json({ error: "invalid credentials" });
-        return;
+      if (r) {
+        restaurantId = r.id;
+      } else {
+        // Not the owner password — check the restaurant's employee password,
+        // which logs in with restricted access for the same restaurant.
+        const restaurant = await prisma.restaurantConfig.findFirst({
+          where: { loginUsername: username, isActive: true },
+        });
+        if (
+          !restaurant ||
+          !restaurant.employeePassword ||
+          password !== restaurant.employeePassword
+        ) {
+          res.status(401).json({ error: "invalid credentials" });
+          return;
+        }
+        restaurantId = restaurant.id;
+        role = "employee";
       }
-      restaurantId = r.id;
     }
 
-    const token = signToken({ restaurantId, isMaster });
+    const token = signToken({ restaurantId, isMaster, role });
     setCookie(res, token);
 
     const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: restaurantId } });
@@ -141,7 +158,7 @@ export function logoutHandler(_req: Request, res: Response): void {
 export async function meHandler(req: Request, res: Response): Promise<void> {
   try {
     const restaurant = await prisma.restaurantConfig.findUnique({ where: { id: DEFAULT_RESTAURANT_ID } });
-    res.json({ restaurantId: DEFAULT_RESTAURANT_ID, restaurantName: restaurant?.restaurantName });
+    res.json({ restaurantId: DEFAULT_RESTAURANT_ID, restaurantName: restaurant?.restaurantName, role: req.role ?? "owner" });
   } catch (e) {
     logger.error("[auth] me DB error:", e);
     res.status(503).json({ error: "Service temporarily unavailable" });
@@ -157,9 +174,20 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   try {
     const payload = verifyToken(token);
     req.restaurantId = payload.restaurantId ?? DEFAULT_RESTAURANT_ID;
+    // Tokens issued before role-based access existed carry no `role` field —
+    // default them to "owner" so anyone already logged in keeps full access.
+    req.role = payload.role ?? "owner";
     next();
   } catch {
     res.clearCookie(COOKIE);
     res.status(401).json({ error: "session expired — please log in again" });
   }
+}
+
+export function requireOwner(req: Request, res: Response, next: NextFunction): void {
+  if (req.role !== "owner") {
+    res.status(403).json({ error: "owner access required" });
+    return;
+  }
+  next();
 }

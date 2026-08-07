@@ -9,6 +9,7 @@ import { orderConfirmationMsg, ownerNewOrderMsg } from "../services/notification
 import { menuAsInteractiveListSections, menuAsInteractiveCarouselCards } from "../services/menu.js";
 import { getOrCreateCustomer } from "../services/customer.js";
 import { createPaymentLink } from "../services/razorpay.js";
+import { runTool } from "../ai/tools.js";
 import {
   orderStagedTemplate,
   systemErrorTemplate,
@@ -18,7 +19,7 @@ import {
 } from "../ai/templates.js";
 import { DeliveryOrchestrator } from "../services/delivery/orchestrator.js";
 import {
-  renderWelcome,
+  buildWelcomeCard,
   renderCartSummary,
   renderAddressPicker,
   renderAddressPinPrompt,
@@ -61,6 +62,9 @@ function humanizeInbound(raw: string): string {
     add_more_items_btn: "➕ Add More Items",
     view_menu: "📋 Menu",
     location_info: "📍 Location & Hours",
+    start_ordering_btn: "🛒 Start Ordering",
+    track_order_btn: "📍 Track Order",
+    talk_to_human_btn: "💬 Talk to Human",
     change_address: "Change address",
     pin_new_location_btn: "Pin a new location",
     use_saved_address_btn: "Use saved address",
@@ -424,6 +428,19 @@ async function notifyOwnerOfHandoff(
       logger.error("[Owner Handoff] Send failed:", e);
     }
   }
+
+  // Both call sites (the AI tool and this module's direct-action branch)
+  // converge here, so this is the one place a notification row needs to be
+  // created for a handoff request — see notification-center.ts.
+  const customerRow = await prisma.customer.findFirst({ where: { phone: customer.phone } });
+  const { notify } = await import("../services/notification-center.js");
+  void notify({
+    type: "human_handoff",
+    severity: "critical",
+    title: "Customer needs a human",
+    message: `${customer.name ?? customer.phone} asked to talk to a human: "${lastMessage}"`,
+    customerId: customerRow?.id,
+  }).catch((e) => logger.error("[notify] human_handoff failed:", e));
 }
 
 async function sendOrderReceipt(adapter: CloudAdapter, phone: string, _restaurantId: number, orderId: number) {
@@ -812,6 +829,11 @@ export class BotSessionManager {
                   restaurantAddress: true,
                   restaurantLat: true,
                   restaurantLng: true,
+                  // Welcome card display fields — all plain strings, so they
+                  // survive the Redis JSON round-trip like everything else here.
+                  welcomeLogoUrl: true,
+                  welcomeTagline: true,
+                  openingHoursText: true,
                 },
               }),
             30_000,
@@ -833,7 +855,45 @@ export class BotSessionManager {
 
           if (isGreeting) {
             const greetName = msg.name?.trim() ? `${msg.name.trim()} garu` : "andi";
-            await send(adapter, msg.phone, renderWelcome(greetName, rName));
+
+            // Two lightweight, uncached queries — not a customer lookup, so this
+            // doesn't reintroduce the latency the cache above exists to avoid.
+            // Categories and coupons change rarely and this branch only fires on
+            // the first message of a conversation.
+            const [categories, activeCoupon] = await Promise.all([
+              prisma.category.findMany({
+                orderBy: { sortOrder: "asc" },
+                select: { name: true },
+                take: 5,
+              }),
+              prisma.coupon.findFirst({
+                where: {
+                  isActive: true,
+                  startsAt: { lte: new Date() },
+                  OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+                },
+                orderBy: { startsAt: "desc" },
+                select: { code: true, description: true },
+              }),
+            ]);
+
+            const card = buildWelcomeCard({
+              greetName,
+              restaurantName: rName,
+              tagline: cfg?.welcomeTagline,
+              isOpen: !cfg?.botPaused,
+              pauseMessage: cfg?.pauseMessage,
+              openingHoursText: cfg?.openingHoursText,
+              activeCoupon,
+              categoryNames: categories.map((c) => c.name),
+              logoUrl: cfg?.welcomeLogoUrl,
+            });
+
+            if (card.logoUrl) {
+              await adapter.sendImage(msg.phone, card.logoUrl, rName);
+            }
+            await adapter.sendInteractiveList(msg.phone, card.body, card.buttonText, card.sections);
+
             // Keep the profile/history write off the critical path, and retire any
             // finished or expired cart so a greeting genuinely starts a new order.
             void getOrCreateCustomer(msg.phone, msg.name)
@@ -888,6 +948,9 @@ export class BotSessionManager {
           if (
             !isMenuItemButton &&
             (rawText === "view_menu" ||
+              // Welcome card's "Start Ordering" row — same destination as "Browse
+              // Menu", since ordering starts by picking something off the menu.
+              rawText === "start_ordering_btn" ||
               cleanText === "menu" ||
               cleanText.includes("menu") ||
               /\bmenu\b/i.test(lowerText))
@@ -917,6 +980,26 @@ export class BotSessionManager {
             }
             lines.push(`Evening service 7:30 PM nunchi andi.`);
             await adapter.sendText(msg.phone, lines.join("\n"));
+            return;
+          }
+
+          // ── Direct Action 2b: Welcome card's "Track Order" row ───────────────
+          if (rawText === "track_order_btn") {
+            const result = await runTool(customer.id, restaurantId, "check_order_status", {});
+            await adapter.sendText(msg.phone, result.templateReply ?? systemErrorTemplate());
+            return;
+          }
+
+          // ── Direct Action 2c: Welcome card's "Talk to Human" row ─────────────
+          if (rawText === "talk_to_human_btn") {
+            const result = await runTool(customer.id, restaurantId, "request_human_handoff", {
+              reason: "Welcome CTA tap",
+            });
+            await adapter.sendText(msg.phone, result.templateReply ?? systemErrorTemplate());
+            // This branch short-circuits before the AI path, which is the only
+            // place that otherwise notifies the owner of a handoff — without this,
+            // staff never learn a customer is waiting.
+            await notifyOwnerOfHandoff(adapter, restaurantId, { name: customer?.name ?? null, phone: msg.phone }, msg.text);
             return;
           }
 

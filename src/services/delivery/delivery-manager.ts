@@ -161,6 +161,7 @@ export class DeliveryManager {
         externalDeliveryId: result.dispatchId,
         status: result.status || "SEARCHING_RIDER",
         deliveryFee: billedFee,
+        trackingUrl: result.trackingUrl,
       },
       create: {
         orderId,
@@ -168,6 +169,7 @@ export class DeliveryManager {
         externalDeliveryId: result.dispatchId,
         status: result.status || "SEARCHING_RIDER",
         deliveryFee: billedFee,
+        trackingUrl: result.trackingUrl,
       },
     });
 

@@ -11,6 +11,8 @@ export type NotifOrder = {
   deliveryAddress?: string | null;
   total: number;
   note?: string | null;
+  rejectionReason?: string | null;
+  refundStatus?: string | null;
   payment?: { method?: string | null; reference?: string | null; status?: string | null } | null;
   items: { qty: number; nameSnap: string; variantSnap?: string | null; priceSnap: number }[];
   customer: { name?: string | null; phone: string };
@@ -53,6 +55,11 @@ const STATUS_CONFIG: Record<string, { emoji: string; heading: string; body: stri
     emoji: "❌",
     heading: "Order Cancelled",
     body: "Your order has been cancelled. We're sorry for the inconvenience. Please reach out if you have any questions.",
+  },
+  rejected: {
+    emoji: "🚫",
+    heading: "Order Rejected",
+    body: "Your order could not be accepted. We're sorry for the inconvenience. Please reach out if you have any questions.",
   },
 };
 
@@ -107,11 +114,14 @@ export function orderStatusMsg(order: NotifOrder, status: string, restaurantName
   if (!cfg) return "";
 
   const summary = order.items.map((i) => `${i.qty}× ${i.nameSnap}`).join(", ");
+  const reasonSection = status === "rejected" && order.rejectionReason
+    ? `\n📝 _Reason: ${order.rejectionReason}_`
+    : "";
 
   return [
     `${cfg.emoji} *Order #${order.id} — ${cfg.heading}*`,
     "",
-    cfg.body,
+    `${cfg.body}${reasonSection}`,
     "",
     `📋 _${summary}_`,
     `💰 ₹${order.total.toFixed(0)}`,
@@ -247,4 +257,36 @@ export function paymentReceivedMsg(order: NotifOrder, restaurantName: string): s
   ]
     .filter((l) => l !== "")
     .join("\n");
+}
+
+// ─── Sent to customer reporting the outcome of a refund ─────────────────────
+
+export function refundStatusMsg(order: NotifOrder, restaurantName?: string): string {
+  if (order.refundStatus === "success") {
+    return [
+      `💸 *Refund Processed!*`,
+      `_₹${order.total.toFixed(0)} refunded for Order #${order.id}_`,
+      "",
+      `It should reflect in your account in 5–7 business days. 🙏`,
+      "",
+      restaurantName ? `— _${restaurantName}_` : "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n");
+  }
+
+  if (order.refundStatus === "failed") {
+    return [
+      `⚠️ *Refund Pending*`,
+      `_Order #${order.id}_`,
+      "",
+      `We couldn't process your refund automatically. Our team will reach out to complete it shortly. 🙏`,
+      "",
+      restaurantName ? `— _${restaurantName}_` : "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n");
+  }
+
+  return "";
 }
